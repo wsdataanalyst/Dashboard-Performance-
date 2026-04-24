@@ -300,6 +300,8 @@ def _enrich_results_df_for_performance(results_df: pd.DataFrame, sellers: list) 
     df = results_df.copy()
     df["faturamento"] = df["nome"].apply(lambda n: getattr(raw_map.get(n), "faturamento", None))
     df["meta_faturamento"] = df["nome"].apply(lambda n: getattr(raw_map.get(n), "meta_faturamento", None))
+    # Alcance real (faturamento/meta) vem do payload (ou é calculável quando existir)
+    df["alcance_real_pct"] = df["nome"].apply(lambda n: getattr(raw_map.get(n), "alcance_pct", None))
     df["qtd_faturadas"] = df["qtd_faturadas"] if "qtd_faturadas" in df.columns else None
     df["ticket_medio"] = df.apply(
         lambda r: (float(r["faturamento"]) / float(r["qtd_faturadas"]))
@@ -307,6 +309,16 @@ def _enrich_results_df_for_performance(results_df: pd.DataFrame, sellers: list) 
         else None,
         axis=1,
     )
+    # fallback: calcula alcance real se não veio pronto
+    try:
+        mask = df["alcance_real_pct"].isna() & df["faturamento"].notna() & df["meta_faturamento"].notna()
+        df.loc[mask, "alcance_real_pct"] = (
+            pd.to_numeric(df.loc[mask, "faturamento"], errors="coerce")
+            / pd.to_numeric(df.loc[mask, "meta_faturamento"], errors="coerce")
+            * 100.0
+        )
+    except Exception:
+        pass
     return df
 
 
@@ -1980,12 +1992,13 @@ def page_sala_gestao(settings, conn) -> None:
             sellers = parse_sellers(payload_base)
             results, _ = calcular_time(sellers) if sellers else ([], 0.0)
             vend_df = pd.DataFrame([r.__dict__ for r in results]) if results else pd.DataFrame()
+            vend_df = _enrich_results_df_for_performance(vend_df, sellers)
         if vend_df.empty:
             st.caption("Sem vendedores (defina uma análise ativa).")
             meta_batida = acima_80 = abaixo_80 = 0
         else:
             def _bucket(v):
-                # Regra da sala: meta batida vem de % Alcance >= 100
+                # Regra da sala: meta batida vem de % Alcance (REAL) >= 100
                 if v is None or (isinstance(v, float) and pd.isna(v)):
                     return "Sem dado"
                 x = float(v)
@@ -1995,12 +2008,13 @@ def page_sala_gestao(settings, conn) -> None:
                     return "Alcance >= 80%"
                 return "Alcance < 80%"
 
-            vend_df["faixa_alcance"] = vend_df["alcance_pct"].apply(_bucket)
+            vend_df["faixa_alcance"] = vend_df["alcance_real_pct"].apply(_bucket)
             meta_batida = int((vend_df["faixa_alcance"] == "Meta batida (>=100%)").sum())
             acima_80 = int((vend_df["faixa_alcance"] == "Alcance >= 80%").sum())
             abaixo_80 = int((vend_df["faixa_alcance"] == "Alcance < 80%").sum())
             st.dataframe(
-                vend_df[["nome", "alcance_pct", "margem_pct", "conversao_pct", "interacoes", "faixa_alcance"]],
+                vend_df[["nome", "alcance_real_pct", "alcance_pct", "margem_pct", "conversao_pct", "interacoes", "faixa_alcance"]]
+                .rename(columns={"alcance_real_pct": "% Alcance", "alcance_pct": "% Alcance Projetado"}),
                 use_container_width=True,
                 hide_index=True,
             )
@@ -2225,11 +2239,12 @@ def page_sala_gestao(settings, conn) -> None:
                 sellers = parse_sellers(payload)
                 results, _ = calcular_time(sellers) if sellers else ([], 0.0)
                 df = pd.DataFrame([r.__dict__ for r in results]) if results else pd.DataFrame()
+                df = _enrich_results_df_for_performance(df, sellers)
                 if df.empty:
                     st.caption("Sem vendedores.")
                 else:
                     def _bucket(v):
-                        # Regra da sala: meta batida vem de % Alcance >= 100
+                        # Regra da sala: meta batida vem de % Alcance (REAL) >= 100
                         if v is None or (isinstance(v, float) and pd.isna(v)):
                             return "Sem dado"
                         x = float(v)
@@ -2239,9 +2254,10 @@ def page_sala_gestao(settings, conn) -> None:
                             return "Alcance >= 80%"
                         return "Alcance < 80%"
 
-                    df["faixa_alcance"] = df["alcance_pct"].apply(_bucket)
+                    df["faixa_alcance"] = df["alcance_real_pct"].apply(_bucket)
                     st.dataframe(
-                        df[["nome", "alcance_pct", "margem_pct", "conversao_pct", "interacoes", "faixa_alcance"]],
+                        df[["nome", "alcance_real_pct", "alcance_pct", "margem_pct", "conversao_pct", "interacoes", "faixa_alcance"]]
+                        .rename(columns={"alcance_real_pct": "% Alcance", "alcance_pct": "% Alcance Projetado"}),
                         use_container_width=True,
                         hide_index=True,
                     )
@@ -2277,6 +2293,80 @@ def page_sala_gestao(settings, conn) -> None:
         if isinstance(dept_payload, dict) and isinstance(dept_payload.get("departamentos"), list):
             ddf = pd.DataFrame(dept_payload["departamentos"])
             if not ddf.empty:
+                # Cards (fora de tabela)
+                alc = pd.to_numeric(ddf.get("alcance_projetado_pct"), errors="coerce") if "alcance_projetado_pct" in ddf.columns else pd.Series([], dtype="float64")
+                marg = pd.to_numeric(ddf.get("margem_pct"), errors="coerce") if "margem_pct" in ddf.columns else pd.Series([], dtype="float64")
+                fat = pd.to_numeric(ddf.get("faturamento"), errors="coerce") if "faturamento" in ddf.columns else pd.Series([], dtype="float64")
+                meta = pd.to_numeric(ddf.get("meta_faturamento"), errors="coerce") if "meta_faturamento" in ddf.columns else pd.Series([], dtype="float64")
+
+                ddf2 = ddf.copy()
+                if "meta_faturamento" in ddf2.columns and "faturamento" in ddf2.columns:
+                    ddf2["falta_meta"] = (meta - fat)
+
+                n100 = int((alc >= 100).sum()) if len(alc) else 0
+                n80 = int(((alc >= 80) & (alc < 100)).sum()) if len(alc) else 0
+                nlt = int((alc < 80).sum()) if len(alc) else 0
+
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Deptos Alcance Proj. >= 100%", str(n100))
+                c2.metric("Deptos Alcance Proj. >= 80%", str(n80))
+                c3.metric("Deptos Alcance Proj. < 80%", str(nlt))
+                if "falta_meta" in ddf2.columns:
+                    low = pd.to_numeric(ddf2["falta_meta"], errors="coerce")
+                    c4.metric("Falta meta total (Deptos)", f"R$ {float(low.dropna().sum()):,.2f}" if low.notna().any() else "—")
+                else:
+                    c4.metric("Falta meta total (Deptos)", "—")
+
+                st.markdown("### Departamentos: melhor margem vs detrator")
+                if marg.notna().any():
+                    best_i = int(marg.idxmax())
+                    worst_i = int(marg.idxmin())
+                    best = ddf2.loc[best_i]
+                    worst = ddf2.loc[worst_i]
+                    a1, a2 = st.columns(2)
+                    a1.markdown(
+                        f"<div class='dp-card'><div class='dp-kpi-label'>Melhor margem</div>"
+                        f"<div class='dp-kpi-value' style='font-size:1.02rem'>{best.get('departamento')}</div>"
+                        f"<div class='dp-sub' style='margin-top:6px'>% Margem: <b>{float(best.get('margem_pct') or 0)*1:.2f}%</b></div></div>",
+                        unsafe_allow_html=True,
+                    )
+                    a2.markdown(
+                        f"<div class='dp-card'><div class='dp-kpi-label'>Detrator (pior margem)</div>"
+                        f"<div class='dp-kpi-value' style='font-size:1.02rem'>{worst.get('departamento')}</div>"
+                        f"<div class='dp-sub' style='margin-top:6px'>% Margem: <b>{float(worst.get('margem_pct') or 0)*1:.2f}%</b></div></div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.caption("Sem coluna de margem para destacar melhor/detrator.")
+
+                st.markdown("### Oportunidades (falta para meta baixa)")
+                if "falta_meta" in ddf2.columns and "meta_faturamento" in ddf2.columns:
+                    # Heurística: falta <= 5% da meta (e meta>0)
+                    mm = pd.to_numeric(ddf2["meta_faturamento"], errors="coerce")
+                    fm = pd.to_numeric(ddf2["falta_meta"], errors="coerce")
+                    opp = ddf2[(mm > 0) & (fm.notna())].copy()
+                    opp["falta_pct_meta"] = (fm / mm) * 100.0
+                    opp = opp.sort_values(["falta_pct_meta", "falta_meta"], ascending=[True, True])
+                    opp = opp.head(6)
+                    if not opp.empty:
+                        for _, r in opp.iterrows():
+                            dept = r.get("departamento")
+                            falta = r.get("falta_meta")
+                            alc_p = r.get("alcance_projetado_pct")
+                            st.markdown(
+                                f"<div class='dp-card' style='padding:14px 16px;margin-bottom:10px'>"
+                                f"<div style='display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap'>"
+                                f"<div style='color:#E5E7EB;font-weight:850'>{dept}</div>"
+                                f"<span class='dp-pill'>Alc. Proj: {float(alc_p or 0):.1f}%</span>"
+                                f"</div>"
+                                f"<div style='margin-top:8px;color:#CBD5E1'>Falta para meta: <b>R$ {float(falta or 0):,.2f}</b></div>"
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
+                    else:
+                        st.caption("Não encontrei oportunidades (falta_meta calculável).")
+
+                st.markdown("### Tabela (opcional)")
                 if "meta_faturamento" in ddf.columns and "faturamento" in ddf.columns:
                     ddf["falta_meta"] = ddf.apply(
                         lambda r: (float(r["meta_faturamento"]) - float(r["faturamento"]))

@@ -9,6 +9,8 @@ from typing import Any
 class Seller:
     nome: str
     margem_pct: float | None = None
+    # % Alcance (real) = faturamento / meta * 100 (quando existir)
+    alcance_pct: float | None = None
     alcance_projetado_pct: float | None = None
     prazo_medio: int | None = None
     qtd_faturadas: int | None = None
@@ -141,6 +143,7 @@ def parse_sellers(payload: dict[str, Any]) -> list[Seller]:
             Seller(
                 nome=nome,
                 margem_pct=_to_float(item.get("margem_pct")),
+                alcance_pct=_to_float(item.get("alcance_pct")),
                 alcance_projetado_pct=_to_float(item.get("alcance_projetado_pct")),
                 prazo_medio=_to_int(item.get("prazo_medio")),
                 qtd_faturadas=_to_int(item.get("qtd_faturadas")),

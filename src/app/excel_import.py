@@ -314,13 +314,19 @@ def import_5_files_to_payload(files: list[tuple[str, bytes]]) -> ImportResult:
                     nome = _clean_name(r.get(c_nome) or "")
                     if not nome:
                         continue
+                    fat = _to_float(r.get(c_fat)) if c_fat else None
+                    meta = _to_float(r.get(c_meta)) if c_meta else None
+                    alcance_real = None
+                    if meta is not None and meta > 0 and fat is not None:
+                        alcance_real = (float(fat) / float(meta)) * 100.0
                     updates.append(
                         {
                             "nome": nome,
                             "alcance_projetado_pct": _as_pct_0_100(r.get(c_alc)),
+                            "alcance_pct": float(alcance_real) if alcance_real is not None else None,
                             "margem_pct": _as_pct_0_100(r.get(c_marg)),
-                            "faturamento": _to_float(r.get(c_fat)) if c_fat else None,
-                            "meta_faturamento": _to_float(r.get(c_meta)) if c_meta else None,
+                            "faturamento": fat,
+                            "meta_faturamento": meta,
                         }
                     )
                 _merge(base, updates)
