@@ -224,6 +224,7 @@ def import_5_files_to_payload(files: list[tuple[str, bytes]]) -> ImportResult:
     """
     warnings: list[str] = []
     base: dict[str, dict] = {}
+    totais_from_print: dict[str, float] = {}
 
     for fname, b in files:
         tables = _read_excel_or_html(fname, b)
@@ -314,6 +315,15 @@ def import_5_files_to_payload(files: list[tuple[str, bytes]]) -> ImportResult:
                     nome = _clean_name(r.get(c_nome) or "")
                     if not nome:
                         continue
+                    # Linha TOTAL do print é a fonte "oficial" do time (evita drift por soma de vendedores)
+                    if str(nome).strip().lower() == "total":
+                        fat_tot = _to_float(r.get(c_fat)) if c_fat else None
+                        meta_tot = _to_float(r.get(c_meta)) if c_meta else None
+                        if fat_tot is not None:
+                            totais_from_print["faturamento_total"] = float(fat_tot)
+                        if meta_tot is not None:
+                            totais_from_print["meta_total"] = float(meta_tot)
+                        continue
                     fat = _to_float(r.get(c_fat)) if c_fat else None
                     meta = _to_float(r.get(c_meta)) if c_meta else None
                     alcance_real = None
@@ -380,6 +390,8 @@ def import_5_files_to_payload(files: list[tuple[str, bytes]]) -> ImportResult:
         keys.append(nk)
 
     payload: dict[str, Any] = {"vendedores": consolidated}
+    if totais_from_print:
+        payload["totais"] = dict(totais_from_print)
     payload = filter_excluded_sellers_from_payload(payload)
     payload["vendedores"].sort(key=lambda x: str(x.get("nome") or ""))
 

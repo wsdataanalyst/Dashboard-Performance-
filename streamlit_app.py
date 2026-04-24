@@ -948,11 +948,20 @@ def page_dashboard(settings, conn) -> None:
     results, total = calcular_time(sellers) if sellers else ([], 0.0)
 
     top = results[0].nome if results else "—"
-    c1, c2, c3, c4 = st.columns(4)
-    c1.markdown(f"<div class='dp-card'><div class='dp-kpi-label'>Período</div><div class='dp-kpi-value' style='font-size:1.1rem'>{row.periodo}</div></div>", unsafe_allow_html=True)
-    c2.markdown(f"<div class='dp-card'><div class='dp-kpi-label'>Bônus total</div><div class='dp-kpi-value'>R$ {total:,.2f}</div></div>", unsafe_allow_html=True)
-    c3.markdown(f"<div class='dp-card'><div class='dp-kpi-label'>Top (bônus)</div><div class='dp-kpi-value' style='font-size:1.1rem'>{top}</div></div>", unsafe_allow_html=True)
-    c4.markdown(f"<div class='dp-card'><div class='dp-kpi-label'>IA usada</div><div class='dp-kpi-value' style='font-size:1.0rem'>{row.provider_used} / {row.model_used}</div></div>", unsafe_allow_html=True)
+    totais = payload.get("totais") if isinstance(payload, dict) else {}
+    if not isinstance(totais, dict):
+        totais = {}
+    fat_total = float(totais.get("faturamento_total") or 0.0) if totais.get("faturamento_total") is not None else None
+    meta_total = float(totais.get("meta_total") or 0.0) if totais.get("meta_total") is not None else None
+    perc_meta = (fat_total / meta_total * 100.0) if (fat_total is not None and meta_total and meta_total > 0) else None
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.markdown(f"<div class='dp-card'><div class='dp-kpi-label'>Período</div><div class='dp-kpi-value' style='font-size:1.05rem'>{row.periodo}</div></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div class='dp-card'><div class='dp-kpi-label'>Faturamento (time)</div><div class='dp-kpi-value' style='font-size:1.02rem'>{('R$ ' + format(fat_total, ',.2f')) if fat_total is not None else '—'}</div></div>", unsafe_allow_html=True)
+    c3.markdown(f"<div class='dp-card'><div class='dp-kpi-label'>Meta (time)</div><div class='dp-kpi-value' style='font-size:1.02rem'>{('R$ ' + format(meta_total, ',.2f')) if meta_total is not None else '—'}</div></div>", unsafe_allow_html=True)
+    c4.markdown(f"<div class='dp-card'><div class='dp-kpi-label'>% da meta</div><div class='dp-kpi-value' style='font-size:1.05rem'>{(str(round(perc_meta,1)) + '%') if perc_meta is not None else '—'}</div></div>", unsafe_allow_html=True)
+    c5.markdown(f"<div class='dp-card'><div class='dp-kpi-label'>Bônus total</div><div class='dp-kpi-value'>R$ {total:,.2f}</div></div>", unsafe_allow_html=True)
+    c6.markdown(f"<div class='dp-card'><div class='dp-kpi-label'>Top (bônus)</div><div class='dp-kpi-value' style='font-size:1.02rem'>{top}</div></div>", unsafe_allow_html=True)
 
     if not results:
         st.warning("Sem vendedores no payload.")
@@ -1095,11 +1104,20 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
     )
     stats = _team_stats(df)
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Bônus total", f"R$ {stats['total_bonus']:,.2f}")
-    c2.metric("Margem média", f"{stats['media_margem']:.1f}%")
-    c3.metric("Conversão média", f"{stats['media_conversao']:.1f}%")
-    c4.metric("TME médio", f"{stats['media_tme']:.1f} min")
+    totais = payload.get("totais") if isinstance(payload, dict) else {}
+    if not isinstance(totais, dict):
+        totais = {}
+    fat_total = float(totais.get("faturamento_total") or 0.0) if totais.get("faturamento_total") is not None else None
+    meta_total = float(totais.get("meta_total") or 0.0) if totais.get("meta_total") is not None else None
+    perc_meta = (fat_total / meta_total * 100.0) if (fat_total is not None and meta_total and meta_total > 0) else None
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("Faturamento (time)", f"R$ {fat_total:,.2f}" if fat_total is not None else "—")
+    c2.metric("Meta (time)", f"R$ {meta_total:,.2f}" if meta_total is not None else "—")
+    c3.metric("% da meta", f"{perc_meta:.1f}%" if perc_meta is not None else "—")
+    c4.metric("Bônus total", f"R$ {stats['total_bonus']:,.2f}")
+    c5.metric("Margem média", f"{stats['media_margem']:.1f}%")
+    c6.metric("Conversão média", f"{stats['media_conversao']:.1f}%")
 
     # Evolução de conversão por período (últimas análises salvas)
     st.markdown("### Conversão x Interações (comparativo por análise salva)")
