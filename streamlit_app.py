@@ -2044,12 +2044,39 @@ def page_sala_gestao(settings, conn) -> None:
         # Departamentos
         st.markdown("### Departamentos (última base carregada)")
         dept_payload = st.session_state.get("dept_payload")
-        def _dept_ok(name: object) -> bool:
+        def _dept_norm(name: object) -> str:
             s = str(name or "").strip().lower()
-            s = s.replace("á","a").replace("ã","a").replace("â","a").replace("é","e").replace("ê","e").replace("í","i").replace("ó","o").replace("ô","o").replace("õ","o").replace("ú","u").replace("ç","c")
+            s = (
+                s.replace("á", "a")
+                .replace("ã", "a")
+                .replace("â", "a")
+                .replace("à", "a")
+                .replace("é", "e")
+                .replace("ê", "e")
+                .replace("è", "e")
+                .replace("í", "i")
+                .replace("ì", "i")
+                .replace("ó", "o")
+                .replace("ô", "o")
+                .replace("õ", "o")
+                .replace("ò", "o")
+                .replace("ú", "u")
+                .replace("ù", "u")
+                .replace("ç", "c")
+            )
+            s = " ".join(s.split())
+            return s
+
+        def _dept_ok(name: object) -> bool:
+            s = _dept_norm(name)
             if not s:
                 return False
-            return s not in {"outros", "paineis eletricos", "paineis eletrônicos", "paineis eletrico"}
+            if s == "outros":
+                return False
+            # Excluir qualquer variação de "Painéis Elétricos" / "Paineis Eletricos"
+            if s.startswith("paineis eletric") or s.startswith("painel eletric"):
+                return False
+            return True
 
         if isinstance(dept_payload, dict) and isinstance(dept_payload.get("departamentos"), list):
             ddf = pd.DataFrame([d for d in dept_payload["departamentos"] if _dept_ok(d.get("departamento"))])
@@ -2340,7 +2367,8 @@ def page_sala_gestao(settings, conn) -> None:
 
         dept_payload = st.session_state.get("dept_payload")
         if isinstance(dept_payload, dict) and isinstance(dept_payload.get("departamentos"), list):
-            ddf = pd.DataFrame(dept_payload["departamentos"])
+            # aplicar as mesmas exclusões do consolidado/insights
+            ddf = pd.DataFrame([d for d in dept_payload["departamentos"] if _dept_ok((d or {}).get("departamento"))])
             if not ddf.empty:
                 # Cards (fora de tabela)
                 alc = pd.to_numeric(ddf.get("alcance_projetado_pct"), errors="coerce") if "alcance_projetado_pct" in ddf.columns else pd.Series([], dtype="float64")
