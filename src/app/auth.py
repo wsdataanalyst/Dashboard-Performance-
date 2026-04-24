@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from passlib.context import CryptContext
 
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# PBKDF2 é puro Python e funciona bem no Streamlit Cloud.
+# (evita dependências nativas como bcrypt, que podem falhar em alguns runtimes)
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 
 def hash_password(password: str) -> str:

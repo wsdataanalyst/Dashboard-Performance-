@@ -17,7 +17,7 @@ openai>=1.40.0
 
 # DB / util
 pydantic>=2.6.0
-passlib[bcrypt]>=1.7.4
+passlib>=1.7.4
 
 # PDF
 fpdf2>=2.7.0
