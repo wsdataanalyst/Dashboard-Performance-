@@ -36,6 +36,7 @@ from src.app.theme import inject_styles, render_header
 from src.app.ai.router import Provider, extract_json_from_images, json_from_text
 from src.app.feedback_star import STAR_GESTOR_PADRAO, StarInput, build_prompt_star, render_pdf_star
 from src.app.excel_import import import_5_files_to_payload
+from src.app.dept_import import import_departamentos
 from src.app.ocr_fallback import extract_payload_from_prints_ocr
 from src.app.projection import projetar_resultados
 from src.app.calendar_utils import compute_calendar_info
@@ -1753,7 +1754,10 @@ def page_highlights(settings, conn) -> None:
         st.info("Nenhuma análise ativa. Carregue uma no **Histórico**.")
         return
 
-    row = get_analysis(conn, int(analysis_id))
+    user = st.session_state.get("user") or {}
+    owner_id = int(user.get("id") or 0) or None
+    is_admin = str(user.get("role") or "").lower() == "admin"
+    row = get_analysis(conn, int(analysis_id), owner_user_id=owner_id, include_all=is_admin)
     if not row:
         st.warning("Análise não encontrada.")
         return
@@ -1899,6 +1903,258 @@ def page_highlights(settings, conn) -> None:
             st.info("Clique em **Gerar análise profunda**.")
 
 
+def page_sala_gestao(settings, conn) -> None:
+    render_header("Sala de Gestão", "Reunião diária: projeção, evolução, vendedores e departamentos.")
+
+    user = st.session_state.get("user") or {}
+    owner_id = int(user.get("id") or 0) or None
+    is_admin = str(user.get("role") or "").lower() == "admin"
+
+    cal = st.session_state.get("calendar_info") or {}
+    dias_restantes = int(cal.get("dias_uteis_restantes") or 0)
+
+    tab_kpis, tab_vend, tab_dept, tab_radar = st.tabs(
+        ["Projeção e KPIs", "Vendedores", "Departamentos", "Radar (manual)"]
+    )
+
+    def _last_payload_of_kind(kind: str) -> dict | None:
+        rows = list_analyses(conn, limit=80, owner_user_id=owner_id, include_all=is_admin)
+        for r in rows:
+            try:
+                p = json.loads(r.payload_json)
+            except Exception:
+                continue
+            if isinstance(p, dict) and p.get("_kind") == kind:
+                return p
+        return None
+
+    with tab_kpis:
+        st.markdown("### Projeção de faturamento / alcance")
+
+        active_id = st.session_state.get("active_analysis_id")
+        payload_base: dict | None = None
+        if active_id is not None:
+            r0 = get_analysis(conn, int(active_id), owner_user_id=owner_id, include_all=is_admin)
+            if r0:
+                try:
+                    payload_base = json.loads(r0.payload_json)
+                except Exception:
+                    payload_base = None
+
+        totais = (payload_base or {}).get("totais") if isinstance(payload_base, dict) else {}
+        if not isinstance(totais, dict):
+            totais = {}
+
+        fat_atual = float(totais.get("faturamento_total") or 0.0)
+        meta_total = float(totais.get("meta_total") or 0.0)
+        falta_meta = max(0.0, meta_total - fat_atual) if meta_total > 0 else 0.0
+        falta_por_dia = (falta_meta / dias_restantes) if dias_restantes > 0 else None
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Faturamento até o momento", f"R$ {fat_atual:,.2f}")
+        c2.metric("Meta (time)", f"R$ {meta_total:,.2f}" if meta_total > 0 else "—")
+        c3.metric("Falta para meta", f"R$ {falta_meta:,.2f}" if meta_total > 0 else "—")
+        c4.metric("Falta por dia útil restante", f"R$ {falta_por_dia:,.2f}" if falta_por_dia is not None else "—")
+
+        st.markdown("### KPIs do dia anterior (digitação)")
+        prev = _last_payload_of_kind("sala_gestao_kpis") or {}
+        prev_k = prev.get("kpis") if isinstance(prev, dict) else {}
+        if not isinstance(prev_k, dict):
+            prev_k = {}
+
+        k1, k2, k3 = st.columns(3)
+        nf_dia = k1.number_input(
+            "NFs feitas no dia anterior",
+            min_value=0,
+            value=int(prev_k.get("nf_dia_anterior") or 0),
+        )
+        nf_acum = k2.number_input(
+            "Acumulado de NFs (total)",
+            min_value=0,
+            value=int(prev_k.get("nf_acumulado") or 0),
+        )
+        cli_dia = k3.number_input(
+            "Clientes atendidos (dia anterior)",
+            min_value=0,
+            value=int(prev_k.get("clientes_dia_anterior") or 0),
+        )
+        k4, k5, k6 = st.columns(3)
+        cli_acum = k4.number_input(
+            "Clientes atendidos (acumulado)",
+            min_value=0,
+            value=int(prev_k.get("clientes_acumulado") or 0),
+        )
+        marg_ontem = k5.number_input(
+            "Margem dia anterior (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=float(prev_k.get("margem_dia_anterior_pct") or 0.0),
+        )
+        marg_hoje = k6.number_input(
+            "Margem hoje (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=float(prev_k.get("margem_hoje_pct") or 0.0),
+        )
+
+        st.metric(
+            "Margem (pp) — hoje vs ontem",
+            f"{marg_hoje:.1f}%",
+            delta=round(float(marg_hoje) - float(marg_ontem), 1),
+            help="Delta em pontos percentuais (pp).",
+        )
+
+        if st.button("💾 Salvar KPIs (Sala de Gestão)", use_container_width=True):
+            payload = {
+                "_kind": "sala_gestao_kpis",
+                "periodo": str((payload_base or {}).get("periodo") or "Sala de Gestão"),
+                "totais": totais,
+                "kpis": {
+                    "nf_dia_anterior": int(nf_dia),
+                    "nf_acumulado": int(nf_acum),
+                    "clientes_dia_anterior": int(cli_dia),
+                    "clientes_acumulado": int(cli_acum),
+                    "margem_dia_anterior_pct": float(marg_ontem),
+                    "margem_hoje_pct": float(marg_hoje),
+                },
+            }
+            analysis_id = save_analysis(
+                conn,
+                periodo=str(payload.get("periodo") or "Sala de Gestão"),
+                provider_used="manual_kpis",
+                model_used="manual_kpis",
+                parent_analysis_id=None,
+                owner_user_id=owner_id,
+                payload=payload,
+                total_bonus=0.0,
+            )
+            st.success(f"KPIs salvos como análise **#{analysis_id}**.")
+
+    with tab_vend:
+        st.markdown("### Análise de vendedores")
+        active_id = st.session_state.get("active_analysis_id")
+        if active_id is None:
+            st.info("Defina uma análise ativa no **Histórico** (vendedores) para visualizar aqui.")
+        else:
+            row = get_analysis(conn, int(active_id), owner_user_id=owner_id, include_all=is_admin)
+            if not row:
+                st.warning("Análise ativa não encontrada.")
+            else:
+                payload = json.loads(row.payload_json)
+                sellers = parse_sellers(payload)
+                results, _ = calcular_time(sellers) if sellers else ([], 0.0)
+                df = pd.DataFrame([r.__dict__ for r in results]) if results else pd.DataFrame()
+                if df.empty:
+                    st.caption("Sem vendedores.")
+                else:
+                    def _bucket(v):
+                        if v is None or (isinstance(v, float) and pd.isna(v)):
+                            return "Sem dado"
+                        x = float(v)
+                        if x >= 100.0:
+                            return "Meta batida (>=100%)"
+                        if x >= 80.0:
+                            return "Alcance >= 80%"
+                        return "Alcance < 80%"
+
+                    df["faixa_alcance"] = df["alcance_pct"].apply(_bucket)
+                    st.dataframe(
+                        df[["nome", "alcance_pct", "margem_pct", "conversao_pct", "interacoes", "faixa_alcance"]],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Meta batida", str(int((df["faixa_alcance"] == "Meta batida (>=100%)").sum())))
+                    c2.metric(">= 80%", str(int((df["faixa_alcance"] == "Alcance >= 80%").sum())))
+                    c3.metric("< 80%", str(int((df["faixa_alcance"] == "Alcance < 80%").sum())))
+
+    with tab_dept:
+        st.markdown("### Performance por departamentos")
+        dept_files = st.file_uploader(
+            "Arquivos de departamentos (.xlsx/.xls)",
+            type=["xlsx", "xls"],
+            accept_multiple_files=True,
+            key="dept_upload",
+        )
+        if dept_files and st.button("📥 Importar Departamentos (Excel/HTML)", use_container_width=True):
+            try:
+                res = import_departamentos([(f.name, f.read()) for f in dept_files])
+                st.session_state["dept_payload"] = res.payload
+                st.session_state["dept_meta"] = res.meta
+                if res.warnings:
+                    st.warning("Importado com avisos.")
+                    for w in res.warnings:
+                        st.caption(w)
+                else:
+                    st.success("Departamentos importados.")
+            except Exception as e:
+                st.error("Falha ao importar departamentos.")
+                st.caption(str(e))
+
+        dept_payload = st.session_state.get("dept_payload")
+        if isinstance(dept_payload, dict) and isinstance(dept_payload.get("departamentos"), list):
+            ddf = pd.DataFrame(dept_payload["departamentos"])
+            if not ddf.empty:
+                if "meta_faturamento" in ddf.columns and "faturamento" in ddf.columns:
+                    ddf["falta_meta"] = ddf.apply(
+                        lambda r: (float(r["meta_faturamento"]) - float(r["faturamento"]))
+                        if pd.notna(r.get("meta_faturamento")) and pd.notna(r.get("faturamento"))
+                        else None,
+                        axis=1,
+                    )
+                st.dataframe(ddf, use_container_width=True, hide_index=True)
+
+                st.markdown("### Potenciais oportunidades (alcance projetado >= 80)")
+                if "alcance_projetado_pct" in ddf.columns:
+                    s = pd.to_numeric(ddf["alcance_projetado_pct"], errors="coerce")
+                    opp = ddf[s >= 80].copy()
+                    if not opp.empty:
+                        st.dataframe(
+                            opp.sort_values("alcance_projetado_pct", ascending=False),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                    else:
+                        st.caption("Nenhum departamento com alcance projetado >= 80.")
+
+                if st.button("💾 Salvar Departamentos (Sala de Gestão)", use_container_width=True):
+                    payload = dict(dept_payload)
+                    payload["_kind"] = "sala_gestao_departamentos"
+                    analysis_id = save_analysis(
+                        conn,
+                        periodo=str((payload_base or {}).get("periodo") or "Sala de Gestão (Dept)"),
+                        provider_used=str((st.session_state.get("dept_meta") or {}).get("provider") or "dept"),
+                        model_used=str((st.session_state.get("dept_meta") or {}).get("model") or "dept"),
+                        parent_analysis_id=None,
+                        owner_user_id=owner_id,
+                        payload=payload,
+                        total_bonus=0.0,
+                    )
+                    st.success(f"Departamentos salvos como análise **#{analysis_id}**.")
+        else:
+            st.caption("Nenhuma base de departamentos carregada ainda.")
+
+    with tab_radar:
+        st.markdown("### Radar de oportunidades (manual)")
+        radar = st.session_state.get("radar") or [{"oportunidade": "", "responsavel": "", "impacto": "", "prazo": ""}]
+        rdf = pd.DataFrame(radar)
+        edited = st.data_editor(rdf, num_rows="dynamic", use_container_width=True, hide_index=True)
+        st.session_state["radar"] = edited.to_dict(orient="records")
+        if st.button("💾 Salvar Radar (Sala de Gestão)", use_container_width=True):
+            payload = {"_kind": "sala_gestao_radar", "radar": st.session_state.get("radar") or []}
+            analysis_id = save_analysis(
+                conn,
+                periodo="Sala de Gestão (Radar)",
+                provider_used="manual_radar",
+                model_used="manual_radar",
+                parent_analysis_id=None,
+                owner_user_id=owner_id,
+                payload=payload,
+                total_bonus=0.0,
+            )
+            st.success(f"Radar salvo como análise **#{analysis_id}**.")
+
+
 def main() -> None:
     st.set_page_config(page_title="Dashboard Performance", page_icon="📊", layout="wide")
     # Perfil de layout (Mobile / Tablet / Desktop)
@@ -2036,7 +2292,7 @@ def main() -> None:
     st.markdown("### Selecione o Dashboard:")
     dash = st.radio(
         "",
-        options=["Dashboard de Bônus", "Dashboard de Performance"],
+        options=["Dashboard de Bônus", "Dashboard de Performance", "Sala de Gestão"],
         horizontal=True,
         label_visibility="collapsed",
     )
@@ -2055,7 +2311,7 @@ def main() -> None:
             page_insights(settings, conn)
         with tabs[5]:
             page_history(settings, conn)
-    else:
+    elif dash == "Dashboard de Performance":
         tabs = st.tabs(["Visão Geral", "Indicadores", "Highlights (Semanal/Mensal)", "Simulação/Projeção", "Feedback STAR", "Análise com IA", "Histórico"])
         with tabs[0]:
             page_performance(settings, conn, key_prefix="perf_overview")
@@ -2071,6 +2327,8 @@ def main() -> None:
             page_insights(settings, conn)
         with tabs[6]:
             page_history(settings, conn)
+    else:
+        page_sala_gestao(settings, conn)
 
 
 if __name__ == "__main__":
