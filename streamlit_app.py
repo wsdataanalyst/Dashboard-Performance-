@@ -1915,8 +1915,8 @@ def page_sala_gestao(settings, conn) -> None:
     cal = st.session_state.get("calendar_info") or {}
     dias_restantes = int(cal.get("dias_uteis_restantes") or 0)
 
-    tab_kpis, tab_vend, tab_dept, tab_radar = st.tabs(
-        ["Projeção e KPIs", "Vendedores", "Departamentos", "Radar (manual)"]
+    tab_consol, tab_kpis, tab_vend, tab_dept, tab_radar = st.tabs(
+        ["Consolidado", "Projeção e KPIs", "Vendedores", "Departamentos", "Radar (manual)"]
     )
 
     def _last_payload_of_kind(kind: str) -> dict | None:
@@ -1929,6 +1929,154 @@ def page_sala_gestao(settings, conn) -> None:
             if isinstance(p, dict) and p.get("_kind") == kind:
                 return p
         return None
+
+    with tab_consol:
+        st.markdown("### Visão consolidada (tudo em um só lugar)")
+        st.caption("Use esta visão para a reunião — KPIs, vendedores, departamentos e radar no mesmo painel.")
+
+        active_id = st.session_state.get("active_analysis_id")
+        payload_base: dict | None = None
+        if active_id is not None:
+            r0 = get_analysis(conn, int(active_id), owner_user_id=owner_id, include_all=is_admin)
+            if r0:
+                try:
+                    payload_base = json.loads(r0.payload_json)
+                except Exception:
+                    payload_base = None
+
+        totais = (payload_base or {}).get("totais") if isinstance(payload_base, dict) else {}
+        if not isinstance(totais, dict):
+            totais = {}
+
+        cal = st.session_state.get("calendar_info") or {}
+        dias_restantes = int(cal.get("dias_uteis_restantes") or 0)
+
+        fat_atual = float(st.session_state.get("sg_fat_total_excel") or totais.get("faturamento_total") or 0.0)
+        meta_total = float(st.session_state.get("sg_meta_total_excel") or totais.get("meta_total") or 0.0)
+        falta_meta = max(0.0, meta_total - fat_atual) if meta_total > 0 else 0.0
+        falta_por_dia = (falta_meta / dias_restantes) if dias_restantes > 0 else None
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Faturamento (até agora)", f"R$ {fat_atual:,.2f}")
+        c2.metric("Meta (time)", f"R$ {meta_total:,.2f}" if meta_total > 0 else "—")
+        c3.metric("Falta p/ meta", f"R$ {falta_meta:,.2f}" if meta_total > 0 else "—")
+        c4.metric("Falta por dia útil", f"R$ {falta_por_dia:,.2f}" if falta_por_dia is not None else "—")
+
+        prev = _last_payload_of_kind("sala_gestao_kpis") or {}
+        prev_k = prev.get("kpis") if isinstance(prev, dict) else {}
+        if not isinstance(prev_k, dict):
+            prev_k = {}
+
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("NFs (dia anterior)", int(prev_k.get("nf_dia_anterior") or 0))
+        k2.metric("NFs (acumulado)", int(prev_k.get("nf_acumulado") or 0))
+        k3.metric("Clientes (dia anterior)", int(prev_k.get("clientes_dia_anterior") or 0))
+        k4.metric("Clientes (acumulado)", int(prev_k.get("clientes_acumulado") or 0))
+
+        # Vendedores (alcance)
+        st.markdown("### Vendedores — faixas de % Alcance")
+        vend_df = pd.DataFrame()
+        if isinstance(payload_base, dict):
+            sellers = parse_sellers(payload_base)
+            results, _ = calcular_time(sellers) if sellers else ([], 0.0)
+            vend_df = pd.DataFrame([r.__dict__ for r in results]) if results else pd.DataFrame()
+        if vend_df.empty:
+            st.caption("Sem vendedores (defina uma análise ativa).")
+            meta_batida = acima_80 = abaixo_80 = 0
+        else:
+            def _bucket(v):
+                # Regra da sala: meta batida vem de % Alcance >= 100
+                if v is None or (isinstance(v, float) and pd.isna(v)):
+                    return "Sem dado"
+                x = float(v)
+                if x >= 100.0:
+                    return "Meta batida (>=100%)"
+                if x >= 80.0:
+                    return "Alcance >= 80%"
+                return "Alcance < 80%"
+
+            vend_df["faixa_alcance"] = vend_df["alcance_pct"].apply(_bucket)
+            meta_batida = int((vend_df["faixa_alcance"] == "Meta batida (>=100%)").sum())
+            acima_80 = int((vend_df["faixa_alcance"] == "Alcance >= 80%").sum())
+            abaixo_80 = int((vend_df["faixa_alcance"] == "Alcance < 80%").sum())
+            st.dataframe(
+                vend_df[["nome", "alcance_pct", "margem_pct", "conversao_pct", "interacoes", "faixa_alcance"]],
+                use_container_width=True,
+                hide_index=True,
+            )
+        vc1, vc2, vc3 = st.columns(3)
+        vc1.metric("Meta batida (>=100%)", str(meta_batida))
+        vc2.metric("Alcance >=80%", str(acima_80))
+        vc3.metric("Alcance <80%", str(abaixo_80))
+
+        # Departamentos
+        st.markdown("### Departamentos (última base carregada)")
+        dept_payload = st.session_state.get("dept_payload")
+        if isinstance(dept_payload, dict) and isinstance(dept_payload.get("departamentos"), list):
+            ddf = pd.DataFrame(dept_payload["departamentos"])
+            if not ddf.empty:
+                show_cols = [c for c in ["departamento", "participacao_pct", "alcance_projetado_pct", "margem_pct", "faturamento", "meta_faturamento"] if c in ddf.columns]
+                if "meta_faturamento" in ddf.columns and "faturamento" in ddf.columns:
+                    ddf["falta_meta"] = ddf.apply(
+                        lambda r: (float(r["meta_faturamento"]) - float(r["faturamento"]))
+                        if pd.notna(r.get("meta_faturamento")) and pd.notna(r.get("faturamento"))
+                        else None,
+                        axis=1,
+                    )
+                    if "falta_meta" not in show_cols:
+                        show_cols.append("falta_meta")
+                st.dataframe(ddf[show_cols] if show_cols else ddf, use_container_width=True, hide_index=True)
+        else:
+            st.caption("Nenhuma base de departamentos carregada ainda.")
+
+        st.markdown("### Radar (manual)")
+        radar = st.session_state.get("radar") or []
+        if radar:
+            st.dataframe(pd.DataFrame(radar), use_container_width=True, hide_index=True)
+        else:
+            st.caption("Sem itens no radar.")
+
+        st.markdown("### Insights (IA) — Sala de Gestão (consolidado)")
+        provider: Provider = st.selectbox(
+            "Provedor de IA (Sala de Gestão)",
+            options=["auto", "gemini", "openai"],
+            format_func=lambda x: {"auto": "Auto (Gemini → OpenAI)", "gemini": "Gemini", "openai": "OpenAI"}[x],
+            key="sg_provider",
+        )
+        dados_json = json.dumps(
+            {
+                "totais": totais,
+                "dias_uteis_restantes": dias_restantes,
+                "kpis_dia_anterior": prev_k,
+                "vendedores_faixas": {"meta_batida": meta_batida, "alcance_ge_80": acima_80, "alcance_lt_80": abaixo_80},
+                "vendedores": vend_df.to_dict(orient="records") if not vend_df.empty else [],
+                "departamentos": (st.session_state.get("dept_payload") or {}).get("departamentos", []) if isinstance(st.session_state.get("dept_payload"), dict) else [],
+                "radar": st.session_state.get("radar") or [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        prompt = (
+            "Gere um resumo executivo para a Sala de Gestão (sem markdown). "
+            "Foque em: faturamento vs meta, falta para meta, falta por dia útil restante, "
+            "sinais do dia anterior (NFs, clientes, margem), faixas de %alcance dos vendedores, "
+            "e oportunidades por departamento (alcance projetado >=80 e falta_meta quando existir). "
+            "Retorne JSON EXATO: {\"texto\":\"...\"}. DADOS:\n"
+            + dados_json
+        )
+        if st.button("🧠 Gerar insights (consolidado)", use_container_width=True, key="btn_sg_insights"):
+            try:
+                with st.spinner("Gerando insights..."):
+                    resp, prov_used, model_used = json_from_text(settings=settings, provider=provider, prompt=prompt)
+                st.session_state["sg_insights"] = {"t": str(resp.get("texto") or "").strip(), "p": prov_used, "m": model_used}
+            except Exception as e:
+                st.error("Falha ao gerar insights.")
+                st.caption(str(e))
+
+        t = st.session_state.get("sg_insights")
+        if isinstance(t, dict) and t.get("t"):
+            st.caption(f"Gerado por **{t.get('p')}** (`{t.get('m')}`).")
+            st.text_area("Insights — Sala de Gestão", value=str(t.get("t")), height=300)
 
     with tab_kpis:
         st.markdown("### Projeção de faturamento / alcance")
@@ -2081,6 +2229,7 @@ def page_sala_gestao(settings, conn) -> None:
                     st.caption("Sem vendedores.")
                 else:
                     def _bucket(v):
+                        # Regra da sala: meta batida vem de % Alcance >= 100
                         if v is None or (isinstance(v, float) and pd.isna(v)):
                             return "Sem dado"
                         x = float(v)
