@@ -1963,8 +1963,10 @@ def page_sala_gestao(settings, conn) -> None:
         cal = st.session_state.get("calendar_info") or {}
         dias_restantes = int(cal.get("dias_uteis_restantes") or 0)
 
-        fat_atual = float(st.session_state.get("sg_fat_total_excel") or totais.get("faturamento_total") or 0.0)
-        meta_total = float(st.session_state.get("sg_meta_total_excel") or totais.get("meta_total") or 0.0)
+        # Meta geral do time deve vir do payload/totais (inclui meta da Laila sem exibir ela).
+        # O Excel "Faturamento e Atendidos" serve para KPIs diários (dia anterior), não para meta geral.
+        fat_atual = float(totais.get("faturamento_total") or 0.0)
+        meta_total = float(totais.get("meta_total") or 0.0)
         falta_meta = max(0.0, meta_total - fat_atual) if meta_total > 0 else 0.0
         falta_por_dia = (falta_meta / dias_restantes) if dias_restantes > 0 else None
 
@@ -1980,10 +1982,16 @@ def page_sala_gestao(settings, conn) -> None:
             prev_k = {}
 
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("NFs (dia anterior)", int(prev_k.get("nf_dia_anterior") or 0))
-        k2.metric("NFs (acumulado)", int(prev_k.get("nf_acumulado") or 0))
+        k1.metric("Faturamento (dia anterior)", f"R$ {float(prev_k.get('faturamento_dia_anterior') or 0.0):,.2f}" if prev_k.get("faturamento_dia_anterior") is not None else "—")
+        k2.metric("NFs (dia anterior)", int(prev_k.get("nf_dia_anterior") or 0))
         k3.metric("Clientes (dia anterior)", int(prev_k.get("clientes_dia_anterior") or 0))
-        k4.metric("Clientes (acumulado)", int(prev_k.get("clientes_acumulado") or 0))
+        k4.metric("Margem (hoje vs ontem)", f"{float(prev_k.get('margem_hoje_pct') or 0.0):.1f}%", delta=round(float(prev_k.get("margem_hoje_pct") or 0.0) - float(prev_k.get("margem_dia_anterior_pct") or 0.0), 1))
+
+        k5, k6, k7, k8 = st.columns(4)
+        k5.metric("Acumulado NFs", int(prev_k.get("nf_acumulado") or 0))
+        k6.metric("Acumulado Clientes", int(prev_k.get("clientes_acumulado") or 0))
+        k7.metric("Meta por dia útil (necessária)", f"R$ {falta_por_dia:,.2f}" if falta_por_dia is not None else "—")
+        k8.metric("Falta p/ meta", f"R$ {falta_meta:,.2f}" if meta_total > 0 else "—")
 
         # Vendedores (alcance)
         st.markdown("### Vendedores — faixas de % Alcance")
@@ -2026,8 +2034,15 @@ def page_sala_gestao(settings, conn) -> None:
         # Departamentos
         st.markdown("### Departamentos (última base carregada)")
         dept_payload = st.session_state.get("dept_payload")
+        def _dept_ok(name: object) -> bool:
+            s = str(name or "").strip().lower()
+            s = s.replace("á","a").replace("ã","a").replace("â","a").replace("é","e").replace("ê","e").replace("í","i").replace("ó","o").replace("ô","o").replace("õ","o").replace("ú","u").replace("ç","c")
+            if not s:
+                return False
+            return s not in {"outros", "paineis eletricos", "paineis eletrônicos", "paineis eletrico"}
+
         if isinstance(dept_payload, dict) and isinstance(dept_payload.get("departamentos"), list):
-            ddf = pd.DataFrame(dept_payload["departamentos"])
+            ddf = pd.DataFrame([d for d in dept_payload["departamentos"] if _dept_ok(d.get("departamento"))])
             if not ddf.empty:
                 show_cols = [c for c in ["departamento", "participacao_pct", "alcance_projetado_pct", "margem_pct", "faturamento", "meta_faturamento"] if c in ddf.columns]
                 if "meta_faturamento" in ddf.columns and "faturamento" in ddf.columns:
@@ -2057,25 +2072,51 @@ def page_sala_gestao(settings, conn) -> None:
             format_func=lambda x: {"auto": "Auto (Gemini → OpenAI)", "gemini": "Gemini", "openai": "OpenAI"}[x],
             key="sg_provider",
         )
+        # Estrutura de dados que a IA deve seguir
+        depts_for_ai = []
+        try:
+            if isinstance(st.session_state.get("dept_payload"), dict):
+                depts_for_ai = [d for d in (st.session_state["dept_payload"].get("departamentos") or []) if _dept_ok((d or {}).get("departamento"))]
+        except Exception:
+            depts_for_ai = []
+
         dados_json = json.dumps(
             {
-                "totais": totais,
+                "meta_faturamento_total": meta_total,
+                "faturamento_total_ate_agora": fat_atual,
+                "falta_para_meta": falta_meta,
                 "dias_uteis_restantes": dias_restantes,
-                "kpis_dia_anterior": prev_k,
-                "vendedores_faixas": {"meta_batida": meta_batida, "alcance_ge_80": acima_80, "alcance_lt_80": abaixo_80},
-                "vendedores": vend_df.to_dict(orient="records") if not vend_df.empty else [],
-                "departamentos": (st.session_state.get("dept_payload") or {}).get("departamentos", []) if isinstance(st.session_state.get("dept_payload"), dict) else [],
-                "radar": st.session_state.get("radar") or [],
+                "meta_por_dia_util_necessaria": falta_por_dia,
+                "faturamento_dia_anterior": prev_k.get("faturamento_dia_anterior"),
+                "nfs_dia_anterior": prev_k.get("nf_dia_anterior"),
+                "nfs_acumulado": prev_k.get("nf_acumulado"),
+                "clientes_dia_anterior": prev_k.get("clientes_dia_anterior"),
+                "clientes_acumulado": prev_k.get("clientes_acumulado"),
+                "margem_dia_anterior_pct": prev_k.get("margem_dia_anterior_pct"),
+                "margem_hoje_pct": prev_k.get("margem_hoje_pct"),
+                "departamentos": depts_for_ai,
             },
             ensure_ascii=False,
             indent=2,
         )
+
         prompt = (
-            "Gere um resumo executivo para a Sala de Gestão (sem markdown). "
-            "Foque em: faturamento vs meta, falta para meta, falta por dia útil restante, "
-            "sinais do dia anterior (NFs, clientes, margem), faixas de %alcance dos vendedores, "
-            "e oportunidades por departamento (alcance projetado >=80 e falta_meta quando existir). "
-            "Retorne JSON EXATO: {\"texto\":\"...\"}. DADOS:\n"
+            "Você está preparando a leitura da reunião 'Sala de Gestão'.\n"
+            "Retorne APENAS um JSON no formato EXATO: {\"texto\":\"...\"}.\n"
+            "Sem markdown.\n\n"
+            "A resposta deve vir em blocos com títulos:\n"
+            "1) Meta Faturamento\n"
+            "2) Dia anterior\n"
+            "3) Volume (NFs e Clientes)\n"
+            "4) Departamentos\n\n"
+            "Regras:\n"
+            "- Use os números fornecidos em DADOS (não invente).\n"
+            "- Em 'Meta Faturamento', cite: Meta total, Faturamento até agora, Falta pra meta, Meta por dia útil.\n"
+            "- Em 'Dia anterior', cite o Faturamento dia anterior e Margem (hoje vs ontem) se houver.\n"
+            "- Em 'Departamentos', listar quantos deptos estão com Alcance Projetado >=100, >=80 e <80; "
+            "apontar melhor margem e pior margem; e oportunidades (falta para meta baixa).\n"
+            "- IGNORE completamente departamentos 'Outros' e 'Paineis Eletricos'.\n\n"
+            "DADOS:\n"
             + dados_json
         )
         if st.button("🧠 Gerar insights (consolidado)", use_container_width=True, key="btn_sg_insights"):
@@ -2114,10 +2155,7 @@ def page_sala_gestao(settings, conn) -> None:
                     st.session_state["sg_nf_acum"] = int(res.kpis.get("nf_acumulado") or 0)
                     st.session_state["sg_cli_dia"] = int(res.kpis.get("clientes_dia_anterior") or 0)
                     st.session_state["sg_cli_acum"] = int(res.kpis.get("clientes_acumulado") or 0)
-                    # opcional: sobrescreve totais para projeção se existirem no excel
-                    st.session_state["sg_fat_total_excel"] = float(res.kpis.get("faturamento_total") or 0.0)
-                    if res.kpis.get("meta_total") is not None:
-                        st.session_state["sg_meta_total_excel"] = float(res.kpis.get("meta_total") or 0.0)
+                    st.session_state["sg_fat_dia_anterior"] = float(res.kpis.get("faturamento_dia_anterior") or 0.0)
                     st.success(
                         f"KPIs carregados (ref: dia {res.kpis.get('dia_referencia')} {res.kpis.get('mes_referencia') or ''})."
                     )
@@ -2140,8 +2178,8 @@ def page_sala_gestao(settings, conn) -> None:
         if not isinstance(totais, dict):
             totais = {}
 
-        fat_atual = float(st.session_state.get("sg_fat_total_excel") or totais.get("faturamento_total") or 0.0)
-        meta_total = float(st.session_state.get("sg_meta_total_excel") or totais.get("meta_total") or 0.0)
+        fat_atual = float(totais.get("faturamento_total") or 0.0)
+        meta_total = float(totais.get("meta_total") or 0.0)
         falta_meta = max(0.0, meta_total - fat_atual) if meta_total > 0 else 0.0
         falta_por_dia = (falta_meta / dias_restantes) if dias_restantes > 0 else None
 
@@ -2205,6 +2243,7 @@ def page_sala_gestao(settings, conn) -> None:
                 "periodo": str((payload_base or {}).get("periodo") or "Sala de Gestão"),
                 "totais": totais,
                 "kpis": {
+                    "faturamento_dia_anterior": float(st.session_state.get("sg_fat_dia_anterior") or 0.0) if st.session_state.get("sg_fat_dia_anterior") is not None else None,
                     "nf_dia_anterior": int(nf_dia),
                     "nf_acumulado": int(nf_acum),
                     "clientes_dia_anterior": int(cli_dia),

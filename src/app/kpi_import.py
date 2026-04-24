@@ -99,7 +99,9 @@ def import_faturamento_atendidos_xlsx(file_bytes: bytes) -> KpiImportResult:
 
     kpis = {
         "faturamento_total": fat_total,
-        "meta_total": meta_val,
+        # Meta neste arquivo é diária (não a meta geral do mês/time)
+        "meta_dia": meta_val,
+        "faturamento_dia_anterior": _to_float(ref.get(col_fat)),
         "nf_dia_anterior": _to_int(ref.get(col_nf)),
         "clientes_dia_anterior": _to_int(ref.get(col_cli)),
         "nf_acumulado": _to_int(pd.to_numeric(df[col_nf], errors="coerce").fillna(0).sum()),
