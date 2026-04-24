@@ -1567,7 +1567,17 @@ def page_history(settings, conn) -> None:
     user = st.session_state.get("user") or {}
     owner_id = int(user.get("id") or 0) or None
     is_admin = str(user.get("role") or "").lower() == "admin"
-    rows = list_analyses(conn, limit=100, owner_user_id=owner_id, include_all=is_admin)
+    rows_all = list_analyses(conn, limit=150, owner_user_id=owner_id, include_all=is_admin)
+    # Histórico "base" (prints/excel de vendedores/bônus/performance) não deve misturar com registros da Sala de Gestão
+    rows: list = []
+    for r in rows_all:
+        try:
+            p = json.loads(r.payload_json)
+        except Exception:
+            p = None
+        kind = p.get("_kind") if isinstance(p, dict) else None
+        if not kind:
+            rows.append(r)
     if not rows:
         st.info("Histórico vazio. Faça sua primeira análise em **Upload e extração**.")
         return
@@ -2556,9 +2566,18 @@ def main() -> None:
             st.caption(f"Referência: {cal.get('ano')}/{mes_v:02d}")
         st.markdown("---")
         st.markdown("### 🕘 Histórico rápido")
-        rows = list_analyses(conn, limit=10, owner_user_id=owner_id, include_all=is_admin)
-        if rows:
-            options = {f"#{r.id} · {r.periodo}": r.id for r in rows}
+        rows_all = list_analyses(conn, limit=20, owner_user_id=owner_id, include_all=is_admin)
+        base_rows = []
+        for r in rows_all:
+            try:
+                p = json.loads(r.payload_json)
+            except Exception:
+                p = None
+            kind = p.get("_kind") if isinstance(p, dict) else None
+            if not kind:
+                base_rows.append(r)
+        if base_rows:
+            options = {f"#{r.id} · {r.periodo}": r.id for r in base_rows}
             pick = st.selectbox("Carregar análise", options=list(options.keys()))
             if st.button("📌 Tornar ativa", use_container_width=True):
                 st.session_state["active_analysis_id"] = int(options[pick])
