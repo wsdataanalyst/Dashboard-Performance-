@@ -2213,6 +2213,8 @@ def main() -> None:
         st.markdown("---")
         st.markdown("### 📌 Sessão")
         user = st.session_state.get("user") or {}
+        owner_id = int(user.get("id") or 0) or None
+        is_admin = str(user.get("role") or "").lower() == "admin"
         uname = str(user.get("name") or user.get("username") or "—")
         role = str(user.get("role") or "user")
         st.caption(f"Logado: **{uname}** ({role})")
