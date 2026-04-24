@@ -80,18 +80,46 @@ def refresh_payload_totais_from_vendedores(payload: dict[str, Any]) -> None:
         }
 
 
+def _sum_meta_total_from_raw_vendors(vendors: list[Any]) -> float | None:
+    ms = 0.0
+    cm = False
+    for item in vendors:
+        if not isinstance(item, dict):
+            continue
+        m = _to_float(item.get("meta_faturamento") or item.get("meta_total"))
+        if m is not None:
+            ms += m
+            cm = True
+    return ms if cm else None
+
+
 def filter_excluded_sellers_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """Remove vendedores excluídos (ex.: Laila) do JSON persistido e atualiza totais."""
+    """
+    Remove vendedores excluídos (ex.: Laila) do payload.
+
+    Regra de negócio: o(a) vendedor(a) excluído(a) não aparece em detalhes/dashboards,
+    mas a META do time pode permanecer a mesma. Por isso, preservamos `totais.meta_total`
+    considerando também os vendedores excluídos quando houver meta por vendedor.
+    """
     out = copy.deepcopy(payload)
     raw = out.get("vendedores")
     if not isinstance(raw, list):
         return out
+    meta_total_incl_excl = _sum_meta_total_from_raw_vendors(raw)
     out["vendedores"] = [
         x
         for x in raw
         if isinstance(x, dict) and not is_excluded_seller_name(str(x.get("nome") or ""))
     ]
     refresh_payload_totais_from_vendedores(out)
+    if meta_total_incl_excl is not None:
+        tot = out.get("totais")
+        if isinstance(tot, dict):
+            tot = dict(tot)
+            tot["meta_total"] = meta_total_incl_excl
+            out["totais"] = tot
+        else:
+            out["totais"] = {"meta_total": meta_total_incl_excl}
     return out
 
 
