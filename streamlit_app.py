@@ -1545,10 +1545,16 @@ def page_insights(settings, conn) -> None:
 
     df = pd.DataFrame([r.__dict__ for r in results]) if results else pd.DataFrame()
     df = _enrich_results_df_for_performance(df, sellers)
+    totais = payload.get("totais") if isinstance(payload, dict) else None
+    if not isinstance(totais, dict):
+        totais = {}
     dados_json = json.dumps(
         {
             "periodo": row.periodo,
             "total_bonus": total,
+            # Importante: `totais.meta_total` pode incluir meta de vendedores excluídos (ex.: Laila),
+            # sem que eles apareçam em vendedores/dashboards.
+            "totais": totais,
             "vendedores": df.to_dict(orient="records") if not df.empty else [],
         },
         ensure_ascii=False,
