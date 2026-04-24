@@ -37,6 +37,7 @@ from src.app.ai.router import Provider, extract_json_from_images, json_from_text
 from src.app.feedback_star import STAR_GESTOR_PADRAO, StarInput, build_prompt_star, render_pdf_star
 from src.app.excel_import import import_5_files_to_payload
 from src.app.dept_import import import_departamentos
+from src.app.kpi_import import import_faturamento_atendidos_xlsx
 from src.app.ocr_fallback import extract_payload_from_prints_ocr
 from src.app.projection import projetar_resultados
 from src.app.calendar_utils import compute_calendar_info
@@ -1931,6 +1932,37 @@ def page_sala_gestao(settings, conn) -> None:
     with tab_kpis:
         st.markdown("### Projeção de faturamento / alcance")
 
+        st.markdown("### Importar KPIs diários (Faturamento e Atendidos.xlsx)")
+        kpi_file = st.file_uploader(
+            "Arquivo diário (Faturamento e Atendidos.xlsx)",
+            type=["xlsx"],
+            accept_multiple_files=False,
+            key="kpi_daily_upload",
+        )
+        if kpi_file and st.button("📥 Carregar KPIs do Excel", use_container_width=True, key="btn_kpi_excel"):
+            try:
+                res = import_faturamento_atendidos_xlsx(kpi_file.read())
+                if res.warnings:
+                    st.warning("Importei, mas com avisos:")
+                    for w in res.warnings:
+                        st.caption(w)
+                if res.kpis:
+                    st.session_state["sg_nf_dia"] = int(res.kpis.get("nf_dia_anterior") or 0)
+                    st.session_state["sg_nf_acum"] = int(res.kpis.get("nf_acumulado") or 0)
+                    st.session_state["sg_cli_dia"] = int(res.kpis.get("clientes_dia_anterior") or 0)
+                    st.session_state["sg_cli_acum"] = int(res.kpis.get("clientes_acumulado") or 0)
+                    # opcional: sobrescreve totais para projeção se existirem no excel
+                    st.session_state["sg_fat_total_excel"] = float(res.kpis.get("faturamento_total") or 0.0)
+                    if res.kpis.get("meta_total") is not None:
+                        st.session_state["sg_meta_total_excel"] = float(res.kpis.get("meta_total") or 0.0)
+                    st.success(
+                        f"KPIs carregados (ref: dia {res.kpis.get('dia_referencia')} {res.kpis.get('mes_referencia') or ''})."
+                    )
+                    st.rerun()
+            except Exception as e:
+                st.error("Falha ao ler o Excel diário.")
+                st.caption(str(e))
+
         active_id = st.session_state.get("active_analysis_id")
         payload_base: dict | None = None
         if active_id is not None:
@@ -1945,8 +1977,8 @@ def page_sala_gestao(settings, conn) -> None:
         if not isinstance(totais, dict):
             totais = {}
 
-        fat_atual = float(totais.get("faturamento_total") or 0.0)
-        meta_total = float(totais.get("meta_total") or 0.0)
+        fat_atual = float(st.session_state.get("sg_fat_total_excel") or totais.get("faturamento_total") or 0.0)
+        meta_total = float(st.session_state.get("sg_meta_total_excel") or totais.get("meta_total") or 0.0)
         falta_meta = max(0.0, meta_total - fat_atual) if meta_total > 0 else 0.0
         falta_por_dia = (falta_meta / dias_restantes) if dias_restantes > 0 else None
 
@@ -1966,23 +1998,23 @@ def page_sala_gestao(settings, conn) -> None:
         nf_dia = k1.number_input(
             "NFs feitas no dia anterior",
             min_value=0,
-            value=int(prev_k.get("nf_dia_anterior") or 0),
+            value=int(st.session_state.get("sg_nf_dia") or prev_k.get("nf_dia_anterior") or 0),
         )
         nf_acum = k2.number_input(
             "Acumulado de NFs (total)",
             min_value=0,
-            value=int(prev_k.get("nf_acumulado") or 0),
+            value=int(st.session_state.get("sg_nf_acum") or prev_k.get("nf_acumulado") or 0),
         )
         cli_dia = k3.number_input(
             "Clientes atendidos (dia anterior)",
             min_value=0,
-            value=int(prev_k.get("clientes_dia_anterior") or 0),
+            value=int(st.session_state.get("sg_cli_dia") or prev_k.get("clientes_dia_anterior") or 0),
         )
         k4, k5, k6 = st.columns(3)
         cli_acum = k4.number_input(
             "Clientes atendidos (acumulado)",
             min_value=0,
-            value=int(prev_k.get("clientes_acumulado") or 0),
+            value=int(st.session_state.get("sg_cli_acum") or prev_k.get("clientes_acumulado") or 0),
         )
         marg_ontem = k5.number_input(
             "Margem dia anterior (%)",
