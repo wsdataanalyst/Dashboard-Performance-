@@ -508,8 +508,9 @@ def _ensure_db():
     conn = connect(settings.db_path)
     init_db(conn)
     # Bootstrap: garante admin no DB e atribui ownership às análises antigas
-    admin_user = settings.admin_username or "admin"
-    admin_pass = settings.admin_password or "admin"
+    # Defaults precisam continuar compatíveis com o login antigo do app
+    admin_user = settings.admin_username or "wsdataanalyst"
+    admin_pass = settings.admin_password or "#P161217m"
     admin_id = ensure_admin_user(
         conn,
         username=admin_user,
