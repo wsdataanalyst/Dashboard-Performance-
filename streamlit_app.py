@@ -626,6 +626,13 @@ def page_upload(settings, conn) -> None:
                 st.image(b, caption=n, use_container_width=True)
 
     st.markdown("---")
+    # `periodo` é usado por fluxos de import (Excel/OCR/IA), então precisa existir antes.
+    left, right = st.columns([1, 1])
+    with left:
+        periodo = st.text_input("Período", value="")
+    with right:
+        st.caption("Dica: algo como `Abril/2026` ou `Abril (até 15/04)`.")
+
     st.markdown("### 📄 Importar Excel (mais confiável que OCR)")
     excel_files = st.file_uploader(
         "Envie os 5 arquivos (um por print) — aceita .xlsx / .xls (inclui export HTML).",
@@ -651,12 +658,6 @@ def page_upload(settings, conn) -> None:
             except Exception as e:
                 st.error("Falha ao importar Excel/HTML.")
                 st.caption(str(e))
-
-    left, right = st.columns([1, 1])
-    with left:
-        periodo = st.text_input("Período", value="")
-    with right:
-        st.caption("Dica: algo como `Abril/2026` ou `Abril (até 15/04)`.")
 
     b1, b2, b3 = st.columns([1, 1, 1])
     with b1:
