@@ -1,0 +1,18 @@
+streamlit>=1.36.0
+pandas>=2.0.0
+plotly>=5.17.0
+Pillow>=10.0.0
+python-dotenv>=1.0.0
+
+# IA
+google-generativeai>=0.8.6
+openai>=1.40.0
+
+# DB / util
+pydantic>=2.6.0
+
+# PDF
+fpdf2>=2.7.0
+
+# Calendário (feriados)
+holidays>=0.50
