@@ -28,6 +28,8 @@ from src.app.storage import (
 from src.app.theme import inject_styles, render_header
 from src.app.ai.router import Provider, extract_json_from_images, json_from_text
 from src.app.feedback_star import STAR_GESTOR_PADRAO, StarInput, build_prompt_star, render_pdf_star
+from src.app.excel_import import import_5_files_to_payload
+from src.app.ocr_fallback import extract_payload_from_prints_ocr
 from src.app.projection import projetar_resultados
 from src.app.calendar_utils import compute_calendar_info
 
@@ -573,7 +575,7 @@ def _uploads_dir(settings) -> Path:
 def page_upload(settings, conn) -> None:
     render_header(
         "Upload e extração",
-        "Envie prints → IA extrai JSON → você revisa → salva no histórico.",
+        "Envie prints (ou Excel) → extrai JSON → você revisa → salva no histórico.",
         right="Fallback Gemini ↔ OpenAI",
     )
 
@@ -624,6 +626,31 @@ def page_upload(settings, conn) -> None:
                 st.image(b, caption=n, use_container_width=True)
 
     st.markdown("---")
+    st.markdown("### 📄 Importar Excel (mais confiável que OCR)")
+    excel_files = st.file_uploader(
+        "Envie os 5 arquivos (um por print) — aceita .xlsx / .xls (inclui export HTML).",
+        type=["xlsx", "xls"],
+        accept_multiple_files=True,
+        key="excel_upload",
+    )
+    if excel_files:
+        if st.button("📥 Importar arquivos (Excel/HTML)", use_container_width=True):
+            try:
+                with st.spinner("Importando arquivos..."):
+                    res = import_5_files_to_payload([(f.name, f.read()) for f in excel_files])
+                if periodo and isinstance(res.payload, dict):
+                    res.payload["periodo"] = periodo
+                st.session_state["payload"] = res.payload
+                st.session_state["extraction_meta"] = res.meta
+                if res.warnings:
+                    st.warning("Importação concluída com avisos.")
+                    for w in res.warnings:
+                        st.caption(w)
+                else:
+                    st.success("Importação concluída.")
+            except Exception as e:
+                st.error("Falha ao importar Excel/HTML.")
+                st.caption(str(e))
 
     left, right = st.columns([1, 1])
     with left:
@@ -638,6 +665,8 @@ def page_upload(settings, conn) -> None:
         use_manual = st.button("✍️ Usar JSON manual", use_container_width=True)
     with b3:
         clear = st.button("🧹 Limpar dados", use_container_width=True)
+    ocr_debug = st.toggle("Debug OCR (mostrar diagnóstico)", value=False, disabled=not images)
+    run_ocr = st.button("🧾 Extrair sem IA (OCR)", use_container_width=True, disabled=not images)
 
     if clear:
         st.session_state.pop("payload", None)
@@ -667,6 +696,42 @@ def page_upload(settings, conn) -> None:
                 "Se você está usando apenas OpenAI: confirme que `OPENAI_API_KEY` está preenchida. "
                 "Se o erro for **429 / insufficient_quota**, sua conta/projeto OpenAI está sem crédito/quota."
             )
+
+    if run_ocr:
+        imgs = [(n, b) for (n, b, _) in images]
+        try:
+            with st.spinner("Extraindo via OCR (sem IA)..."):
+                if ocr_debug:
+                    payload, dbg = extract_payload_from_prints_ocr(imgs, debug=True)
+                    st.session_state["ocr_debug"] = dbg
+                else:
+                    payload = extract_payload_from_prints_ocr(imgs, debug=False)
+            if periodo and isinstance(payload, dict):
+                payload["periodo"] = periodo
+            st.session_state["payload"] = payload
+            st.session_state["extraction_meta"] = {"provider": "ocr", "model": "tesseract"}
+            st.success("OCR concluído. Revise os dados antes de salvar (pode precisar ajustes).")
+            if ocr_debug:
+                st.info("Debug OCR habilitado: veja o diagnóstico no final da página.")
+        except Exception as e:
+            st.error("Não consegui extrair via OCR.")
+            st.caption(str(e))
+            st.info(
+                "No Windows local, você precisa ter o **Tesseract** instalado para OCR funcionar. "
+                "No Streamlit Cloud, isso é instalado via `packages.txt`."
+            )
+    dbg = st.session_state.get("ocr_debug")
+    if isinstance(dbg, dict) and dbg.get("prints"):
+        with st.expander("🧪 Diagnóstico OCR (debug)", expanded=False):
+            for p in dbg.get("prints", []):
+                st.markdown(f"#### {p.get('nome_print')} ({p.get('kind')})")
+                st.write("**Headers detectados (centro X):**", p.get("headers_detectados"))
+                st.text_area(
+                    "Amostra de texto OCR (primeiras linhas)",
+                    value="\n".join(p.get("amostra_texto") or []),
+                    height=180,
+                    key=f"dbg_{p.get('kind')}_{p.get('nome_print')}",
+                )
 
     if use_manual:
         example = {
@@ -843,7 +908,7 @@ def page_dashboard(settings, conn) -> None:
 
             fig = px.bar(df, x="nome", y="bonus_total", title="Bônus por vendedor")
             fig.update_layout(height=380)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="bonus_chart_dashboard")
         except Exception as e:
             st.info(f"Não foi possível renderizar gráfico: {e}")
 
@@ -886,7 +951,7 @@ def page_evolution(settings, conn) -> None:
 
         fig = px.line(df, x="periodo", y="total_bonus", markers=True, title="Evolução do bônus total")
         fig.update_layout(height=380)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key="bonus_chart_evolution")
     except Exception as e:
         st.info(f"Não foi possível renderizar gráfico: {e}")
 
@@ -957,6 +1022,122 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
     c3.metric("Conversão média", f"{stats['media_conversao']:.1f}%")
     c4.metric("TME médio", f"{stats['media_tme']:.1f} min")
 
+    # Evolução de conversão por período (últimas análises salvas)
+    st.markdown("### Conversão x Interações (comparativo por análise salva)")
+    rows = list_analyses(conn, limit=12)
+    if len(rows) >= 2:
+        hist: list[dict] = []
+        for r in reversed(rows):  # cronológico (antigo -> novo)
+            try:
+                payload_r = json.loads(r.payload_json)
+            except Exception:
+                continue
+            base = _extract_perf_summary_from_payload(r.periodo, payload_r)
+            inter = float(base.get("tot_interacoes") or 0)
+            nfs = float(base.get("tot_nfs") or 0)
+            conv_total = (nfs / inter * 100.0) if inter > 0 else None
+            hist.append(
+                {
+                    "id": int(r.id),
+                    "created_at": str(r.created_at),
+                    "periodo": str(r.periodo),
+                    "interacoes": inter,
+                    "nfs": nfs,
+                    "conversao_total_pct": conv_total,
+                }
+            )
+        hdf = pd.DataFrame(hist)
+        if not hdf.empty:
+            last = hdf.iloc[-1]
+            prev = hdf.iloc[-2] if len(hdf) >= 2 else None
+
+            def _fmt_conv(v) -> str:
+                return f"{float(v):.1f}%" if v is not None and not pd.isna(v) else "—"
+
+            m1, m2, m3 = st.columns(3)
+            if prev is not None:
+                m1.metric(
+                    "Interações (time)",
+                    f"{int(last['interacoes'])}",
+                    delta=int(last["interacoes"] - prev["interacoes"]),
+                )
+                m2.metric("NFs (time)", f"{int(last['nfs'])}", delta=int(last["nfs"] - prev["nfs"]))
+                if pd.notna(last.get("conversao_total_pct")) and pd.notna(prev.get("conversao_total_pct")):
+                    delta_pp = float(last["conversao_total_pct"]) - float(prev["conversao_total_pct"])
+                    # Streamlit só colore automaticamente (verde/vermelho) quando `delta` é numérico.
+                    m3.metric(
+                        "Conversão (NFs/Interações)",
+                        _fmt_conv(last["conversao_total_pct"]),
+                        delta=round(delta_pp, 1),
+                        help="Delta em pontos percentuais (pp) vs análise anterior.",
+                    )
+                else:
+                    m3.metric("Conversão (NFs/Interações)", _fmt_conv(last.get("conversao_total_pct")))
+
+            # “Melhor momento” (maior conversão total)
+            best_idx = None
+            if "conversao_total_pct" in hdf.columns:
+                s = pd.to_numeric(hdf["conversao_total_pct"], errors="coerce")
+                if s.notna().any():
+                    best_idx = int(s.idxmax())
+                    best = hdf.loc[best_idx]
+                    st.caption(
+                        f"Melhor conversão no histórico carregado: **ID {int(best['id'])}** "
+                        f"({best['periodo']}) → **{float(best['conversao_total_pct']):.1f}%** "
+                        f"com **{int(best['interacoes'])}** interações e **{int(best['nfs'])}** NFs."
+                    )
+
+            # Gráfico combinado (barras + linha)
+            try:
+                import plotly.graph_objects as go
+                from plotly.subplots import make_subplots
+
+                fig = make_subplots(specs=[[{"secondary_y": True}]])
+                fig.add_trace(
+                    go.Bar(x=hdf["id"], y=hdf["interacoes"], name="Interações", marker_color="rgba(59,130,246,0.55)"),
+                    secondary_y=False,
+                )
+                fig.add_trace(
+                    go.Bar(x=hdf["id"], y=hdf["nfs"], name="NFs", marker_color="rgba(110,231,183,0.75)"),
+                    secondary_y=False,
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=hdf["id"],
+                        y=hdf["conversao_total_pct"],
+                        name="Conversão (%)",
+                        mode="lines+markers",
+                        line=dict(color="rgba(251,191,36,0.95)", width=3),
+                    ),
+                    secondary_y=True,
+                )
+                if best_idx is not None:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=[hdf.loc[best_idx, "id"]],
+                            y=[hdf.loc[best_idx, "conversao_total_pct"]],
+                            mode="markers",
+                            marker=dict(size=14, color="rgba(251,191,36,1)", symbol="star"),
+                            name="Melhor conversão",
+                        ),
+                        secondary_y=True,
+                    )
+                fig.update_layout(
+                    title="Interações e NFs vs Conversão (por análise salva)",
+                    height=420,
+                    barmode="group",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+                    margin=dict(l=10, r=10, t=60, b=10),
+                )
+                fig.update_xaxes(title_text="ID da análise")
+                fig.update_yaxes(title_text="Volume", secondary_y=False)
+                fig.update_yaxes(title_text="Conversão (%)", secondary_y=True, rangemode="tozero")
+                st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_conv_history_combo")
+            except Exception as e:
+                st.caption(f"Gráfico combinado indisponível: {e}")
+    else:
+        st.caption("Salve pelo menos 2 análises para comparar conversão vs interações ao longo do tempo.")
+
     st.markdown("### Indicadores (ranking)")
     indicador = st.selectbox(
         "Escolha o indicador",
@@ -980,7 +1161,7 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
 
         fig = px.bar(dfp, x="nome", y=col, title=f"Ranking — {indicador[1]}")
         fig.update_layout(height=380)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_rank_{col}")
     except Exception as e:
         st.info(f"Não foi possível renderizar gráfico: {e}")
 
@@ -1395,19 +1576,19 @@ def page_insights(settings, conn) -> None:
                 if "faturamento" in df.columns:
                     fig = px.bar(df, x="nome", y="faturamento", title="Faturamento por vendedor")
                     fig.update_layout(height=340)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, key="ins_perf_faturamento_bar")
             with c2:
                 if "qtd_faturadas" in df.columns:
                     fig = px.bar(df, x="nome", y="qtd_faturadas", title="NFs (Qtd. faturadas) por vendedor")
                     fig.update_layout(height=340)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, key="ins_perf_nfs_bar")
 
             c3, c4 = st.columns(2)
             with c3:
                 if "ticket_medio" in df.columns:
                     fig = px.bar(df, x="nome", y="ticket_medio", title="Ticket médio por vendedor")
                     fig.update_layout(height=340)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, key="ins_perf_ticket_bar")
             with c4:
                 if "conversao_pct" in df.columns and "interacoes" in df.columns:
                     fig = px.scatter(
@@ -1420,7 +1601,7 @@ def page_insights(settings, conn) -> None:
                         title="Interações x Conversão (bolha = NFs)",
                     )
                     fig.update_layout(height=340)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, key="ins_perf_inter_conv_scatter")
         except Exception as e:
             st.caption(f"Gráficos indisponíveis: {e}")
 
@@ -1512,12 +1693,12 @@ def page_highlights(settings, conn) -> None:
             if not df.empty and "faturamento" in df.columns:
                 fig = px.bar(df, x="nome", y="faturamento", title="Faturamento por vendedor")
                 fig.update_layout(height=330)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="hl_current_faturamento_bar")
         with g2:
             if not df.empty and "qtd_faturadas" in df.columns:
                 fig = px.bar(df, x="nome", y="qtd_faturadas", title="NFs por vendedor")
                 fig.update_layout(height=330)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key="hl_current_nfs_bar")
     except Exception as e:
         st.caption(f"Gráficos indisponíveis: {e}")
 
@@ -1555,21 +1736,21 @@ def page_highlights(settings, conn) -> None:
             with c1:
                 fig = px.line(sub, x="id", y="tot_faturamento", markers=True, title="Faturamento do time")
                 fig.update_layout(height=320)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key=f"hl_trend_faturamento_{title}")
             with c2:
                 fig = px.line(sub, x="id", y="tot_nfs", markers=True, title="NFs do time")
                 fig.update_layout(height=320)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key=f"hl_trend_nfs_{title}")
 
             c3, c4 = st.columns(2)
             with c3:
                 fig = px.line(sub, x="id", y="media_ticket", markers=True, title="Ticket médio (média)")
                 fig.update_layout(height=320)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key=f"hl_trend_ticket_{title}")
             with c4:
                 fig = px.line(sub, x="id", y="media_conversao", markers=True, title="Conversão (média)")
                 fig.update_layout(height=320)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True, key=f"hl_trend_conversao_{title}")
         except Exception as e:
             st.caption(f"Gráficos indisponíveis: {e}")
 
@@ -1631,7 +1812,9 @@ def page_highlights(settings, conn) -> None:
 
 def main() -> None:
     st.set_page_config(page_title="Dashboard Performance", page_icon="📊", layout="wide")
-    inject_styles()
+    # Perfil de layout (Mobile / Tablet / Desktop)
+    ui_profile = st.session_state.get("ui_profile") or "desktop"
+    inject_styles(profile=str(ui_profile))
 
     settings, conn = _ensure_db()
     _maybe_login(settings)
@@ -1641,6 +1824,15 @@ def main() -> None:
         pass
 
     with st.sidebar:
+        st.markdown("### 🖥️ Layout / Dispositivo")
+        prof = st.selectbox(
+            "Perfil",
+            options=["desktop", "tablet", "mobile"],
+            format_func=lambda x: {"desktop": "Notebook / PC", "tablet": "iPad / Tablet", "mobile": "Smartphone"}[x],
+            key="ui_profile",
+        )
+        st.caption("Dica: altere o perfil e recarregue para aplicar melhor o espaçamento.")
+        st.markdown("---")
         st.markdown("### 📌 Sessão")
         aid = st.session_state.get("active_analysis_id")
         if aid is not None:

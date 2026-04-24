@@ -3,9 +3,42 @@ from __future__ import annotations
 import streamlit as st
 
 
-def inject_styles() -> None:
-    st.markdown(
-        """
+def _profile_css(profile: str) -> str:
+    p = (profile or "desktop").lower().strip()
+    if p == "mobile":
+        return """
+  /* Perfil Mobile */
+  .main .block-container {
+    padding-top: 1.4rem !important;
+    padding-bottom: 2.0rem !important;
+    padding-left: 0.75rem !important;
+    padding-right: 0.75rem !important;
+  }
+  .dp-title{ font-size:1.12rem !important; }
+  .dp-sub{ font-size:.92rem !important; }
+  .dp-kpi-value{ font-size:1.22rem !important; }
+  [data-testid="stSidebar"] > div { padding-left: .5rem !important; padding-right: .5rem !important; }
+"""
+    if p == "tablet":
+        return """
+  /* Perfil Tablet */
+  .main .block-container {
+    padding-top: 1.8rem !important;
+    padding-left: 1.0rem !important;
+    padding-right: 1.0rem !important;
+  }
+  .dp-title{ font-size:1.22rem !important; }
+  .dp-kpi-value{ font-size:1.35rem !important; }
+"""
+    # desktop (default)
+    return """
+  /* Perfil Desktop */
+  .main .block-container { max-width: 1500px; }
+"""
+
+
+def inject_styles(profile: str = "desktop") -> None:
+    css = """
 <style>
   :root{
     --bg0:#0B1220;
@@ -305,10 +338,11 @@ def inject_styles() -> None:
     font-variant-numeric: tabular-nums;
     box-shadow: 0 0 26px rgba(110,231,183,.18);
   }
+
+__PROFILE_CSS__
 </style>
-""",
-        unsafe_allow_html=True,
-    )
+"""
+    st.markdown(css.replace("__PROFILE_CSS__", _profile_css(profile)), unsafe_allow_html=True)
 
 
 def render_header(title: str, subtitle: str, right: str | None = None) -> None:
