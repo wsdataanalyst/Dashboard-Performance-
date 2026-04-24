@@ -10,14 +10,21 @@ import streamlit as st
 from src.app.bonus import calcular_time
 from src.app.config import load_settings
 from src.app.domain import parse_sellers
-from src.app.security import build_admin_auth, constant_time_equals, sha256_hex
+from src.app.auth import hash_password, new_invite_code, verify_password
+from src.app.security import sha256_hex
 from src.app.storage import (
     base_data_dir,
+    backfill_owner_user_id,
     connect,
+    create_invite,
+    create_user_from_invite,
     delete_analysis,
     get_analysis,
+    get_user_by_username,
+    ensure_admin_user,
     init_db,
     list_analyses,
+    list_invites,
     list_feedbacks,
     list_uploads,
     purge_excluded_sellers_from_all_analyses,
@@ -498,19 +505,22 @@ def _ensure_db():
     settings = load_settings()
     conn = connect(settings.db_path)
     init_db(conn)
+    # Bootstrap: garante admin no DB e atribui ownership às análises antigas
+    admin_user = settings.admin_username or "admin"
+    admin_pass = settings.admin_password or "admin"
+    admin_id = ensure_admin_user(
+        conn,
+        username=admin_user,
+        password_hash=hash_password(admin_pass),
+        name="Administrador",
+    )
+    backfill_owner_user_id(conn, admin_user_id=admin_id)
     return settings, conn
 
 
 def _maybe_login(settings) -> None:
-    # Segurança sempre ativa: se não estiver configurado via secrets/env,
-    # usa as credenciais padrão (você pediu).
-    admin_user = settings.admin_username or "wsdataanalyst"
-    admin_pass = settings.admin_password or "#P161217m"
-
-    if st.session_state.get("auth_ok"):
+    if isinstance(st.session_state.get("user"), dict) and st.session_state["user"].get("id"):
         return
-
-    auth = build_admin_auth(admin_user, admin_pass)
     st.markdown(
         """
 <style>
@@ -532,8 +542,8 @@ def _maybe_login(settings) -> None:
     )
     render_header(
         "Dashboard Performance",
-        "Acesso restrito — informe usuário e senha.",
-        right="Segurança ativa",
+        "Acesso restrito — entre com seu usuário ou crie conta via convite.",
+        right="Multiusuário",
     )
     # Colunas laterais estreitas: formulário mais central e “perto” do conteúdo
     _, mid, _ = st.columns([0.18, 1.15, 0.18])
@@ -549,19 +559,60 @@ def _maybe_login(settings) -> None:
 """,
             unsafe_allow_html=True,
         )
-        u = st.text_input("Usuário", placeholder="Digite o usuário")
-        p = st.text_input("Senha", type="password")
-        if st.button("Entrar", use_container_width=True):
-            ok_user = constant_time_equals((u or "").strip(), auth.username)
-            ok_pass = constant_time_equals(
-                build_admin_auth(auth.username, (p or "")).password_hash,
-                auth.password_hash,
-            )
-            if ok_user and ok_pass:
-                st.session_state["auth_ok"] = True
-                st.rerun()
-            else:
-                st.error("Usuário ou senha inválidos.")
+        tab_login, tab_signup = st.tabs(["Entrar", "Criar conta (convite)"])
+
+        with tab_login:
+            u = st.text_input("Usuário", placeholder="ex.: gerson", key="login_user")
+            p = st.text_input("Senha", type="password", key="login_pass")
+            if st.button("Entrar", use_container_width=True, key="btn_login"):
+                _, conn = _ensure_db()
+                rec = get_user_by_username(conn, (u or "").strip())
+                if not rec or int(rec.get("active") or 0) != 1:
+                    st.error("Usuário inválido ou inativo.")
+                else:
+                    if verify_password((p or ""), str(rec.get("password_hash") or "")):
+                        st.session_state["user"] = {
+                            "id": int(rec["id"]),
+                            "username": str(rec["username"]),
+                            "name": str(rec["name"]),
+                            "role": str(rec["role"]),
+                        }
+                        st.rerun()
+                    else:
+                        st.error("Usuário ou senha inválidos.")
+
+        with tab_signup:
+            code = st.text_input("Convite", placeholder="cole o código", key="signup_invite")
+            u2 = st.text_input("Usuário", placeholder="ex.: yago.silva", key="signup_user")
+            name2 = st.text_input("Nome", placeholder="Nome para exibição", key="signup_name")
+            p1 = st.text_input("Senha", type="password", key="signup_pass1")
+            p2 = st.text_input("Confirmar senha", type="password", key="signup_pass2")
+            if st.button("Criar conta", use_container_width=True, key="btn_signup"):
+                if not code.strip() or not u2.strip() or not name2.strip():
+                    st.error("Preencha convite, usuário e nome.")
+                elif p1 != p2 or len(p1 or "") < 6:
+                    st.error("Senha inválida (mínimo 6 caracteres) ou confirmação não confere.")
+                else:
+                    _, conn = _ensure_db()
+                    try:
+                        uid, role = create_user_from_invite(
+                            conn,
+                            invite_code=code.strip(),
+                            username=u2.strip(),
+                            name=name2.strip(),
+                            password_hash=hash_password(p1 or ""),
+                        )
+                    except Exception as e:
+                        st.error(str(e))
+                    else:
+                        st.session_state["user"] = {
+                            "id": int(uid),
+                            "username": u2.strip(),
+                            "name": name2.strip(),
+                            "role": str(role),
+                        }
+                        st.success("Conta criada. Entrando…")
+                        st.rerun()
     st.stop()
 
 
@@ -826,24 +877,27 @@ def page_upload(settings, conn) -> None:
         if st.button("✅ Salvar análise", use_container_width=True):
             meta = st.session_state.get("extraction_meta") or {"provider": "manual", "model": "manual"}
             periodo_final = str(payload.get("periodo") or periodo or "Período não informado")
+            user = st.session_state.get("user") or {}
+            owner_id = int(user.get("id") or 0) or None
             analysis_id = save_analysis(
                 conn,
                 periodo=periodo_final,
                 provider_used=str(meta.get("provider", "unknown")),
                 model_used=str(meta.get("model", "unknown")),
                 parent_analysis_id=None,
+                owner_user_id=owner_id,
                 payload=payload,
                 total_bonus=float(total),
             )
 
             # Persistir uploads para auditoria (se houver)
-            up_dir = _uploads_dir(settings) / str(analysis_id)
+            up_dir = _uploads_dir(settings) / str(owner_id or "anon") / str(analysis_id)
             up_dir.mkdir(parents=True, exist_ok=True)
             for n, b, ctype in images:
                 digest = sha256_hex(b)
                 safe_name = "".join(ch for ch in n if ch.isalnum() or ch in (" ", "-", "_")).strip().replace(" ", "_")
                 filename = f"{safe_name}_{digest[:10]}.png"
-                rel_path = str(Path("uploads") / str(analysis_id) / filename)
+                rel_path = str(Path("uploads") / str(owner_id or "anon") / str(analysis_id) / filename)
                 (up_dir / filename).write_bytes(b)
                 save_upload_file(
                     conn,
@@ -866,7 +920,10 @@ def page_dashboard(settings, conn) -> None:
         st.info("Nenhuma análise ativa. Vá em **Upload e extração** ou carregue no **Histórico**.")
         return
 
-    row = get_analysis(conn, int(analysis_id))
+    user = st.session_state.get("user") or {}
+    owner_id = int(user.get("id") or 0) or None
+    is_admin = str(user.get("role") or "").lower() == "admin"
+    row = get_analysis(conn, int(analysis_id), owner_user_id=owner_id, include_all=is_admin)
     if not row:
         st.warning("Análise ativa não encontrada (talvez tenha sido apagada).")
         return
@@ -932,7 +989,10 @@ def page_dashboard(settings, conn) -> None:
 
 def page_evolution(settings, conn) -> None:
     render_header("Evolução", "Acompanhe a evolução do bônus ao longo do tempo.")
-    rows = list_analyses(conn, limit=200)
+    user = st.session_state.get("user") or {}
+    owner_id = int(user.get("id") or 0) or None
+    is_admin = str(user.get("role") or "").lower() == "admin"
+    rows = list_analyses(conn, limit=200, owner_user_id=owner_id, include_all=is_admin)
     if len(rows) < 2:
         st.info("Você precisa de pelo menos 2 análises salvas para ver a evolução.")
         return
@@ -994,7 +1054,10 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
         st.info("Nenhuma análise ativa. Carregue uma no **Histórico**.")
         return
 
-    row = get_analysis(conn, int(analysis_id))
+    user = st.session_state.get("user") or {}
+    owner_id = int(user.get("id") or 0) or None
+    is_admin = str(user.get("role") or "").lower() == "admin"
+    row = get_analysis(conn, int(analysis_id), owner_user_id=owner_id, include_all=is_admin)
     if not row:
         st.warning("Análise não encontrada.")
         return
@@ -1025,7 +1088,7 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
 
     # Evolução de conversão por período (últimas análises salvas)
     st.markdown("### Conversão x Interações (comparativo por análise salva)")
-    rows = list_analyses(conn, limit=12)
+    rows = list_analyses(conn, limit=12, owner_user_id=owner_id, include_all=is_admin)
     if len(rows) >= 2:
         hist: list[dict] = []
         for r in reversed(rows):  # cronológico (antigo -> novo)
@@ -1196,7 +1259,10 @@ def page_edit(settings, conn) -> None:
         st.info("Nenhuma análise ativa. Carregue uma no **Histórico**.")
         return
 
-    row = get_analysis(conn, int(analysis_id))
+    user = st.session_state.get("user") or {}
+    owner_id = int(user.get("id") or 0) or None
+    is_admin = str(user.get("role") or "").lower() == "admin"
+    row = get_analysis(conn, int(analysis_id), owner_user_id=owner_id, include_all=is_admin)
     if not row:
         st.warning("Análise não encontrada.")
         return
@@ -1229,6 +1295,7 @@ def page_edit(settings, conn) -> None:
             provider_used="manual_edit",
             model_used="manual_edit",
             parent_analysis_id=int(analysis_id),
+            owner_user_id=int(row.owner_user_id) if row.owner_user_id is not None else owner_id,
             payload=new_payload,
             total_bonus=float(total2),
         )
@@ -1244,7 +1311,10 @@ def page_projection(settings, conn) -> None:
         st.info("Nenhuma análise ativa. Carregue uma no **Histórico**.")
         return
 
-    row = get_analysis(conn, int(analysis_id))
+    user = st.session_state.get("user") or {}
+    owner_id = int(user.get("id") or 0) or None
+    is_admin = str(user.get("role") or "").lower() == "admin"
+    row = get_analysis(conn, int(analysis_id), owner_user_id=owner_id, include_all=is_admin)
     if not row:
         st.warning("Análise não encontrada.")
         return
@@ -1364,7 +1434,10 @@ def page_star(settings, conn) -> None:
         st.info("Nenhuma análise ativa. Carregue uma no **Histórico**.")
         return
 
-    row = get_analysis(conn, int(analysis_id))
+    user = st.session_state.get("user") or {}
+    owner_id = int(user.get("id") or 0) or None
+    is_admin = str(user.get("role") or "").lower() == "admin"
+    row = get_analysis(conn, int(analysis_id), owner_user_id=owner_id, include_all=is_admin)
     if not row:
         st.warning("Análise não encontrada.")
         return
@@ -1476,7 +1549,10 @@ def page_star(settings, conn) -> None:
 def page_history(settings, conn) -> None:
     render_header("Histórico", "Carregue análises anteriores sem perder informação.")
 
-    rows = list_analyses(conn, limit=100)
+    user = st.session_state.get("user") or {}
+    owner_id = int(user.get("id") or 0) or None
+    is_admin = str(user.get("role") or "").lower() == "admin"
+    rows = list_analyses(conn, limit=100, owner_user_id=owner_id, include_all=is_admin)
     if not rows:
         st.info("Histórico vazio. Faça sua primeira análise em **Upload e extração**.")
         return
@@ -1493,7 +1569,7 @@ def page_history(settings, conn) -> None:
             st.rerun()
     with c2:
         if st.button("🗑️ Apagar", use_container_width=True):
-            delete_analysis(conn, selected_id)
+            delete_analysis(conn, selected_id, owner_user_id=owner_id, include_all=is_admin)
             if st.session_state.get("active_analysis_id") == selected_id:
                 st.session_state.pop("active_analysis_id", None)
             st.success("Análise apagada.")
@@ -1501,7 +1577,7 @@ def page_history(settings, conn) -> None:
     with c3:
         st.caption("Dica: apagar remove o registro e os uploads vinculados (por cascata).")
 
-    row = get_analysis(conn, selected_id)
+    row = get_analysis(conn, selected_id, owner_user_id=owner_id, include_all=is_admin)
     if row:
         st.markdown("---")
         st.subheader("Detalhe")
@@ -1519,7 +1595,10 @@ def page_insights(settings, conn) -> None:
         st.info("Nenhuma análise ativa. Carregue uma no **Histórico** ou crie em **Upload**.")
         return
 
-    row = get_analysis(conn, int(analysis_id))
+    user = st.session_state.get("user") or {}
+    owner_id = int(user.get("id") or 0) or None
+    is_admin = str(user.get("role") or "").lower() == "admin"
+    row = get_analysis(conn, int(analysis_id), owner_user_id=owner_id, include_all=is_admin)
     if not row:
         st.warning("Análise não encontrada.")
         return
@@ -1711,7 +1790,10 @@ def page_highlights(settings, conn) -> None:
 
     # Histórico (últimas análises) para leitura semanal/mensal
     st.markdown("### Tendência (histórico)")
-    rows = list_analyses(conn, limit=24)
+    user = st.session_state.get("user") or {}
+    owner_id = int(user.get("id") or 0) or None
+    is_admin = str(user.get("role") or "").lower() == "admin"
+    rows = list_analyses(conn, limit=24, owner_user_id=owner_id, include_all=is_admin)
     if len(rows) < 2:
         st.info("Salve mais análises para habilitar tendência semanal/mensal.")
         return
@@ -1841,16 +1923,57 @@ def main() -> None:
         st.caption("Dica: altere o perfil e recarregue para aplicar melhor o espaçamento.")
         st.markdown("---")
         st.markdown("### 📌 Sessão")
+        user = st.session_state.get("user") or {}
+        uname = str(user.get("name") or user.get("username") or "—")
+        role = str(user.get("role") or "user")
+        st.caption(f"Logado: **{uname}** ({role})")
         aid = st.session_state.get("active_analysis_id")
         if aid is not None:
             st.success(f"Análise ativa: **#{aid}**")
         else:
             st.caption("Nenhuma análise ativa — use Upload ou Histórico.")
         if st.button("Sair da sessão", use_container_width=True):
-            st.session_state.pop("auth_ok", None)
+            st.session_state.pop("user", None)
             st.session_state.pop("active_analysis_id", None)
             st.rerun()
         st.markdown("---")
+        # Admin: geração de convites
+        if str((st.session_state.get("user") or {}).get("role") or "").lower() == "admin":
+            st.markdown("### 🛡️ Admin")
+            with st.expander("Convites (cadastro)", expanded=False):
+                c1, c2 = st.columns([1, 1])
+                with c1:
+                    inv_role = st.selectbox("Papel", options=["user", "admin"], index=0, key="inv_role")
+                with c2:
+                    inv_exp = st.selectbox("Expira em", options=["Nunca", "7 dias", "30 dias"], index=1, key="inv_exp")
+                if st.button("Gerar convite", use_container_width=True, key="btn_invite"):
+                    code = new_invite_code()
+                    expires_at = None
+                    if inv_exp == "7 dias":
+                        import datetime as _dt
+
+                        expires_at = (_dt.datetime.now() + _dt.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
+                    elif inv_exp == "30 dias":
+                        import datetime as _dt
+
+                        expires_at = (_dt.datetime.now() + _dt.timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%S")
+                    create_invite(
+                        conn,
+                        code=code,
+                        role=str(inv_role),
+                        created_by_user_id=int((st.session_state.get("user") or {}).get("id") or 0) or None,
+                        expires_at=expires_at,
+                    )
+                    st.success("Convite gerado.")
+                    st.code(code)
+
+                invs = list_invites(conn, limit=20)
+                if invs:
+                    st.caption("Últimos convites:")
+                    for it in invs[:10]:
+                        status = "usado" if it.get("used_at") else "ativo"
+                        st.write(f"`{it.get('code')}` · {it.get('role')} · {status}")
+            st.markdown("---")
         st.markdown("### 🔑 APIs de IA")
         st.write("Gemini:", "✅" if settings.google_api_key else "❌")
         st.write("OpenAI:", "✅" if settings.openai_api_key else "❌")
@@ -1864,7 +1987,7 @@ def main() -> None:
             st.caption(f"Referência: {cal.get('ano')}/{mes_v:02d}")
         st.markdown("---")
         st.markdown("### 🕘 Histórico rápido")
-        rows = list_analyses(conn, limit=10)
+        rows = list_analyses(conn, limit=10, owner_user_id=owner_id, include_all=is_admin)
         if rows:
             options = {f"#{r.id} · {r.periodo}": r.id for r in rows}
             pick = st.selectbox("Carregar análise", options=list(options.keys()))

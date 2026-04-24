@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -19,6 +19,7 @@ class AnalysisRow:
     periodo: str
     provider_used: str
     model_used: str
+    owner_user_id: int | None
     payload_json: str
     total_bonus: float
 
@@ -55,20 +56,51 @@ CREATE TABLE IF NOT EXISTS analyses (
   provider_used TEXT NOT NULL,
   model_used TEXT NOT NULL,
   parent_analysis_id INTEGER,
+  owner_user_id INTEGER,
   payload_json TEXT NOT NULL,
   total_bonus REAL NOT NULL,
   FOREIGN KEY (parent_analysis_id) REFERENCES analyses(id) ON DELETE SET NULL
 );
 """
     )
-    # Migração leve: adiciona coluna parent_analysis_id se DB já existir
+    # Migrações leves: adiciona colunas se DB já existir
     try:
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(analyses)").fetchall()]
         if "parent_analysis_id" not in cols:
             conn.execute("ALTER TABLE analyses ADD COLUMN parent_analysis_id INTEGER")
             conn.commit()
+        if "owner_user_id" not in cols:
+            conn.execute("ALTER TABLE analyses ADD COLUMN owner_user_id INTEGER")
+            conn.commit()
     except Exception:
         pass
+
+    conn.execute(
+        """
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+"""
+    )
+    conn.execute(
+        """
+CREATE TABLE IF NOT EXISTS invites (
+  code TEXT PRIMARY KEY,
+  role TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT,
+  used_at TEXT,
+  used_by_user_id INTEGER,
+  created_by_user_id INTEGER
+);
+"""
+    )
     conn.execute(
         """
 CREATE TABLE IF NOT EXISTS uploads (
@@ -105,6 +137,15 @@ CREATE TABLE IF NOT EXISTS feedbacks (
     conn.commit()
 
 
+def backfill_owner_user_id(conn: sqlite3.Connection, *, admin_user_id: int) -> None:
+    # Atribui análises antigas ao admin para não "sumirem"
+    conn.execute(
+        "UPDATE analyses SET owner_user_id = ? WHERE owner_user_id IS NULL",
+        (int(admin_user_id),),
+    )
+    conn.commit()
+
+
 def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -116,6 +157,7 @@ def save_analysis(
     provider_used: str,
     model_used: str,
     parent_analysis_id: int | None = None,
+    owner_user_id: int | None = None,
     payload: dict[str, Any],
     total_bonus: float,
 ) -> int:
@@ -129,25 +171,52 @@ def save_analysis(
     payload_json = json.dumps(payload, ensure_ascii=False)
     cur = conn.execute(
         """
-INSERT INTO analyses(created_at, periodo, provider_used, model_used, parent_analysis_id, payload_json, total_bonus)
-VALUES(?,?,?,?,?,?,?)
+INSERT INTO analyses(created_at, periodo, provider_used, model_used, parent_analysis_id, owner_user_id, payload_json, total_bonus)
+VALUES(?,?,?,?,?,?,?,?)
 """,
-        (now_iso(), periodo, provider_used, model_used, parent_analysis_id, payload_json, float(total_bonus)),
+        (
+            now_iso(),
+            periodo,
+            provider_used,
+            model_used,
+            parent_analysis_id,
+            int(owner_user_id) if owner_user_id is not None else None,
+            payload_json,
+            float(total_bonus),
+        ),
     )
     conn.commit()
     return int(cur.lastrowid)
 
 
-def list_analyses(conn: sqlite3.Connection, limit: int = 50) -> list[AnalysisRow]:
-    rows = conn.execute(
-        """
-SELECT id, created_at, periodo, provider_used, model_used, payload_json, total_bonus
+def list_analyses(
+    conn: sqlite3.Connection,
+    limit: int = 50,
+    *,
+    owner_user_id: int | None = None,
+    include_all: bool = False,
+) -> list[AnalysisRow]:
+    if include_all or owner_user_id is None:
+        rows = conn.execute(
+            """
+SELECT id, created_at, periodo, provider_used, model_used, owner_user_id, payload_json, total_bonus
 FROM analyses
 ORDER BY id DESC
 LIMIT ?
 """,
-        (int(limit),),
-    ).fetchall()
+            (int(limit),),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+SELECT id, created_at, periodo, provider_used, model_used, owner_user_id, payload_json, total_bonus
+FROM analyses
+WHERE owner_user_id = ?
+ORDER BY id DESC
+LIMIT ?
+""",
+            (int(owner_user_id), int(limit)),
+        ).fetchall()
     out: list[AnalysisRow] = []
     for r in rows:
         out.append(
@@ -157,6 +226,7 @@ LIMIT ?
                 periodo=str(r["periodo"]),
                 provider_used=str(r["provider_used"]),
                 model_used=str(r["model_used"]),
+                owner_user_id=int(r["owner_user_id"]) if r["owner_user_id"] is not None else None,
                 payload_json=str(r["payload_json"]),
                 total_bonus=float(r["total_bonus"]),
             )
@@ -164,15 +234,31 @@ LIMIT ?
     return out
 
 
-def get_analysis(conn: sqlite3.Connection, analysis_id: int) -> AnalysisRow | None:
-    r = conn.execute(
-        """
-SELECT id, created_at, periodo, provider_used, model_used, payload_json, total_bonus
+def get_analysis(
+    conn: sqlite3.Connection,
+    analysis_id: int,
+    *,
+    owner_user_id: int | None = None,
+    include_all: bool = False,
+) -> AnalysisRow | None:
+    if include_all or owner_user_id is None:
+        r = conn.execute(
+            """
+SELECT id, created_at, periodo, provider_used, model_used, owner_user_id, payload_json, total_bonus
 FROM analyses
 WHERE id = ?
 """,
-        (int(analysis_id),),
-    ).fetchone()
+            (int(analysis_id),),
+        ).fetchone()
+    else:
+        r = conn.execute(
+            """
+SELECT id, created_at, periodo, provider_used, model_used, owner_user_id, payload_json, total_bonus
+FROM analyses
+WHERE id = ? AND owner_user_id = ?
+""",
+            (int(analysis_id), int(owner_user_id)),
+        ).fetchone()
     if not r:
         return None
     return AnalysisRow(
@@ -181,14 +267,99 @@ WHERE id = ?
         periodo=str(r["periodo"]),
         provider_used=str(r["provider_used"]),
         model_used=str(r["model_used"]),
+        owner_user_id=int(r["owner_user_id"]) if r["owner_user_id"] is not None else None,
         payload_json=str(r["payload_json"]),
         total_bonus=float(r["total_bonus"]),
     )
 
 
-def delete_analysis(conn: sqlite3.Connection, analysis_id: int) -> None:
-    conn.execute("DELETE FROM analyses WHERE id = ?", (int(analysis_id),))
+def delete_analysis(
+    conn: sqlite3.Connection,
+    analysis_id: int,
+    *,
+    owner_user_id: int | None = None,
+    include_all: bool = False,
+) -> None:
+    if include_all or owner_user_id is None:
+        conn.execute("DELETE FROM analyses WHERE id = ?", (int(analysis_id),))
+    else:
+        conn.execute(
+            "DELETE FROM analyses WHERE id = ? AND owner_user_id = ?",
+            (int(analysis_id), int(owner_user_id)),
+        )
     conn.commit()
+
+
+def ensure_admin_user(conn: sqlite3.Connection, *, username: str, password_hash: str, name: str = "Administrador") -> int:
+    r = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+    if r:
+        return int(r["id"])
+    cur = conn.execute(
+        "INSERT INTO users(username, name, password_hash, role, active, created_at) VALUES(?,?,?,?,?,?)",
+        (username, name, password_hash, "admin", 1, now_iso()),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def get_user_by_username(conn: sqlite3.Connection, username: str) -> dict[str, Any] | None:
+    r = conn.execute(
+        "SELECT id, username, name, password_hash, role, active FROM users WHERE username = ?",
+        (username,),
+    ).fetchone()
+    return dict(r) if r else None
+
+
+def create_user_from_invite(
+    conn: sqlite3.Connection,
+    *,
+    invite_code: str,
+    username: str,
+    name: str,
+    password_hash: str,
+) -> tuple[int, str]:
+    inv = conn.execute("SELECT code, role, used_at, expires_at FROM invites WHERE code = ?", (invite_code,)).fetchone()
+    if not inv:
+        raise ValueError("Convite inválido.")
+    if inv["used_at"]:
+        raise ValueError("Convite já foi usado.")
+    if inv["expires_at"] and str(inv["expires_at"]).strip() and str(inv["expires_at"]) < now_iso():
+        raise ValueError("Convite expirado.")
+    role = str(inv["role"] or "user")
+    cur = conn.execute(
+        "INSERT INTO users(username, name, password_hash, role, active, created_at) VALUES(?,?,?,?,?,?)",
+        (username, name, password_hash, role, 1, now_iso()),
+    )
+    uid = int(cur.lastrowid)
+    conn.execute(
+        "UPDATE invites SET used_at = ?, used_by_user_id = ? WHERE code = ?",
+        (now_iso(), uid, invite_code),
+    )
+    conn.commit()
+    return uid, role
+
+
+def create_invite(
+    conn: sqlite3.Connection,
+    *,
+    code: str,
+    role: str,
+    created_by_user_id: int | None,
+    expires_at: str | None = None,
+) -> None:
+    conn.execute(
+        "INSERT INTO invites(code, role, created_at, expires_at, created_by_user_id) VALUES(?,?,?,?,?)",
+        (code, role, now_iso(), expires_at, int(created_by_user_id) if created_by_user_id is not None else None),
+    )
+    conn.commit()
+
+
+def list_invites(conn: sqlite3.Connection, limit: int = 50) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT code, role, created_at, expires_at, used_at, used_by_user_id, created_by_user_id FROM invites ORDER BY created_at DESC LIMIT ?",
+        (int(limit),),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def delete_feedbacks_excluded_sellers(conn: sqlite3.Connection) -> int:
