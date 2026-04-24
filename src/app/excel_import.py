@@ -305,7 +305,10 @@ def import_5_files_to_payload(files: list[tuple[str, bytes]]) -> ImportResult:
 
             # Alcance & Margem
             if _find_col(t, "alcance projet") and _find_col(t, "% margem"):
-                c_nome = _pick_name_col(t)
+                # Em exports comuns, a tabela vem com "Canal" e "Vendedor".
+                # Usar "Vendedor" quando existir evita confundir com a coluna de Canal.
+                c_vend = _find_col(t, "vendedor")
+                c_nome = c_vend or _pick_name_col(t)
                 c_alc = _find_col(t, "alcance projet")
                 c_marg = _find_col(t, "% margem")
                 c_fat = _find_col(t, "faturamento")
