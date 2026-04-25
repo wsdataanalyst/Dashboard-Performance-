@@ -2415,6 +2415,8 @@ def page_sala_gestao(settings, conn) -> None:
             prev0_k = {}
         if not isinstance(prev1_k, dict):
             prev1_k = {}
+        # compat: usado no bloco de insights (IA) abaixo
+        prev_k = prev0_k
 
         prev_fat_total = float(prev0_totais.get("faturamento_total") or 0.0) if prev0_totais else None
         prev_meta_total = float(prev0_totais.get("meta_total") or 0.0) if prev0_totais else None
