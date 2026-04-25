@@ -1214,6 +1214,24 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
     )
     stats = _team_stats(df)
 
+    def _discount_summary(sellers_list: list) -> dict[str, object]:
+        vals = [getattr(x, "desconto_valor", None) for x in sellers_list]
+        qtys = [getattr(x, "qtd_desconto", None) for x in sellers_list]
+        pcts = [getattr(x, "desconto_pct", None) for x in sellers_list]
+        qpcts = [getattr(x, "qtd_desconto_pct", None) for x in sellers_list]
+        dsum = sum(float(v) for v in vals if v is not None and not pd.isna(v))
+        qsum = sum(int(v) for v in qtys if v is not None)
+        dp = [float(v) for v in pcts if v is not None and not pd.isna(v)]
+        qp = [float(v) for v in qpcts if v is not None and not pd.isna(v)]
+        return {
+            "desconto_valor": dsum if dsum else None,
+            "qtd_desconto": qsum if qsum else None,
+            "desconto_pct": (sum(dp) / len(dp)) if dp else None,
+            "qtd_desconto_pct": (sum(qp) / len(qp)) if qp else None,
+        }
+
+    disc = _discount_summary(sellers)
+
     totais = payload.get("totais") if isinstance(payload, dict) else {}
     if not isinstance(totais, dict):
         totais = {}
@@ -1221,13 +1239,32 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
     meta_total = float(totais.get("meta_total") or 0.0) if totais.get("meta_total") is not None else None
     perc_meta = (fat_total / meta_total * 100.0) if (fat_total is not None and meta_total and meta_total > 0) else None
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
     c1.metric("Faturamento (time)", f"R$ {fat_total:,.2f}" if fat_total is not None else "—")
     c2.metric("Meta (time)", f"R$ {meta_total:,.2f}" if meta_total is not None else "—")
     c3.metric("% da meta", f"{perc_meta:.1f}%" if perc_meta is not None else "—")
     c4.metric("Bônus total", f"R$ {stats['total_bonus']:,.2f}")
     c5.metric("Margem média", f"{stats['media_margem']:.1f}%")
     c6.metric("Conversão média", f"{stats['media_conversao']:.1f}%")
+    with c7:
+        pct_txt = f"{float(disc.get('desconto_pct')):.2f}%" if disc.get("desconto_pct") is not None else "—"
+        val_txt = f"R$ {float(disc.get('desconto_valor')):,.2f}" if disc.get("desconto_valor") is not None else "—"
+        qtd_txt = f"{int(disc.get('qtd_desconto') or 0):d}" if disc.get("qtd_desconto") is not None else "—"
+        qp_txt = f"{float(disc.get('qtd_desconto_pct')):.2f}%" if disc.get("qtd_desconto_pct") is not None else "—"
+        st.markdown(
+            f"""
+<div class="dp-card" style="padding:12px 12px;">
+  <div class="dp-kpi-label">Desconto (% aplicado)</div>
+  <div class="dp-kpi-value" style="font-size:1.22rem;">{pct_txt}</div>
+  <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+    <span class="dp-pill" style="background:rgba(255,255,255,.02);">Valor: <b>{val_txt}</b></span>
+    <span class="dp-pill" style="background:rgba(255,255,255,.02);">Qtd: <b>{qtd_txt}</b></span>
+    <span class="dp-pill" style="background:rgba(255,255,255,.02);">% qtd: <b>{qp_txt}</b></span>
+  </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
 
     # Evolução de conversão por período (últimas análises salvas)
     st.markdown("### Conversão x Interações (comparativo por análise salva)")
@@ -2374,7 +2411,7 @@ def page_insights(settings, conn) -> None:
     # Visual rápido (antes de gerar IA)
     if not df.empty:
         st.markdown("### Visão rápida (performance)")
-        k1, k2, k3, k4, k5 = st.columns(5)
+        k1, k2, k3, k4, k5, k6 = st.columns(6)
         k1.metric("NFs (time)", f"{int(pd.to_numeric(df.get('qtd_faturadas'), errors='coerce').fillna(0).sum())}")
         k2.metric("Faturamento (time)", f"R$ {float(pd.to_numeric(df.get('faturamento'), errors='coerce').fillna(0).sum()):,.2f}")
         k3.metric("Interações (time)", f"{int(pd.to_numeric(df.get('interacoes'), errors='coerce').fillna(0).sum())}")
@@ -2382,6 +2419,12 @@ def page_insights(settings, conn) -> None:
         k4.metric("Conversão (média)", f"{float(conv.mean()):.2f}%" if len(conv) else "—")
         marg = pd.to_numeric(df.get("margem_pct"), errors="coerce").dropna()
         k5.metric("Margem (média)", f"{float(marg.mean()):.2f}%" if len(marg) else "—")
+        # Desconto (do arquivo Qtd Faturadas)
+        dp = [float(getattr(s, "desconto_pct", 0.0)) for s in sellers if getattr(s, "desconto_pct", None) is not None]
+        if dp:
+            k6.metric("Desconto (médio)", f"{(sum(dp)/len(dp)):.2f}%")
+        else:
+            k6.metric("Desconto (médio)", "—")
 
         try:
             import plotly.express as px
@@ -2493,15 +2536,18 @@ def page_highlights(settings, conn) -> None:
 
     payload = json.loads(row.payload_json)
     base = _extract_perf_summary_from_payload(row.periodo, payload)
+    sellers = parse_sellers(payload)
     df = pd.DataFrame(base.get("vendedores") or [])
 
     # Cards do período atual
     st.markdown("### Período atual (análise ativa)")
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Faturamento (time)", f"R$ {float(base['tot_faturamento']):,.2f}")
     c2.metric("NFs (time)", f"{int(base['tot_nfs'])}")
     c3.metric("Interações (time)", f"{int(base['tot_interacoes'])}")
     c4.metric("Ticket médio (média)", f"R$ {base['media_ticket']:,.2f}" if base.get("media_ticket") else "—")
+    dp = [float(getattr(s, "desconto_pct", 0.0)) for s in sellers if getattr(s, "desconto_pct", None) is not None]
+    c5.metric("Desconto (médio)", f"{(sum(dp)/len(dp)):.2f}%" if dp else "—")
 
     try:
         import plotly.express as px
