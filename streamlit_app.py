@@ -2359,6 +2359,20 @@ def page_sala_gestao(settings, conn) -> None:
                 return p
         return None
 
+    def _last_payloads_of_kind(kind: str, n: int) -> list[dict]:
+        rows = list_analyses(conn, limit=120, owner_user_id=owner_id, include_all=is_admin)
+        out: list[dict] = []
+        for r in rows:
+            try:
+                p = json.loads(r.payload_json)
+            except Exception:
+                continue
+            if isinstance(p, dict) and p.get("_kind") == kind:
+                out.append(p)
+                if len(out) >= n:
+                    break
+        return out
+
     with tab_consol:
         st.markdown("### Visão consolidada (tudo em um só lugar)")
         st.caption("Use esta visão para a reunião — KPIs, vendedores, departamentos e radar no mesmo painel.")
@@ -3025,6 +3039,133 @@ def page_sala_gestao(settings, conn) -> None:
                         axis=1,
                     )
                 st.dataframe(ddf, use_container_width=True, hide_index=True)
+
+                st.markdown("### Comparativo vs dia anterior (por departamento)")
+                prevs = _last_payloads_of_kind("sala_gestao_departamentos", 2)
+                if len(prevs) < 2:
+                    st.info("Para ver o comparativo, salve Departamentos hoje e amanhã (ou carregue e salve por 2 dias).")
+                else:
+                    # prevs[0] = mais recente salvo; prevs[1] = anterior
+                    p_today = prevs[0]
+                    p_yday = prevs[1]
+                    try:
+                        df_today = pd.DataFrame([d for d in (p_today.get("departamentos") or []) if _dept_ok((d or {}).get("departamento"))])
+                        df_yday = pd.DataFrame([d for d in (p_yday.get("departamentos") or []) if _dept_ok((d or {}).get("departamento"))])
+                    except Exception:
+                        df_today = pd.DataFrame()
+                        df_yday = pd.DataFrame()
+
+                    df_today = _ensure_participacao_pct(df_today) if not df_today.empty else df_today
+                    df_yday = _ensure_participacao_pct(df_yday) if not df_yday.empty else df_yday
+
+                    if df_today.empty or df_yday.empty:
+                        st.caption("Não consegui montar o comparativo (base vazia em algum dos dias).")
+                    else:
+                        def _add_falta_meta(df_in: pd.DataFrame) -> pd.DataFrame:
+                            if df_in is None or df_in.empty:
+                                return df_in
+                            if "meta_faturamento" in df_in.columns and "faturamento" in df_in.columns:
+                                mm = pd.to_numeric(df_in.get("meta_faturamento"), errors="coerce")
+                                ff = pd.to_numeric(df_in.get("faturamento"), errors="coerce")
+                                out = df_in.copy()
+                                out["falta_meta"] = mm - ff
+                                return out
+                            return df_in
+
+                        df_today = _add_falta_meta(df_today)
+                        df_yday = _add_falta_meta(df_yday)
+
+                        key = "departamento"
+                        keep_cols = [
+                            "faturamento",
+                            "participacao_pct",
+                            "margem_pct",
+                            "alcance_projetado_pct",
+                            "falta_meta",
+                        ]
+                        keep_cols = [c for c in keep_cols if c in df_today.columns and c in df_yday.columns]
+
+                        t = df_today[[key] + keep_cols].copy()
+                        y = df_yday[[key] + keep_cols].copy()
+                        for c in keep_cols:
+                            t[c] = pd.to_numeric(t[c], errors="coerce")
+                            y[c] = pd.to_numeric(y[c], errors="coerce")
+
+                        merged = t.merge(y, on=key, how="outer", suffixes=("_hoje", "_ontem"))
+                        for c in keep_cols:
+                            merged[f"Δ {c}"] = merged[f"{c}_hoje"] - merged[f"{c}_ontem"]
+
+                        # resumo rápido (faturamento e margem)
+                        if "Δ faturamento" in merged.columns:
+                            d = pd.to_numeric(merged["Δ faturamento"], errors="coerce")
+                            up = int((d > 0).sum())
+                            down = int((d < 0).sum())
+                            zero = int((d == 0).sum())
+                            s1, s2, s3 = st.columns(3)
+                            s1.metric("↑ Deptos com evolução (Fat.)", str(up))
+                            s2.metric("↓ Deptos com queda (Fat.)", str(down))
+                            s3.metric("→ Sem mudança (Fat.)", str(zero))
+
+                        def _arrow(v: object, kind: str) -> str:
+                            if v is None or (isinstance(v, float) and pd.isna(v)):
+                                return "—"
+                            x = float(v)
+                            if abs(x) < 1e-9:
+                                return "→ 0"
+                            arrow = "▲" if x > 0 else "▼"
+                            if kind == "money":
+                                return f"{arrow} R$ {abs(x):,.2f}"
+                            if kind == "pct":
+                                return f"{arrow} {abs(x):.2f} pp"
+                            return f"{arrow} {abs(x):.0f}"
+
+                        show = pd.DataFrame()
+                        show["Departamento"] = merged[key].astype(str)
+                        if "faturamento_hoje" in merged.columns:
+                            show["Faturamento"] = merged["faturamento_hoje"]
+                            show["Δ Faturamento"] = merged["Δ faturamento"].apply(lambda x: _arrow(x, "money"))
+                        if "participacao_pct_hoje" in merged.columns:
+                            show["% Part."] = merged["participacao_pct_hoje"]
+                            show["Δ % Part."] = merged["Δ participacao_pct"].apply(lambda x: _arrow(x, "pct"))
+                        if "margem_pct_hoje" in merged.columns:
+                            show["% Margem"] = merged["margem_pct_hoje"]
+                            show["Δ % Margem"] = merged["Δ margem_pct"].apply(lambda x: _arrow(x, "pct"))
+                        if "alcance_projetado_pct_hoje" in merged.columns:
+                            show["Alc. Proj."] = merged["alcance_projetado_pct_hoje"]
+                            show["Δ Alc. Proj."] = merged["Δ alcance_projetado_pct"].apply(lambda x: _arrow(x, "pct"))
+                        if "falta_meta_hoje" in merged.columns:
+                            show["Falta meta"] = merged["falta_meta_hoje"]
+                            show["Δ Falta meta"] = merged["Δ falta_meta"].apply(lambda x: _arrow(x, "money"))
+
+                        def _delta_color_series(s: pd.Series) -> list[str]:
+                            out2 = []
+                            for v in s.astype(str).fillna("—").tolist():
+                                if v.startswith("▲"):
+                                    out2.append("color:#22c55e; font-weight:800;")
+                                elif v.startswith("▼"):
+                                    out2.append("color:#fb7185; font-weight:800;")
+                                elif v.startswith("→"):
+                                    out2.append("color:#94a3b8; font-weight:650;")
+                                else:
+                                    out2.append("color:#94a3b8;")
+                            return out2
+
+                        fmt: dict[str, object] = {}
+                        if "Faturamento" in show.columns:
+                            fmt["Faturamento"] = lambda x: f"R$ {float(x):,.2f}" if pd.notna(x) else "—"
+                        if "% Part." in show.columns:
+                            fmt["% Part."] = lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—"
+                        if "% Margem" in show.columns:
+                            fmt["% Margem"] = lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—"
+                        if "Alc. Proj." in show.columns:
+                            fmt["Alc. Proj."] = lambda x: f"{float(x):.1f}%" if pd.notna(x) else "—"
+                        if "Falta meta" in show.columns:
+                            fmt["Falta meta"] = lambda x: f"R$ {float(x):,.2f}" if pd.notna(x) else "—"
+
+                        styled = show.style.format(fmt, na_rep="—")
+                        for c in [c for c in show.columns if c.startswith("Δ ")]:
+                            styled = styled.apply(_delta_color_series, subset=[c])
+                        st.dataframe(styled, use_container_width=True, hide_index=True)
 
                 st.markdown("### Potenciais oportunidades (Alcance Projetado ≥ 80%)")
                 st.caption(
