@@ -771,43 +771,60 @@ def page_upload(settings, conn) -> None:
             return 1  # gemini
         return 2  # openai (ou última opção)
 
-    provider: Provider = st.selectbox(
-        "Provedor de IA",
-        options=["auto", "gemini", "openai"],
-        format_func=lambda x: {"auto": "Auto (Gemini → OpenAI)", "gemini": "Gemini", "openai": "OpenAI"}[x],
-        index=default_provider_index(),
-    )
-
-    k1, k2 = st.columns(2)
-    with k1:
-        st.write("**GOOGLE_API_KEY**:", "✅" if settings.google_api_key else "❌")
-    with k2:
-        st.write("**OPENAI_API_KEY**:", "✅" if settings.openai_api_key else "❌")
-    st.caption("Se as duas chaves estiverem ✅, use **Auto** para ter fallback.")
-
-    # Mantém exatamente a ordem/nome do dashboard original (seu print)
-    nomes = [
-        "Print 1 - Alcance, Margem, Meta, %Meta, %Venda, Desconto, Faturamento",
-        "Print 2 - Prazo Médio",
-        "Print 3 - Qtd. Faturadas",
-        "Print 4 - Chamadas",
-        "Print 5 - TME, Iniciados e Recebidos",
-    ]
-
+    # IA/OCR é opcional — fica recolhido para não ocupar a tela
+    provider: Provider = "auto"
     images: list[tuple[str, bytes, str | None]] = []
-    cols = st.columns(2)
-    for i, nome in enumerate(nomes):
-        with cols[i % 2]:
-            f = st.file_uploader(nome, type=["png", "jpg", "jpeg"], key=f"up_{i}")
-            if f:
-                images.append((nome, f.read(), getattr(f, "type", None)))
+    run_ia = False
+    run_ocr = False
+    ocr_debug = False
+    use_manual = False
+    with st.expander("Extração com IA/OCR (opcional) — expandir/minimizar", expanded=False):
+        provider = st.selectbox(
+            "Provedor de IA",
+            options=["auto", "gemini", "openai"],
+            format_func=lambda x: {"auto": "Auto (Gemini → OpenAI)", "gemini": "Gemini", "openai": "OpenAI"}[x],
+            index=default_provider_index(),
+            key="upload_provider",
+        )
 
-    if images:
-        st.markdown("### Preview")
-        pcols = st.columns(min(3, len(images)))
-        for i, (n, b, _) in enumerate(images):
-            with pcols[i % len(pcols)]:
-                st.image(b, caption=n, use_container_width=True)
+        k1, k2 = st.columns(2)
+        with k1:
+            st.write("**GOOGLE_API_KEY**:", "✅" if settings.google_api_key else "❌")
+        with k2:
+            st.write("**OPENAI_API_KEY**:", "✅" if settings.openai_api_key else "❌")
+        st.caption("Se as duas chaves estiverem ✅, use **Auto** para ter fallback.")
+
+        # Mantém exatamente a ordem/nome do dashboard original (seu print)
+        nomes = [
+            "Print 1 - Alcance, Margem, Meta, %Meta, %Venda, Desconto, Faturamento",
+            "Print 2 - Prazo Médio",
+            "Print 3 - Qtd. Faturadas",
+            "Print 4 - Chamadas",
+            "Print 5 - TME, Iniciados e Recebidos",
+        ]
+
+        cols = st.columns(2)
+        for i, nome in enumerate(nomes):
+            with cols[i % 2]:
+                f = st.file_uploader(nome, type=["png", "jpg", "jpeg"], key=f"up_{i}")
+                if f:
+                    images.append((nome, f.read(), getattr(f, "type", None)))
+
+        if images:
+            st.markdown("### Preview")
+            pcols = st.columns(min(3, len(images)))
+            for i, (n, b, _) in enumerate(images):
+                with pcols[i % len(pcols)]:
+                    st.image(b, caption=n, use_container_width=True)
+
+        b1i, b2i, b3i = st.columns([1, 1, 1])
+        with b1i:
+            run_ia = st.button("🤖 Extrair com IA", use_container_width=True, disabled=not images)
+        with b2i:
+            use_manual = st.button("✍️ Usar JSON manual", use_container_width=True)
+        with b3i:
+            run_ocr = st.button("🧾 Extrair sem IA (OCR)", use_container_width=True, disabled=not images)
+        ocr_debug = st.toggle("Debug OCR (mostrar diagnóstico)", value=False, disabled=not images)
 
     st.markdown("---")
     # `periodo` é usado por fluxos de import (Excel/OCR/IA), então precisa existir antes.
@@ -899,14 +916,8 @@ def page_upload(settings, conn) -> None:
                 st.caption(str(e))
 
     b1, b2, b3 = st.columns([1, 1, 1])
-    with b1:
-        run_ia = st.button("🤖 Extrair com IA", use_container_width=True, disabled=not images)
-    with b2:
-        use_manual = st.button("✍️ Usar JSON manual", use_container_width=True)
     with b3:
         clear = st.button("🧹 Limpar dados", use_container_width=True)
-    ocr_debug = st.toggle("Debug OCR (mostrar diagnóstico)", value=False, disabled=not images)
-    run_ocr = st.button("🧾 Extrair sem IA (OCR)", use_container_width=True, disabled=not images)
 
     if clear:
         st.session_state.pop("payload", None)
