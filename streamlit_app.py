@@ -1223,7 +1223,32 @@ def page_dashboard(settings, conn) -> None:
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
-        _kpi_card("Período", str(row.periodo), icon="🗓", accent="#93c5fd", d_prev=None, d_ideal=None)
+        # Período: sem deltas (não faz sentido comparar)
+        st.markdown(
+            f"""
+<div class="dp-card" style="
+  padding:12px 12px;
+  border-color: rgba(59,130,246,.18);
+  background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.18), transparent 60%),
+              radial-gradient(900px 220px at 85% 10%, rgba(110,231,183,.12), transparent 55%),
+              linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
+">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+    <div class="dp-kpi-label">Período</div>
+    <div style="
+      width:28px;height:28px;border-radius:10px;
+      display:flex;align-items:center;justify-content:center;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.10);
+      font-size: 0.95rem;
+      color:#93c5fd;
+    ">🗓</div>
+  </div>
+  <div class="dp-kpi-value" style="font-size:1.18rem;color:#e5e7eb;line-height:1.2;">{_html.escape(str(row.periodo))}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
     with c2:
         cur = float(stats.get("media_margem") or 0.0)
         ref = float(prev_stats.get("media_margem") or 0.0) if isinstance(prev_stats, dict) else None
