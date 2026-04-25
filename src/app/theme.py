@@ -27,11 +27,11 @@ def _profile_css(profile: str) -> str:
 """
     if p == "tablet":
         return """
-  /* Perfil Tablet / iPad */
+  /* Perfil Tablet / iPad — mais largura útil, menos padding lateral */
   .main .block-container {
-    padding-top: 1.65rem !important;
-    padding-left: 0.9rem !important;
-    padding-right: 0.9rem !important;
+    padding-top: 1.5rem !important;
+    padding-left: 0.55rem !important;
+    padding-right: 0.55rem !important;
     max-width: 100% !important;
   }
   .dp-title{ font-size:1.28rem !important; }
@@ -80,6 +80,61 @@ def _responsive_viewport_css() -> str:
     [data-testid="stTabs"] [data-baseweb="tab-list"] {
       flex-wrap: wrap !important;
       gap: 4px !important;
+    }
+  }
+
+  /* ——— iPad / tablet (não celular): KPIs e colunas deixam de esmagar números ——— */
+  @media screen and (max-width: 1400px) and (min-width: 641px) {
+    .main .block-container {
+      padding-left: 0.5rem !important;
+      padding-right: 0.5rem !important;
+    }
+    .main [data-testid="stHorizontalBlock"] {
+      flex-wrap: wrap !important;
+      row-gap: 0.45rem !important;
+      column-gap: 0.35rem !important;
+      align-items: flex-start !important;
+    }
+    .main [data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+      flex: 1 1 calc(33.333% - 8px) !important;
+      min-width: min(100%, 220px) !important;
+      max-width: 100% !important;
+    }
+    [data-testid="stMetric"] {
+      min-width: 0 !important;
+      overflow: visible !important;
+    }
+    [data-testid="stMetric"] [data-testid="stMetricLabel"] p {
+      white-space: normal !important;
+      line-height: 1.25 !important;
+      word-break: break-word !important;
+    }
+    [data-testid="stMetricValue"] {
+      overflow: visible !important;
+    }
+    [data-testid="stMetricValue"] > div {
+      overflow: visible !important;
+      text-overflow: clip !important;
+      white-space: normal !important;
+    }
+    .bonus-table-wrap {
+      overflow-x: auto !important;
+      -webkit-overflow-scrolling: touch;
+    }
+    .bonus-table-wrap .bonus-table {
+      min-width: 700px;
+    }
+    .bonus-table .bonus-cell-num,
+    th.bonus-col-bonus,
+    td.bonus-col-bonus {
+      white-space: nowrap !important;
+    }
+    div[data-testid="stDataFrame"] {
+      overflow-x: auto !important;
+      -webkit-overflow-scrolling: touch;
+    }
+    .js-plotly-plot, .plotly-graph-div {
+      max-width: 100% !important;
     }
   }
 
@@ -228,11 +283,13 @@ def inject_styles(profile: str = "desktop") -> None:
   }
   .stButton > button:hover{ filter: brightness(1.03); transform: translateY(-1px); }
 
-  /* Tables */
+  /* Tabelas Streamlit: rolagem horizontal (evita cortar números no iPad) */
   div[data-testid="stDataFrame"]{
     border: 1px solid var(--border);
     border-radius: 14px;
-    overflow: hidden;
+    overflow-x: auto;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
     margin-top: 6px;
     margin-bottom: 8px;
   }
@@ -327,6 +384,7 @@ def inject_styles(profile: str = "desktop") -> None:
   }
   .bonus-table-wrap {
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
     border-radius: 14px;
     border: 1px solid rgba(255,255,255,.08);
   }
@@ -346,7 +404,9 @@ def inject_styles(profile: str = "desktop") -> None:
     text-transform: uppercase;
     letter-spacing: 0.06em;
     border-bottom: 1px solid rgba(255,255,255,.08);
-    white-space: nowrap;
+    white-space: normal;
+    word-break: break-word;
+    hyphens: auto;
   }
   .bonus-table tbody td {
     padding: 11px 14px;
@@ -355,7 +415,7 @@ def inject_styles(profile: str = "desktop") -> None:
     vertical-align: middle;
   }
   .bonus-table tbody tr:hover td { background: rgba(255,255,255,.025); }
-  .bonus-vendedor { font-weight: 700; color: #f1f5f9; min-width: 150px; }
+  .bonus-vendedor { font-weight: 700; color: #f1f5f9; min-width: 120px; white-space: normal; word-break: break-word; }
   .bonus-cell-num { font-variant-numeric: tabular-nums; }
   .bonus-pill-sim {
     display: inline-block;

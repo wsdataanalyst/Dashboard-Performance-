@@ -2186,7 +2186,19 @@ def page_sala_gestao(settings, conn) -> None:
         if isinstance(dept_payload, dict) and isinstance(dept_payload.get("departamentos"), list):
             ddf = pd.DataFrame([d for d in dept_payload["departamentos"] if _dept_ok(d.get("departamento"))])
             if not ddf.empty:
-                show_cols = [c for c in ["departamento", "participacao_pct", "alcance_projetado_pct", "margem_pct", "faturamento", "meta_faturamento"] if c in ddf.columns]
+                show_cols = [
+                    c
+                    for c in [
+                        "departamento",
+                        "meta_faturamento",
+                        "faturamento",
+                        "faturamento_projetado_acumulado",
+                        "participacao_pct",
+                        "alcance_projetado_pct",
+                        "margem_pct",
+                    ]
+                    if c in ddf.columns
+                ]
                 if "meta_faturamento" in ddf.columns and "faturamento" in ddf.columns:
                     ddf["falta_meta"] = ddf.apply(
                         lambda r: (float(r["meta_faturamento"]) - float(r["faturamento"]))
@@ -2650,8 +2662,8 @@ def main() -> None:
             key="ui_profile",
         )
         st.caption(
-            "Em telas estreitas o layout já ajusta margens, abas e toques. "
-            "O perfil **Tablet** ou **Smartphone** reforça tipografia e espaçamento."
+            "No **iPad**, use o perfil **Tablet** e, em tabelas largas, deslize horizontalmente. "
+            "Paisagem costuma mostrar mais colunas sem cortar números."
         )
         st.markdown("---")
         st.markdown("### 📌 Sessão")

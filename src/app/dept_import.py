@@ -62,6 +62,68 @@ def _find_col(df: pd.DataFrame, *needles: str) -> str | None:
     return None
 
 
+def _find_meta_faturamento_col(df: pd.DataFrame) -> str | None:
+    """Meta de faturamento (R$), não '% Meta Margem'."""
+    cols = _col_lookup(df)
+    exact: str | None = None
+    fallback: str | None = None
+    for k, orig in cols.items():
+        if "meta" not in k:
+            continue
+        if "margem" in k:
+            continue
+        if k.strip() == "meta":
+            return orig
+        if exact is None and k.startswith("meta "):
+            exact = orig
+        if fallback is None:
+            fallback = orig
+    return exact or fallback
+
+
+def _find_faturamento_projetado_acumulado_col(df: pd.DataFrame) -> str | None:
+    """Colunas tipo 'Fat. Projetado Acumulado' (não confundir só com 'Faturamento')."""
+    return _find_col(
+        df,
+        "projetado acumulado",
+        "projetado acum",
+        "fat projetado acum",
+        "fat. projetado acum",
+        "faturamento projetado acumulado",
+        "faturamento projetado",
+        "proj acumulado",
+    )
+
+
+def _find_faturamento_real_col(df: pd.DataFrame, skip: str | None) -> str | None:
+    """Faturamento realizado / período (evita reusar a coluna de projetado)."""
+    for cand in ("faturamento", "fat real", "fatur real", "realizado", "fatur", "receita", "valor"):
+        c = _find_col(df, cand)
+        if c and (skip is None or c != skip):
+            return c
+    return None
+
+
+def _recalc_alcance_projetado_pct(rec: dict[str, Any]) -> None:
+    """
+    Alcance projetado = (Fat. Projetado Acumulado / Meta faturamento) * 100
+    quando ambos existem e meta > 0 — bate com a planilha (ex.: 3604,71%).
+    Sobrescreve a coluna % da planilha para evitar erro de importação.
+    """
+    meta = rec.get("meta_faturamento")
+    fp = rec.get("faturamento_projetado_acumulado")
+    if meta is None or fp is None:
+        return
+    try:
+        m = float(meta)
+        p = float(fp)
+    except (TypeError, ValueError):
+        return
+    if m <= 0:
+        return
+    rec["alcance_projetado_pct"] = round((p / m) * 100.0, 4)
+
+
 def _to_float(v: Any) -> float | None:
     if v is None:
         return None
@@ -92,10 +154,11 @@ def import_departamentos(files: list[tuple[str, bytes]]) -> DeptImportResult:
 
     Colunas esperadas (flexível por match):
     - departamento / categoria / grupo
-    - faturamento
-    - meta
+    - meta (faturamento em R$, não % meta margem)
+    - faturamento (realizado) e/ou Fat. Projetado Acumulado
     - participacao (%)
-    - alcance projetado (%)
+    - alcance projetado (%) — se existir **meta** e **faturamento projetado acumulado**,
+      o app recalcula: (projetado / meta) * 100
     - margem (%)
     """
     warnings: list[str] = []
@@ -109,13 +172,14 @@ def import_departamentos(files: list[tuple[str, bytes]]) -> DeptImportResult:
                 continue
 
             c_dept = _find_col(df, "depart", "categoria", "grupo", "setor")
-            c_fat = _find_col(df, "fatur", "receita", "valor")
-            c_meta = _find_col(df, "meta")
+            c_fat_proj = _find_faturamento_projetado_acumulado_col(df)
+            c_fat = _find_faturamento_real_col(df, skip=c_fat_proj)
+            c_meta = _find_meta_faturamento_col(df) or _find_col(df, "meta")
             c_part = _find_col(df, "particip", "% particip")
             c_alc = _find_col(df, "alcance", "alcance projet")
             c_marg = _find_col(df, "margem", "% margem")
 
-            if not c_dept or not (c_fat or c_meta or c_part or c_alc or c_marg):
+            if not c_dept or not (c_fat or c_fat_proj or c_meta or c_part or c_alc or c_marg):
                 continue
 
             for _, r in df.iterrows():
@@ -127,6 +191,10 @@ def import_departamentos(files: list[tuple[str, bytes]]) -> DeptImportResult:
                     v = _to_float(r.get(c_fat))
                     if v is not None:
                         rec["faturamento"] = v
+                if c_fat_proj:
+                    v = _to_float(r.get(c_fat_proj))
+                    if v is not None:
+                        rec["faturamento_projetado_acumulado"] = v
                 if c_meta:
                     v = _to_float(r.get(c_meta))
                     if v is not None:
@@ -143,6 +211,7 @@ def import_departamentos(files: list[tuple[str, bytes]]) -> DeptImportResult:
                     v = normalize_small_excel_percent(r.get(c_marg))
                     if v is not None:
                         rec["margem_pct"] = v
+                _recalc_alcance_projetado_pct(rec)
 
             handled = True
             break
