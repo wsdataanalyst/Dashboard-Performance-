@@ -2787,118 +2787,119 @@ def page_insights(settings, conn) -> None:
             return 1
         return 2
 
-    provider: Provider = st.selectbox(
-        "Provedor de IA (para insights)",
-        options=["auto", "gemini", "openai"],
-        format_func=lambda x: {"auto": "Auto (Gemini → OpenAI)", "gemini": "Gemini", "openai": "OpenAI"}[x],
-        key="ins_provider",
-        index=default_provider_index(),
-    )
+    with st.expander("Análise com IA (expandir/minimizar)", expanded=False):
+        provider: Provider = st.selectbox(
+            "Provedor de IA (para insights)",
+            options=["auto", "gemini", "openai"],
+            format_func=lambda x: {"auto": "Auto (Gemini → OpenAI)", "gemini": "Gemini", "openai": "OpenAI"}[x],
+            key="ins_provider",
+            index=default_provider_index(),
+        )
 
-    payload = json.loads(row.payload_json)
-    sellers = parse_sellers(payload)
-    results, total = calcular_time(sellers) if sellers else ([], 0.0)
+        payload = json.loads(row.payload_json)
+        sellers = parse_sellers(payload)
+        results, total = calcular_time(sellers) if sellers else ([], 0.0)
 
-    df = pd.DataFrame([r.__dict__ for r in results]) if results else pd.DataFrame()
-    df = _enrich_results_df_for_performance(df, sellers)
-    totais = payload.get("totais") if isinstance(payload, dict) else None
-    if not isinstance(totais, dict):
-        totais = {}
-    dados_json = json.dumps(
-        {
-            "periodo": row.periodo,
-            "total_bonus": total,
-            # Importante: `totais.meta_total` pode incluir meta de vendedores excluídos (ex.: Laila),
-            # sem que eles apareçam em vendedores/dashboards.
-            "totais": totais,
-            "vendedores": df.to_dict(orient="records") if not df.empty else [],
-        },
-        ensure_ascii=False,
-        indent=2,
-    )
-    prompt = PROMPT_INSIGHTS.format(dados_json=dados_json)
+        df = pd.DataFrame([r.__dict__ for r in results]) if results else pd.DataFrame()
+        df = _enrich_results_df_for_performance(df, sellers)
+        totais = payload.get("totais") if isinstance(payload, dict) else None
+        if not isinstance(totais, dict):
+            totais = {}
+        dados_json = json.dumps(
+            {
+                "periodo": row.periodo,
+                "total_bonus": total,
+                # Importante: `totais.meta_total` pode incluir meta de vendedores excluídos (ex.: Laila),
+                # sem que eles apareçam em vendedores/dashboards.
+                "totais": totais,
+                "vendedores": df.to_dict(orient="records") if not df.empty else [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        prompt = PROMPT_INSIGHTS.format(dados_json=dados_json)
 
-    # Visual rápido (antes de gerar IA)
-    if not df.empty:
-        st.markdown("### Visão rápida (performance)")
-        k1, k2, k3, k4, k5, k6 = st.columns(6)
-        k1.metric("NFs (time)", f"{int(pd.to_numeric(df.get('qtd_faturadas'), errors='coerce').fillna(0).sum())}")
-        k2.metric("Faturamento (time)", f"R$ {float(pd.to_numeric(df.get('faturamento'), errors='coerce').fillna(0).sum()):,.2f}")
-        k3.metric("Interações (time)", f"{int(pd.to_numeric(df.get('interacoes'), errors='coerce').fillna(0).sum())}")
-        conv = pd.to_numeric(df.get("conversao_pct"), errors="coerce").dropna()
-        k4.metric("Conversão (média)", f"{float(conv.mean()):.2f}%" if len(conv) else "—")
-        marg = pd.to_numeric(df.get("margem_pct"), errors="coerce").dropna()
-        k5.metric("Margem (média)", f"{float(marg.mean()):.2f}%" if len(marg) else "—")
-        # Desconto (do arquivo Qtd Faturadas)
-        dp = [float(getattr(s, "desconto_pct", 0.0)) for s in sellers if getattr(s, "desconto_pct", None) is not None]
-        if dp:
-            k6.metric("Desconto (médio)", f"{(sum(dp)/len(dp)):.2f}%")
+        # Visual rápido (antes de gerar IA)
+        if not df.empty:
+            st.markdown("### Visão rápida (performance)")
+            k1, k2, k3, k4, k5, k6 = st.columns(6)
+            k1.metric("NFs (time)", f"{int(pd.to_numeric(df.get('qtd_faturadas'), errors='coerce').fillna(0).sum())}")
+            k2.metric("Faturamento (time)", f"R$ {float(pd.to_numeric(df.get('faturamento'), errors='coerce').fillna(0).sum()):,.2f}")
+            k3.metric("Interações (time)", f"{int(pd.to_numeric(df.get('interacoes'), errors='coerce').fillna(0).sum())}")
+            conv = pd.to_numeric(df.get("conversao_pct"), errors="coerce").dropna()
+            k4.metric("Conversão (média)", f"{float(conv.mean()):.2f}%" if len(conv) else "—")
+            marg = pd.to_numeric(df.get("margem_pct"), errors="coerce").dropna()
+            k5.metric("Margem (média)", f"{float(marg.mean()):.2f}%" if len(marg) else "—")
+            # Desconto (do arquivo Qtd Faturadas)
+            dp = [float(getattr(s, "desconto_pct", 0.0)) for s in sellers if getattr(s, "desconto_pct", None) is not None]
+            if dp:
+                k6.metric("Desconto (médio)", f"{(sum(dp)/len(dp)):.2f}%")
+            else:
+                k6.metric("Desconto (médio)", "—")
+
+            try:
+                import plotly.express as px
+
+                st.markdown("### Gráficos")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if "faturamento" in df.columns:
+                        fig = px.bar(df, x="nome", y="faturamento", title="Faturamento por vendedor")
+                        fig.update_layout(height=340)
+                        st.plotly_chart(fig, use_container_width=True, key="ins_perf_faturamento_bar")
+                with c2:
+                    if "qtd_faturadas" in df.columns:
+                        fig = px.bar(df, x="nome", y="qtd_faturadas", title="NFs (Qtd. faturadas) por vendedor")
+                        fig.update_layout(height=340)
+                        st.plotly_chart(fig, use_container_width=True, key="ins_perf_nfs_bar")
+
+                c3, c4 = st.columns(2)
+                with c3:
+                    if "ticket_medio" in df.columns:
+                        fig = px.bar(df, x="nome", y="ticket_medio", title="Ticket médio por vendedor")
+                        fig.update_layout(height=340)
+                        st.plotly_chart(fig, use_container_width=True, key="ins_perf_ticket_bar")
+                with c4:
+                    if "conversao_pct" in df.columns and "interacoes" in df.columns:
+                        fig = px.scatter(
+                            df,
+                            x="interacoes",
+                            y="conversao_pct",
+                            size="qtd_faturadas" if "qtd_faturadas" in df.columns else None,
+                            color="elegivel_margem" if "elegivel_margem" in df.columns else None,
+                            hover_name="nome",
+                            title="Interações x Conversão (bolha = NFs)",
+                        )
+                        fig.update_layout(height=340)
+                        st.plotly_chart(fig, use_container_width=True, key="ins_perf_inter_conv_scatter")
+            except Exception as e:
+                st.caption(f"Gráficos indisponíveis: {e}")
+
+        if st.button("✨ Gerar insights", use_container_width=True):
+            try:
+                with st.spinner("Gerando insights (com fallback automático)..."):
+                    insights, prov_used, model_used = json_from_text(settings=settings, provider=provider, prompt=prompt)
+                st.session_state["insights"] = {"data": insights, "provider": prov_used, "model": model_used}
+            except Exception as e:
+                st.error("Não consegui gerar insights com IA.")
+                st.caption(str(e))
+                st.info(
+                    "Verifique se você configurou `GOOGLE_API_KEY` e/ou `OPENAI_API_KEY`. "
+                    "No modo **Auto**, o ideal é ter as duas para garantir fallback."
+                )
+
+        ins = st.session_state.get("insights")
+        if isinstance(ins, dict) and isinstance(ins.get("data"), dict):
+            st.caption(f"Gerado por **{ins.get('provider')}** (`{ins.get('model')}`).")
+            _render_insights_moderno(ins["data"])
+            st.markdown("### Priorização (automática)")
+            pr = _build_priority_table(df)
+            if pr.empty:
+                st.caption("Sem dados suficientes para priorização.")
+            else:
+                st.dataframe(pr, use_container_width=True, hide_index=True)
         else:
-            k6.metric("Desconto (médio)", "—")
-
-        try:
-            import plotly.express as px
-
-            st.markdown("### Gráficos")
-            c1, c2 = st.columns(2)
-            with c1:
-                if "faturamento" in df.columns:
-                    fig = px.bar(df, x="nome", y="faturamento", title="Faturamento por vendedor")
-                    fig.update_layout(height=340)
-                    st.plotly_chart(fig, use_container_width=True, key="ins_perf_faturamento_bar")
-            with c2:
-                if "qtd_faturadas" in df.columns:
-                    fig = px.bar(df, x="nome", y="qtd_faturadas", title="NFs (Qtd. faturadas) por vendedor")
-                    fig.update_layout(height=340)
-                    st.plotly_chart(fig, use_container_width=True, key="ins_perf_nfs_bar")
-
-            c3, c4 = st.columns(2)
-            with c3:
-                if "ticket_medio" in df.columns:
-                    fig = px.bar(df, x="nome", y="ticket_medio", title="Ticket médio por vendedor")
-                    fig.update_layout(height=340)
-                    st.plotly_chart(fig, use_container_width=True, key="ins_perf_ticket_bar")
-            with c4:
-                if "conversao_pct" in df.columns and "interacoes" in df.columns:
-                    fig = px.scatter(
-                        df,
-                        x="interacoes",
-                        y="conversao_pct",
-                        size="qtd_faturadas" if "qtd_faturadas" in df.columns else None,
-                        color="elegivel_margem" if "elegivel_margem" in df.columns else None,
-                        hover_name="nome",
-                        title="Interações x Conversão (bolha = NFs)",
-                    )
-                    fig.update_layout(height=340)
-                    st.plotly_chart(fig, use_container_width=True, key="ins_perf_inter_conv_scatter")
-        except Exception as e:
-            st.caption(f"Gráficos indisponíveis: {e}")
-
-    if st.button("✨ Gerar insights", use_container_width=True):
-        try:
-            with st.spinner("Gerando insights (com fallback automático)..."):
-                insights, prov_used, model_used = json_from_text(settings=settings, provider=provider, prompt=prompt)
-            st.session_state["insights"] = {"data": insights, "provider": prov_used, "model": model_used}
-        except Exception as e:
-            st.error("Não consegui gerar insights com IA.")
-            st.caption(str(e))
-            st.info(
-                "Verifique se você configurou `GOOGLE_API_KEY` e/ou `OPENAI_API_KEY`. "
-                "No modo **Auto**, o ideal é ter as duas para garantir fallback."
-            )
-
-    ins = st.session_state.get("insights")
-    if isinstance(ins, dict) and isinstance(ins.get("data"), dict):
-        st.caption(f"Gerado por **{ins.get('provider')}** (`{ins.get('model')}`).")
-        _render_insights_moderno(ins["data"])
-        st.markdown("### Priorização (automática)")
-        pr = _build_priority_table(df)
-        if pr.empty:
-            st.caption("Sem dados suficientes para priorização.")
-        else:
-            st.dataframe(pr, use_container_width=True, hide_index=True)
-    else:
-        st.info("Clique em **Gerar insights**.")
+            st.info("Clique em **Gerar insights**.")
 
 
 def _extract_perf_summary_from_payload(periodo: str, payload: dict) -> dict:
