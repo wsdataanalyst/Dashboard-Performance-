@@ -3221,7 +3221,35 @@ def page_insights(settings, conn) -> None:
             if pr.empty:
                 st.caption("Sem dados suficientes para priorização.")
             else:
-                st.dataframe(pr, use_container_width=True, hide_index=True)
+                def _style_priority(s: pd.Series) -> list[str]:
+                    out: list[str] = []
+                    for v in s.astype(str).fillna("").tolist():
+                        vv = v.strip().lower()
+                        if vv.startswith("alta"):
+                            out.append("background-color: rgba(251,113,133,.14); color:#fecdd3; font-weight:900;")
+                        elif vv.startswith("m"):
+                            out.append("background-color: rgba(251,191,36,.14); color:#fde68a; font-weight:900;")
+                        else:
+                            out.append("background-color: rgba(110,231,183,.12); color:#bbf7d0; font-weight:850;")
+                    return out
+
+                def _style_motivos(s: pd.Series) -> list[str]:
+                    out: list[str] = []
+                    for v in s.astype(str).fillna("").tolist():
+                        out.append("color:#E5E7EB; font-weight:650;")
+                    return out
+
+                pr_show = pr.copy()
+                # deixa a coluna de motivos mais amigável: quebra por " | "
+                if "Motivos (curto)" in pr_show.columns:
+                    pr_show["Motivos (curto)"] = pr_show["Motivos (curto)"].astype(str).str.replace(" | ", "\n", regex=False)
+
+                styled = (
+                    pr_show.style.apply(_style_priority, subset=["Prioridade"])
+                    .apply(_style_motivos, subset=["Motivos (curto)"])
+                    .set_properties(subset=["Vendedor"], **{"font-weight": "800", "color": "#E5E7EB"})
+                )
+                st.dataframe(styled, use_container_width=True, hide_index=True)
         else:
             st.info("Clique em **Gerar insights**.")
 
