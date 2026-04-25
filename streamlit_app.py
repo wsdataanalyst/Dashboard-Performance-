@@ -3210,23 +3210,85 @@ def page_insights(settings, conn) -> None:
         )
         prompt = PROMPT_INSIGHTS.format(dados_json=dados_json)
 
+        import html as _html
+
+        def _kpi_card(title: str, value: str, *, icon: str, accent: str) -> None:
+            st.markdown(
+                f"""
+<div class="dp-card" style="
+  padding:12px 12px;
+  border-color: rgba(59,130,246,.18);
+  background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.18), transparent 60%),
+              radial-gradient(900px 220px at 85% 10%, rgba(110,231,183,.12), transparent 55%),
+              linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
+">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+    <div class="dp-kpi-label">{_html.escape(title)}</div>
+    <div style="
+      width:28px;height:28px;border-radius:10px;
+      display:flex;align-items:center;justify-content:center;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.10);
+      font-size: 0.95rem;
+      color: {accent};
+    ">{_html.escape(icon)}</div>
+  </div>
+  <div class="dp-kpi-value" style="font-size:1.35rem;color:{accent};text-shadow:0 0 24px rgba(59,130,246,.18);">{_html.escape(value)}</div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+
         # Visual rápido (antes de gerar IA)
         if not df.empty:
             st.markdown("### Visão rápida (performance)")
             k1, k2, k3, k4, k5, k6 = st.columns(6)
-            k1.metric("NFs (time)", f"{int(pd.to_numeric(df.get('qtd_faturadas'), errors='coerce').fillna(0).sum())}")
-            k2.metric("Faturamento (time)", f"R$ {float(pd.to_numeric(df.get('faturamento'), errors='coerce').fillna(0).sum()):,.2f}")
-            k3.metric("Interações (time)", f"{int(pd.to_numeric(df.get('interacoes'), errors='coerce').fillna(0).sum())}")
+            with k1:
+                _kpi_card(
+                    "NFs (time)",
+                    f"{int(pd.to_numeric(df.get('qtd_faturadas'), errors='coerce').fillna(0).sum())}",
+                    icon="📦",
+                    accent="#93c5fd",
+                )
+            with k2:
+                _kpi_card(
+                    "Faturamento (time)",
+                    f"R$ {float(pd.to_numeric(df.get('faturamento'), errors='coerce').fillna(0).sum()):,.2f}",
+                    icon="💰",
+                    accent="#6EE7B7",
+                )
+            with k3:
+                _kpi_card(
+                    "Interações (time)",
+                    f"{int(pd.to_numeric(df.get('interacoes'), errors='coerce').fillna(0).sum())}",
+                    icon="☎️",
+                    accent="#C4B5FD",
+                )
             conv = pd.to_numeric(df.get("conversao_pct"), errors="coerce").dropna()
-            k4.metric("Conversão (média)", f"{float(conv.mean()):.2f}%" if len(conv) else "—")
+            with k4:
+                _kpi_card(
+                    "Conversão (média)",
+                    f"{float(conv.mean()):.2f}%" if len(conv) else "—",
+                    icon="🔁",
+                    accent="#FBBF24",
+                )
             marg = pd.to_numeric(df.get("margem_pct"), errors="coerce").dropna()
-            k5.metric("Margem (média)", f"{float(marg.mean()):.2f}%" if len(marg) else "—")
+            with k5:
+                _kpi_card(
+                    "Margem (média)",
+                    f"{float(marg.mean()):.2f}%" if len(marg) else "—",
+                    icon="📊",
+                    accent="#A7F3D0",
+                )
             # Desconto (do arquivo Qtd Faturadas)
             dp = [float(getattr(s, "desconto_pct", 0.0)) for s in sellers if getattr(s, "desconto_pct", None) is not None]
-            if dp:
-                k6.metric("Desconto (médio)", f"{(sum(dp)/len(dp)):.2f}%")
-            else:
-                k6.metric("Desconto (médio)", "—")
+            with k6:
+                _kpi_card(
+                    "Desconto (médio)",
+                    f"{(sum(dp)/len(dp)):.2f}%" if dp else "—",
+                    icon="🏷",
+                    accent="#93c5fd",
+                )
 
             try:
                 import plotly.express as px
@@ -3236,19 +3298,55 @@ def page_insights(settings, conn) -> None:
                 with c1:
                     if "faturamento" in df.columns:
                         fig = px.bar(df, x="nome", y="faturamento", title="Faturamento por vendedor")
-                        fig.update_layout(height=340)
+                        fig.update_traces(marker_color="rgba(110,231,183,0.75)", marker_line_color="rgba(255,255,255,0.12)", marker_line_width=1)
+                        fig.update_layout(
+                            height=340,
+                            template="plotly_dark",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            margin=dict(l=10, r=10, t=60, b=10),
+                            font=dict(color="#E5E7EB"),
+                            title_font=dict(size=18),
+                            bargap=0.25,
+                        )
+                        fig.update_xaxes(showgrid=False, tickangle=-30)
+                        fig.update_yaxes(showgrid=True, gridcolor="rgba(148,163,184,0.12)", zeroline=False)
                         st.plotly_chart(fig, use_container_width=True, key="ins_perf_faturamento_bar")
                 with c2:
                     if "qtd_faturadas" in df.columns:
                         fig = px.bar(df, x="nome", y="qtd_faturadas", title="NFs (Qtd. faturadas) por vendedor")
-                        fig.update_layout(height=340)
+                        fig.update_traces(marker_color="rgba(59,130,246,0.70)", marker_line_color="rgba(255,255,255,0.12)", marker_line_width=1)
+                        fig.update_layout(
+                            height=340,
+                            template="plotly_dark",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            margin=dict(l=10, r=10, t=60, b=10),
+                            font=dict(color="#E5E7EB"),
+                            title_font=dict(size=18),
+                            bargap=0.25,
+                        )
+                        fig.update_xaxes(showgrid=False, tickangle=-30)
+                        fig.update_yaxes(showgrid=True, gridcolor="rgba(148,163,184,0.12)", zeroline=False)
                         st.plotly_chart(fig, use_container_width=True, key="ins_perf_nfs_bar")
 
                 c3, c4 = st.columns(2)
                 with c3:
                     if "ticket_medio" in df.columns:
                         fig = px.bar(df, x="nome", y="ticket_medio", title="Ticket médio por vendedor")
-                        fig.update_layout(height=340)
+                        fig.update_traces(marker_color="rgba(251,191,36,0.75)", marker_line_color="rgba(255,255,255,0.12)", marker_line_width=1)
+                        fig.update_layout(
+                            height=340,
+                            template="plotly_dark",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            margin=dict(l=10, r=10, t=60, b=10),
+                            font=dict(color="#E5E7EB"),
+                            title_font=dict(size=18),
+                            bargap=0.25,
+                        )
+                        fig.update_xaxes(showgrid=False, tickangle=-30)
+                        fig.update_yaxes(showgrid=True, gridcolor="rgba(148,163,184,0.12)", zeroline=False)
                         st.plotly_chart(fig, use_container_width=True, key="ins_perf_ticket_bar")
                 with c4:
                     if "conversao_pct" in df.columns and "interacoes" in df.columns:
@@ -3261,7 +3359,18 @@ def page_insights(settings, conn) -> None:
                             hover_name="nome",
                             title="Interações x Conversão (bolha = NFs)",
                         )
-                        fig.update_layout(height=340)
+                        fig.update_traces(marker=dict(line=dict(width=1, color="rgba(255,255,255,0.16)")))
+                        fig.update_layout(
+                            height=340,
+                            template="plotly_dark",
+                            paper_bgcolor="rgba(0,0,0,0)",
+                            plot_bgcolor="rgba(0,0,0,0)",
+                            margin=dict(l=10, r=10, t=60, b=10),
+                            font=dict(color="#E5E7EB"),
+                            title_font=dict(size=18),
+                        )
+                        fig.update_xaxes(showgrid=True, gridcolor="rgba(148,163,184,0.12)", zeroline=False)
+                        fig.update_yaxes(showgrid=True, gridcolor="rgba(148,163,184,0.12)", zeroline=False)
                         st.plotly_chart(fig, use_container_width=True, key="ins_perf_inter_conv_scatter")
             except Exception as e:
                 st.caption(f"Gráficos indisponíveis: {e}")
