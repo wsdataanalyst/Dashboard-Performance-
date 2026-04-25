@@ -1247,20 +1247,21 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
     c5.metric("Margem média", f"{stats['media_margem']:.1f}%")
     c6.metric("Conversão média", f"{stats['media_conversao']:.1f}%")
     with c7:
-        pct_txt = f"{float(disc.get('desconto_pct')):.2f}%" if disc.get("desconto_pct") is not None else "—"
-        val_txt = f"R$ {float(disc.get('desconto_valor')):,.2f}" if disc.get("desconto_valor") is not None else "—"
-        qtd_txt = f"{int(disc.get('qtd_desconto') or 0):d}" if disc.get("qtd_desconto") is not None else "—"
-        qp_txt = f"{float(disc.get('qtd_desconto_pct')):.2f}%" if disc.get("qtd_desconto_pct") is not None else "—"
+        d_pct = disc.get("desconto_pct")
+        pct_txt = f"{float(d_pct):.2f}%" if d_pct is not None and not pd.isna(d_pct) else "—"
+        # Card enxuto nesta aba (sem detalhes) para não poluir
         st.markdown(
             f"""
-<div class="dp-card" style="padding:12px 12px;">
-  <div class="dp-kpi-label">Desconto (% aplicado)</div>
-  <div class="dp-kpi-value" style="font-size:1.22rem;">{pct_txt}</div>
-  <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
-    <span class="dp-pill" style="background:rgba(255,255,255,.02);">Valor: <b>{val_txt}</b></span>
-    <span class="dp-pill" style="background:rgba(255,255,255,.02);">Qtd: <b>{qtd_txt}</b></span>
-    <span class="dp-pill" style="background:rgba(255,255,255,.02);">% qtd: <b>{qp_txt}</b></span>
-  </div>
+<div class="dp-card" style="
+  padding:12px 12px;
+  border-color: rgba(59,130,246,.22);
+  background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.22), transparent 60%),
+              radial-gradient(900px 220px at 85% 10%, rgba(110,231,183,.16), transparent 55%),
+              linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
+">
+  <div class="dp-kpi-label">Desconto</div>
+  <div class="dp-kpi-value" style="font-size:1.35rem;color:#93c5fd;text-shadow:0 0 24px rgba(59,130,246,.25);">{pct_txt}</div>
+  <div class="dp-kpi-help">%</div>
 </div>
 """,
             unsafe_allow_html=True,
