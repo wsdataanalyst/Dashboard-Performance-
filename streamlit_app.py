@@ -1606,7 +1606,17 @@ def page_projection(settings, conn) -> None:
             if best_id is None or rid > best_id:
                 best = rr
                 best_id = rid
-        return best
+        if best is not None:
+            return best
+
+        # Último fallback: pega a primeira análise "performance" diferente da atual
+        for rr in rows:
+            rid = int(getattr(rr, "id", 0) or 0)
+            if rid == cur_id:
+                continue
+            if _is_perf_row(rr):
+                return rr
+        return None
 
     def _pct_delta(cur: object, ref: object) -> float | None:
         try:
