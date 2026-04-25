@@ -1921,11 +1921,31 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
             try:
                 import plotly.graph_objects as go
 
+                # Quais indicadores (para hover moderno)
+                ind_labels = {
+                    "entregue_meta_faturamento": "Meta faturamento entregue",
+                    "entregue_margem": "Margem",
+                    "entregue_conversao": "Conversão",
+                    "entregue_prazo": "Prazo médio",
+                    "entregue_tme": "TME",
+                    "entregue_interacoes": "Interações",
+                    "entregue_desconto": "Desconto",
+                }
+                quais: list[str] = []
+                for _, r in dfx.iterrows():
+                    delivered = [ind_labels[c] for c in entregas_cols if bool(r.get(c))]
+                    if not delivered:
+                        quais.append("—")
+                    else:
+                        # um por linha para ficar legível
+                        quais.append("<br>".join([f"• {x}" for x in delivered]))
+
                 fig_h = go.Figure(
                     data=go.Heatmap(
                         z=[dfx["indicadores_entregues"].tolist()],
                         x=dfx["nome"].tolist(),
                         y=["Indicadores entregues"],
+                        customdata=[quais],
                         colorscale=[
                             [0.0, "rgba(251,113,133,0.35)"],
                             [0.4, "rgba(251,191,36,0.35)"],
@@ -1934,7 +1954,12 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
                         ],
                         zmin=0,
                         zmax=max(1, int(dfx["indicadores_entregues"].max())),
-                        hovertemplate="<b>%{x}</b><br>Indicadores entregues: %{z}<extra></extra>",
+                        hovertemplate=(
+                            "<b>%{x}</b>"
+                            "<br><span style='color:#94a3b8'>Indicadores entregues:</span> <b>%{z}</b>"
+                            "<br><span style='color:#94a3b8'>Quais:</span><br>%{customdata}"
+                            "<extra></extra>"
+                        ),
                         showscale=True,
                         colorbar=dict(title="Qtd", thickness=12),
                     )
@@ -1944,6 +1969,11 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
                     margin=dict(l=10, r=10, t=10, b=10),
                     xaxis=dict(tickangle=-35),
                     yaxis=dict(tickfont=dict(size=12)),
+                    hoverlabel=dict(
+                        bgcolor="rgba(11,18,32,0.96)",
+                        bordercolor="rgba(148,163,184,0.28)",
+                        font=dict(color="#E5E7EB", size=12),
+                    ),
                 )
                 st.plotly_chart(fig_h, use_container_width=True, key=f"{key_prefix}_heat_indicadores_entregues")
                 if disc_ref is not None:
