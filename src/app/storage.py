@@ -6,7 +6,9 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
+
+DbConnection = Union["sqlite3.Connection", "PgShim"]
 
 
 SCHEMA_VERSION = 3
@@ -28,7 +30,40 @@ def _ensure_parent(path: str) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
 
 
-def connect(db_path: str) -> sqlite3.Connection:
+def _qmarks_to_psycopg(sql: str) -> str:
+    return sql.replace("?", "%s")
+
+
+class PgShim:
+    """psycopg3 com API parecida com sqlite3: execute().fetch*() e placeholders `?` convertidos para `%s`."""
+
+    def __init__(self, raw: Any) -> None:
+        self._c = raw
+
+    def execute(self, sql: str, parameters: tuple[Any, ...] = ()) -> Any:
+        return self._c.execute(_qmarks_to_psycopg(sql), parameters)
+
+    def commit(self) -> None:
+        self._c.commit()
+
+    def __enter__(self) -> PgShim:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self._c.__exit__(*args)
+
+
+def connect_postgres(database_url: str) -> PgShim:
+    import psycopg
+    from psycopg.rows import dict_row
+
+    c = psycopg.connect(database_url, autocommit=False, row_factory=dict_row)
+    return PgShim(c)
+
+
+def connect(db_path: str, database_url: str | None = None) -> DbConnection:
+    if (database_url or "").strip():
+        return connect_postgres((database_url or "").strip())
     _ensure_parent(db_path)
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -38,7 +73,167 @@ def connect(db_path: str) -> sqlite3.Connection:
     return conn
 
 
-def init_db(conn: sqlite3.Connection) -> None:
+def is_postgres_conn(conn: Any) -> bool:
+    return isinstance(conn, PgShim)
+
+
+def resolve_data_dir(
+    *,
+    db_path: str,
+    database_url: str | None,
+    data_dir: str = "data",
+) -> Path:
+    if (database_url or "").strip():
+        p = Path(data_dir)
+        p.mkdir(parents=True, exist_ok=True)
+        return p.resolve()
+    return base_data_dir(db_path)
+
+
+def backup_database_to_bytes(conn: Any) -> bytes:
+    """
+    Cópia consistente do SQLite (API backup) — seguro com o app aberto.
+    Com PostgreSQL (Neon) use o backup do painel Neon / pg_dump.
+    """
+    if is_postgres_conn(conn):
+        raise TypeError(
+            "Download do arquivo .db só funciona com SQLite. Com DATABASE_URL/Neon, faça backup pelo console Neon (Branches / Dump) ou exporte os dados."
+        )
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    try:
+        dest = sqlite3.connect(path)
+        try:
+            assert isinstance(conn, sqlite3.Connection)
+            conn.backup(dest)
+        finally:
+            dest.close()
+        return Path(path).read_bytes()
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _pg_table_column_names(conn: PgShim, table: str) -> set[str]:
+    rows = conn.execute(
+        """
+SELECT column_name AS c
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = ?
+""",
+        (str(table),),
+    ).fetchall()
+    return {str(r["c"]) for r in rows} if rows else set()
+
+
+def init_db_postgres(conn: PgShim) -> None:
+    conn.execute(
+        """
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+"""
+    )
+    conn.execute(
+        """
+CREATE TABLE IF NOT EXISTS analyses (
+  id SERIAL PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  periodo TEXT NOT NULL,
+  provider_used TEXT NOT NULL,
+  model_used TEXT NOT NULL,
+  parent_analysis_id INTEGER,
+  owner_user_id INTEGER,
+  payload_json TEXT NOT NULL,
+  total_bonus DOUBLE PRECISION NOT NULL,
+  CONSTRAINT analyses_parent_fk
+    FOREIGN KEY (parent_analysis_id) REFERENCES analyses(id) ON DELETE SET NULL
+);
+"""
+    )
+    try:
+        cols = _pg_table_column_names(conn, "analyses")
+        if cols and "parent_analysis_id" not in cols:
+            conn.execute("ALTER TABLE analyses ADD COLUMN parent_analysis_id INTEGER")
+            conn.commit()
+        if cols and "owner_user_id" not in cols:
+            conn.execute("ALTER TABLE analyses ADD COLUMN owner_user_id INTEGER")
+            conn.commit()
+    except Exception:
+        pass
+
+    conn.execute(
+        """
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+"""
+    )
+    conn.execute(
+        """
+CREATE TABLE IF NOT EXISTS invites (
+  code TEXT PRIMARY KEY,
+  role TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT,
+  used_at TEXT,
+  used_by_user_id INTEGER,
+  created_by_user_id INTEGER
+);
+"""
+    )
+    conn.execute(
+        """
+CREATE TABLE IF NOT EXISTS uploads (
+  id SERIAL PRIMARY KEY,
+  analysis_id INTEGER NOT NULL,
+  filename TEXT NOT NULL,
+  content_type TEXT,
+  sha256 TEXT NOT NULL,
+  rel_path TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  CONSTRAINT uploads_fk
+    FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
+);
+"""
+    )
+    conn.execute(
+        """
+CREATE TABLE IF NOT EXISTS feedbacks (
+  id SERIAL PRIMARY KEY,
+  analysis_id INTEGER NOT NULL,
+  seller_name TEXT NOT NULL,
+  provider_used TEXT NOT NULL,
+  model_used TEXT NOT NULL,
+  feedback_text TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  CONSTRAINT feedbacks_fk
+    FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
+);
+"""
+    )
+    conn.execute(
+        """
+INSERT INTO meta(key, value) VALUES(?, ?)
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+""",
+        ("schema_version", str(SCHEMA_VERSION)),
+    )
+    conn.commit()
+
+
+def init_db_sqlite(conn: sqlite3.Connection) -> None:
     conn.execute(
         """
 CREATE TABLE IF NOT EXISTS meta (
@@ -63,7 +258,6 @@ CREATE TABLE IF NOT EXISTS analyses (
 );
 """
     )
-    # Migrações leves: adiciona colunas se DB já existir
     try:
         cols = [r["name"] for r in conn.execute("PRAGMA table_info(analyses)").fetchall()]
         if "parent_analysis_id" not in cols:
@@ -137,7 +331,14 @@ CREATE TABLE IF NOT EXISTS feedbacks (
     conn.commit()
 
 
-def backfill_owner_user_id(conn: sqlite3.Connection, *, admin_user_id: int) -> None:
+def init_db(conn: Any) -> None:
+    if is_postgres_conn(conn):
+        init_db_postgres(conn)  # type: ignore[arg-type]
+    else:
+        init_db_sqlite(conn)  # type: ignore[arg-type]
+
+
+def backfill_owner_user_id(conn: Any, *, admin_user_id: int) -> None:
     # Atribui análises antigas ao admin para não "sumirem"
     conn.execute(
         "UPDATE analyses SET owner_user_id = ? WHERE owner_user_id IS NULL",
@@ -151,7 +352,7 @@ def now_iso() -> str:
 
 
 def save_analysis(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     periodo: str,
     provider_used: str,
@@ -169,28 +370,41 @@ def save_analysis(
     _, total_bonus = calcular_time(sellers) if sellers else ([], 0.0)
 
     payload_json = json.dumps(payload, ensure_ascii=False)
+    params = (
+        now_iso(),
+        periodo,
+        provider_used,
+        model_used,
+        parent_analysis_id,
+        int(owner_user_id) if owner_user_id is not None else None,
+        payload_json,
+        float(total_bonus),
+    )
+    if is_postgres_conn(conn):
+        r = conn.execute(
+            """
+INSERT INTO analyses(created_at, periodo, provider_used, model_used, parent_analysis_id, owner_user_id, payload_json, total_bonus)
+VALUES(?,?,?,?,?,?,?,?) RETURNING id
+""",
+            params,
+        ).fetchone()
+        conn.commit()
+        if not r:
+            raise RuntimeError("INSERT em analyses retornou vazio.")
+        return int(r["id"])
     cur = conn.execute(
         """
 INSERT INTO analyses(created_at, periodo, provider_used, model_used, parent_analysis_id, owner_user_id, payload_json, total_bonus)
 VALUES(?,?,?,?,?,?,?,?)
 """,
-        (
-            now_iso(),
-            periodo,
-            provider_used,
-            model_used,
-            parent_analysis_id,
-            int(owner_user_id) if owner_user_id is not None else None,
-            payload_json,
-            float(total_bonus),
-        ),
+        params,
     )
     conn.commit()
     return int(cur.lastrowid)
 
 
 def list_analyses(
-    conn: sqlite3.Connection,
+    conn: Any,
     limit: int = 50,
     *,
     owner_user_id: int | None = None,
@@ -207,11 +421,13 @@ LIMIT ?
             (int(limit),),
         ).fetchall()
     else:
+        # Inclui análises com dono = este usuário, e legado sem dono (NULL) — visíveis a qualquer
+        # usuário logado, para não “sumir” histórico antigo antes do multiusuário.
         rows = conn.execute(
             """
 SELECT id, created_at, periodo, provider_used, model_used, owner_user_id, payload_json, total_bonus
 FROM analyses
-WHERE owner_user_id = ?
+WHERE owner_user_id = ? OR owner_user_id IS NULL
 ORDER BY id DESC
 LIMIT ?
 """,
@@ -234,8 +450,39 @@ LIMIT ?
     return out
 
 
+def count_all_analyses(conn: Any) -> int:
+    """Total de linhas em `analyses` (inclui tipos com _kind), para diagnóstico de visibilidade."""
+    r = conn.execute("SELECT COUNT(*) AS c FROM analyses").fetchone()
+    if not r:
+        return 0
+    return int(r["c"])
+
+
+def get_latest_base_analysis_id(
+    conn: Any,
+    *,
+    owner_user_id: int | None = None,
+    include_all: bool = False,
+) -> int | None:
+    """
+    Última análise "de vendedores" (payload sem `_kind`), mesma regra do Histórico.
+    Usada para reativar a análise ativa após reinício do Streamlit.
+    """
+    for r in list_analyses(
+        conn, limit=200, owner_user_id=owner_user_id, include_all=include_all
+    ):
+        try:
+            p = json.loads(r.payload_json)
+        except Exception:
+            continue
+        if isinstance(p, dict) and p.get("_kind"):
+            continue
+        return int(r.id)
+    return None
+
+
 def get_analysis(
-    conn: sqlite3.Connection,
+    conn: Any,
     analysis_id: int,
     *,
     owner_user_id: int | None = None,
@@ -255,7 +502,7 @@ WHERE id = ?
             """
 SELECT id, created_at, periodo, provider_used, model_used, owner_user_id, payload_json, total_bonus
 FROM analyses
-WHERE id = ? AND owner_user_id = ?
+WHERE id = ? AND (owner_user_id = ? OR owner_user_id IS NULL)
 """,
             (int(analysis_id), int(owner_user_id)),
         ).fetchone()
@@ -274,7 +521,7 @@ WHERE id = ? AND owner_user_id = ?
 
 
 def delete_analysis(
-    conn: sqlite3.Connection,
+    conn: Any,
     analysis_id: int,
     *,
     owner_user_id: int | None = None,
@@ -290,19 +537,29 @@ def delete_analysis(
     conn.commit()
 
 
-def ensure_admin_user(conn: sqlite3.Connection, *, username: str, password_hash: str, name: str = "Administrador") -> int:
+def ensure_admin_user(conn: Any, *, username: str, password_hash: str, name: str = "Administrador") -> int:
     r = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
     if r:
         return int(r["id"])
+    p = (username, name, password_hash, "admin", 1, now_iso())
+    if is_postgres_conn(conn):
+        r2 = conn.execute(
+            "INSERT INTO users(username, name, password_hash, role, active, created_at) VALUES(?,?,?,?,?,?) RETURNING id",
+            p,
+        ).fetchone()
+        conn.commit()
+        if not r2:
+            raise RuntimeError("INSERT em users retornou vazio.")
+        return int(r2["id"])
     cur = conn.execute(
         "INSERT INTO users(username, name, password_hash, role, active, created_at) VALUES(?,?,?,?,?,?)",
-        (username, name, password_hash, "admin", 1, now_iso()),
+        p,
     )
     conn.commit()
     return int(cur.lastrowid)
 
 
-def get_user_by_username(conn: sqlite3.Connection, username: str) -> dict[str, Any] | None:
+def get_user_by_username(conn: Any, username: str) -> dict[str, Any] | None:
     r = conn.execute(
         "SELECT id, username, name, password_hash, role, active FROM users WHERE username = ?",
         (username,),
@@ -311,7 +568,7 @@ def get_user_by_username(conn: sqlite3.Connection, username: str) -> dict[str, A
 
 
 def create_user_from_invite(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     invite_code: str,
     username: str,
@@ -326,11 +583,21 @@ def create_user_from_invite(
     if inv["expires_at"] and str(inv["expires_at"]).strip() and str(inv["expires_at"]) < now_iso():
         raise ValueError("Convite expirado.")
     role = str(inv["role"] or "user")
-    cur = conn.execute(
-        "INSERT INTO users(username, name, password_hash, role, active, created_at) VALUES(?,?,?,?,?,?)",
-        (username, name, password_hash, role, 1, now_iso()),
-    )
-    uid = int(cur.lastrowid)
+    p = (username, name, password_hash, role, 1, now_iso())
+    if is_postgres_conn(conn):
+        r_ins = conn.execute(
+            "INSERT INTO users(username, name, password_hash, role, active, created_at) VALUES(?,?,?,?,?,?) RETURNING id",
+            p,
+        ).fetchone()
+        if not r_ins:
+            raise RuntimeError("INSERT em users (convite) retornou vazio.")
+        uid = int(r_ins["id"])
+    else:
+        cur = conn.execute(
+            "INSERT INTO users(username, name, password_hash, role, active, created_at) VALUES(?,?,?,?,?,?)",
+            p,
+        )
+        uid = int(cur.lastrowid)
     conn.execute(
         "UPDATE invites SET used_at = ?, used_by_user_id = ? WHERE code = ?",
         (now_iso(), uid, invite_code),
@@ -340,7 +607,7 @@ def create_user_from_invite(
 
 
 def create_invite(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     code: str,
     role: str,
@@ -354,7 +621,7 @@ def create_invite(
     conn.commit()
 
 
-def list_invites(conn: sqlite3.Connection, limit: int = 50) -> list[dict[str, Any]]:
+def list_invites(conn: Any, limit: int = 50) -> list[dict[str, Any]]:
     rows = conn.execute(
         "SELECT code, role, created_at, expires_at, used_at, used_by_user_id, created_by_user_id FROM invites ORDER BY created_at DESC LIMIT ?",
         (int(limit),),
@@ -412,7 +679,7 @@ def purge_excluded_sellers_from_all_analyses(conn: sqlite3.Connection) -> tuple[
 
 
 def save_upload_file(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     analysis_id: int,
     filename: str,
@@ -430,7 +697,7 @@ VALUES(?,?,?,?,?,?)
     conn.commit()
 
 
-def list_uploads(conn: sqlite3.Connection, analysis_id: int) -> list[dict[str, Any]]:
+def list_uploads(conn: Any, analysis_id: int) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
 SELECT id, filename, content_type, sha256, rel_path, created_at
@@ -444,7 +711,7 @@ ORDER BY id ASC
 
 
 def save_feedback(
-    conn: sqlite3.Connection,
+    conn: Any,
     *,
     analysis_id: int,
     seller_name: str,
@@ -452,18 +719,31 @@ def save_feedback(
     model_used: str,
     feedback_text: str,
 ) -> int:
+    p = (int(analysis_id), seller_name, provider_used, model_used, feedback_text, now_iso())
+    if is_postgres_conn(conn):
+        r2 = conn.execute(
+            """
+INSERT INTO feedbacks(analysis_id, seller_name, provider_used, model_used, feedback_text, created_at)
+VALUES(?,?,?,?,?,?) RETURNING id
+""",
+            p,
+        ).fetchone()
+        conn.commit()
+        if not r2:
+            raise RuntimeError("INSERT em feedbacks retornou vazio.")
+        return int(r2["id"])
     cur = conn.execute(
         """
 INSERT INTO feedbacks(analysis_id, seller_name, provider_used, model_used, feedback_text, created_at)
 VALUES(?,?,?,?,?,?)
 """,
-        (int(analysis_id), seller_name, provider_used, model_used, feedback_text, now_iso()),
+        p,
     )
     conn.commit()
     return int(cur.lastrowid)
 
 
-def list_feedbacks(conn: sqlite3.Connection, analysis_id: int) -> list[dict[str, Any]]:
+def list_feedbacks(conn: Any, analysis_id: int) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
 SELECT id, seller_name, provider_used, model_used, feedback_text, created_at
@@ -474,6 +754,48 @@ ORDER BY id DESC
         (int(analysis_id),),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_last_feedback_for_seller(
+    conn: Any,
+    seller_name: str,
+    *,
+    owner_user_id: int | None = None,
+    include_all: bool = False,
+) -> dict[str, Any] | None:
+    """
+    Último registro de feedback do vendedor (entre análises acessíveis ao dono), por id
+    (mais recente). Inclui `periodo` da análise origem. Usado no STAR para evolução.
+    """
+    if include_all or owner_user_id is None:
+        r = conn.execute(
+            """
+SELECT f.id, f.analysis_id, f.seller_name, f.provider_used, f.model_used, f.feedback_text, f.created_at,
+       a.periodo AS periodo_analise
+FROM feedbacks f
+JOIN analyses a ON a.id = f.analysis_id
+WHERE f.seller_name = ?
+ORDER BY f.id DESC
+LIMIT 1
+""",
+            (str(seller_name),),
+        ).fetchone()
+    else:
+        r = conn.execute(
+            """
+SELECT f.id, f.analysis_id, f.seller_name, f.provider_used, f.model_used, f.feedback_text, f.created_at,
+       a.periodo AS periodo_analise
+FROM feedbacks f
+JOIN analyses a ON a.id = f.analysis_id
+WHERE f.seller_name = ? AND a.owner_user_id = ?
+ORDER BY f.id DESC
+LIMIT 1
+""",
+            (str(seller_name), int(owner_user_id)),
+        ).fetchone()
+    if not r:
+        return None
+    return dict(r)
 
 
 def base_data_dir(db_path: str) -> Path:

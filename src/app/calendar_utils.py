@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,19 @@ def _month_range(ano: int, mes: int) -> tuple[date, date]:
     return start, end
 
 
+def hoje_fuso_brasil() -> date:
+    """
+    'Hoje' no fuso de Brasília. Evita o app 'comer' ou ganhar 1 dia quando o
+    processo roda em UTC (Streamlit em nuvem) enquanto o time está no BR.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+
+        return datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+    except Exception:
+        return date.today()
+
+
 def compute_calendar_info(
     *,
     ano: int,
@@ -32,10 +45,26 @@ def compute_calendar_info(
     hoje: date | None = None,
 ) -> CalendarInfo:
     """
-    Calcula dias úteis do mês (seg-sex) excluindo feriados.
+    Calcula dias úteis do mês (seg–sex) excluindo feriados nacionais/estaduais
+    (quando a lib `holidays` e a UF forem fornecidos).
+
+    Regras de contagem (mês = start..end):
+    - `A` = úteis com d < hoje (dias "passados" estritos, sem hoje).
+    - `dias_uteis_trabalhados` = úteis com d ≤ hoje = **A + 1{hoje é dia útil no mês}**
+      (mesma lógica de "ritmo" / médias: corridos no mês até a data de hoje, inclusive
+      o dia atual quando for útil).
+    - `dias_uteis_restantes` = úteis com d ≥ hoje = **total - A** (hoje e os próximos úteis
+      ainda a ocorrer no mês, inclusive a própria sexta se hoje for domingo, etc.).
+
+    Assim: (dias úteis "corridos até hoje" no sentido A+H) + (úteis *após* hoje) = total,
+    ou seja `dias_uteis_trabalhados + (B só depois) = total`, com B = d > hoje. O número
+    `dias_uteis_restantes` = H+B é a quantidade a partir de hoje no calendário do mês.
+
+    Data de hoje: fuso `America/Sao_Paulo` (evita diferença de 1 em deploy UTC).
+
     `subdiv` pode ser UF (ex: "CE", "SP") para feriados estaduais (quando suportado).
     """
-    hoje = hoje or date.today()
+    hoje = hoje or hoje_fuso_brasil()
     start, end = _month_range(int(ano), int(mes))
 
     # holidays é opcional: se não estiver instalado, ignora feriados.
@@ -59,22 +88,40 @@ def compute_calendar_info(
         return True
 
     total = 0
-    worked = 0
+    ate_ontem = 0
     cur = start
     while cur <= end:
         if is_business_day(cur):
             total += 1
-            if cur <= hoje:
-                worked += 1
+            if hoje > end:
+                pass
+            elif hoje < start:
+                pass
+            else:
+                if cur < hoje:
+                    ate_ontem += 1
         cur += timedelta(days=1)
 
-    remaining = max(0, total - worked)
+    if hoje < start:
+        # Mês ainda é futuro.
+        corrimos_ate = 0
+        restantes_ate = total
+    elif hoje > end:
+        # Mês já "fechou" frente a hoje.
+        corrimos_ate = total
+        restantes_ate = 0
+    else:
+        hoje_uteis = bool(is_business_day(hoje) and start <= hoje <= end)
+        # Ritmo: úteis no mês até e incluindo a referência (d ≤ hoje) — padrão original + projeções
+        corrimos_ate = ate_ontem + (1 if hoje_uteis else 0)
+        # Ainda no mês a partir de hoje (hoje e futuros do mês) — ajusta "falta um dia"
+        restantes_ate = max(0, total - ate_ontem)
     return CalendarInfo(
         ano=int(ano),
         mes=int(mes),
         hoje=hoje,
         dias_uteis_total=total,
-        dias_uteis_trabalhados=worked,
-        dias_uteis_restantes=remaining,
+        dias_uteis_trabalhados=corrimos_ate,
+        dias_uteis_restantes=restantes_ate,
     )
 

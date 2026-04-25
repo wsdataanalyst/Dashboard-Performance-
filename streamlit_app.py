@@ -13,14 +13,18 @@ from src.app.domain import parse_sellers
 from src.app.auth import hash_password, new_invite_code, verify_password
 from src.app.security import sha256_hex
 from src.app.storage import (
-    base_data_dir,
     backfill_owner_user_id,
     connect,
     create_invite,
     create_user_from_invite,
     delete_analysis,
     get_analysis,
+    get_last_feedback_for_seller,
+    get_latest_base_analysis_id,
     get_user_by_username,
+    backup_database_to_bytes,
+    count_all_analyses,
+    resolve_data_dir,
     ensure_admin_user,
     init_db,
     list_analyses,
@@ -34,7 +38,13 @@ from src.app.storage import (
 )
 from src.app.theme import inject_styles, render_header
 from src.app.ai.router import Provider, extract_json_from_images, json_from_text
-from src.app.feedback_star import STAR_GESTOR_PADRAO, StarInput, build_prompt_star, render_pdf_star
+from src.app.feedback_star import (
+    STAR_GESTOR_PADRAO,
+    StarInput,
+    append_secao_simulacao_capacidade_venda,
+    build_prompt_star,
+    render_pdf_star,
+)
 from src.app.excel_import import import_5_files_to_payload
 from src.app.dept_import import import_departamentos
 from src.app.kpi_import import import_faturamento_atendidos_xlsx
@@ -517,7 +527,7 @@ def _render_insights_moderno(data: dict) -> None:
 
 def _ensure_db():
     settings = load_settings()
-    conn = connect(settings.db_path)
+    conn = connect(settings.db_path, settings.database_url)
     init_db(conn)
     # Bootstrap: garante admin no DB e atribui ownership às análises antigas
     # Defaults precisam continuar compatíveis com o login antigo do app
@@ -632,7 +642,11 @@ def _maybe_login(settings) -> None:
 
 
 def _uploads_dir(settings) -> Path:
-    data_dir = base_data_dir(settings.db_path)
+    data_dir = resolve_data_dir(
+        db_path=settings.db_path,
+        database_url=settings.database_url,
+        data_dir=settings.data_dir,
+    )
     p = data_dir / "uploads"
     p.mkdir(parents=True, exist_ok=True)
     return p
@@ -833,6 +847,11 @@ def page_upload(settings, conn) -> None:
     if isinstance(payload, dict):
         st.markdown("---")
         st.subheader("✅ Validação dos dados (prévia)")
+        st.warning(
+            "**Atenção — ainda não foi salva:** a prévia abaixo fica **só nesta sessão** do navegador "
+            "até você clicar em **Salvar análise**. Sem isso, ao **reiniciar o Streamlit** "
+            "essa extração some (o que está no banco, no Histórico, continua).",
+        )
 
         sellers = parse_sellers(payload)
         results, total = calcular_time(sellers) if sellers else ([], 0.0)
@@ -1315,16 +1334,29 @@ def page_edit(settings, conn) -> None:
         hide_index=True,
     )
 
+    nome_historico = st.text_input(
+        "Nome no histórico",
+        value=str(row.periodo or ""),
+        key=f"manual_edit_nome_{int(analysis_id)}",
+        help="Texto que aparece na aba Histórico e nos cards. Ajuste antes de salvar para identificar esta versão (ex.: “Março 2026 — correção margens”).",
+        placeholder="ex.: Abril 2026 (edição manual)",
+    )
+
     if st.button("💾 Salvar nova versão", use_container_width=True):
         novos = edited.to_dict(orient="records")
         new_payload = dict(payload)
         new_payload["vendedores"] = novos
 
+        label = (nome_historico or "").strip()
+        if not label:
+            label = str(new_payload.get("periodo") or row.periodo or "Edição manual")
+
         sellers2 = parse_sellers(new_payload)
         results2, total2 = calcular_time(sellers2) if sellers2 else ([], 0.0)
+        new_payload["periodo"] = label
         new_id = save_analysis(
             conn,
-            periodo=str(new_payload.get("periodo") or row.periodo),
+            periodo=label,
             provider_used="manual_edit",
             model_used="manual_edit",
             parent_analysis_id=int(analysis_id),
@@ -1415,13 +1447,26 @@ def page_projection(settings, conn) -> None:
             faturamento=float(fat_total) if isinstance(fat_total, (int, float)) else None,
             meta_faturamento=float(meta_total) if isinstance(meta_total, (int, float)) else None,
         )
+        qtd_time = int(soma.qtd_faturadas or 0)
+        fat_time = soma.faturamento
+        ticket_auto_time = (float(fat_time) / float(qtd_time)) if (fat_time is not None and qtd_time > 0) else 0.0
+        ticket_override_time = st.number_input(
+            "Ticket médio (R$) — opcional (time)",
+            min_value=0.0,
+            max_value=1e8,
+            value=float(ticket_auto_time),
+            step=50.0,
+            format="%.2f",
+            help="Média do faturamento total do time ÷ NFs, quando houver. Ajuste se o total do print não refletir o real.",
+            key="proj_team_ticket",
+        )
         meta_faturamento_eff = float(meta_faturamento) if meta_faturamento > 0 else soma.meta_faturamento
         proj = projetar_resultados(
             soma,
             dias_uteis_total=int(dias_total),
             dias_uteis_trabalhados=int(dias_trab),
             meta_faturamento=meta_faturamento_eff,
-            ticket_medio_override=None,
+            ticket_medio_override=float(ticket_override_time) if ticket_override_time > 0 else None,
         )
         titulo = "Projeção — Time"
 
@@ -1496,6 +1541,23 @@ def page_star(settings, conn) -> None:
     c3.metric("Conversão", f"{r.conversao_pct if r.conversao_pct is not None else '—'}")
     c4.metric("Interações", f"{r.interacoes if r.interacoes is not None else '—'}")
 
+    prior = get_last_feedback_for_seller(
+        conn, r.nome, owner_user_id=owner_id, include_all=is_admin
+    )
+    if prior:
+        reg = str(prior.get("created_at") or "").replace("T", " ")[:16]
+        st.caption(
+            f"Evolução: último feedback **salvo** deste vendedor — análise **{prior.get('analysis_id') or '—'}**, "
+            f"período **{prior.get('periodo_analise') or '—'}** (registrado {reg or '—'}). "
+            "Será usado como base comparativa na geração (texto completo). "
+            "Regerar na mesma análise compara com o registro imediatamente anterior."
+        )
+    else:
+        st.caption(
+            "Evolução: não existe feedback **anterior** deste vendedor no histórico. "
+            "A IA informará que o comparativo com feedback passado não se aplica ainda."
+        )
+
     provider: Provider = st.selectbox(
         "Provedor de IA (feedback)",
         options=["auto", "gemini", "openai"],
@@ -1519,7 +1581,15 @@ def page_star(settings, conn) -> None:
             meta_faturamento=s_raw.meta_faturamento if s_raw else None,
             ticket_medio=round(ticket, 2) if ticket is not None else None,
         )
-        prompt = build_prompt_star(star_in)
+        base_prev = get_last_feedback_for_seller(
+            conn, r.nome, owner_user_id=owner_id, include_all=is_admin
+        )
+        prompt = build_prompt_star(
+            star_in,
+            feedback_anterior_texto=base_prev.get("feedback_text") if base_prev else None,
+            periodo_analise_anterior=base_prev.get("periodo_analise") if base_prev else None,
+            feedback_anterior_registrado_em=base_prev.get("created_at") if base_prev else None,
+        )
         star_user_prompt = (
             f'Retorne um JSON no formato {{"feedback_star":"...texto..."}}. {prompt}'
         )
@@ -1542,6 +1612,10 @@ def page_star(settings, conn) -> None:
             if not texto:
                 st.error("A IA não retornou `feedback_star`.")
             else:
+                texto = append_secao_simulacao_capacidade_venda(
+                    star_in,
+                    texto,
+                )
                 save_feedback(
                     conn,
                     analysis_id=int(analysis_id),
@@ -1597,7 +1671,20 @@ def page_history(settings, conn) -> None:
         if not kind:
             rows.append(r)
     if not rows:
-        st.info("Histórico vazio. Faça sua primeira análise em **Upload e extração**.")
+        n_db = count_all_analyses(conn)
+        if n_db > 0 and not is_admin:
+            st.warning(
+                f"O banco tem **{n_db}** registro(s) de análise, mas **nenhum aparece no seu histórico** com o usuário "
+                f"atual: as linhas provavelmente estão vinculadas a **outro dono** (`owner_user_id`). "
+                f"**Entre como administrador** (vê tudo) ou com a **mesma conta** que salvou. "
+                f"O que parecia 'fantasma' era o filtro de permissão, não a perda de dados."
+            )
+        elif n_db > 0 and is_admin:
+            st.info(
+                f"Existe(m) **{n_db}** análise(s) no banco, mas nenhuma entra no histórico de vendedores (todas têm `_kind`, ex. Sala de Gestão)."
+            )
+        else:
+            st.info("Histórico vazio. Faça sua primeira análise em **Upload e extração**.")
         return
 
     options = {f"#{r.id} · {r.periodo} · {r.created_at} · R$ {r.total_bonus:,.2f}": r.id for r in rows}
@@ -2535,6 +2622,25 @@ def main() -> None:
     except Exception:
         pass
 
+    # Após reinício do Streamlit, `active_analysis_id` some: reativar a última análise
+    # salva (bônus/vendedores), se existir, para o usuário não achar que "perdeu" o histórico.
+    u = st.session_state.get("user")
+    if (
+        isinstance(u, dict)
+        and u.get("id")
+        and st.session_state.get("active_analysis_id") is None
+        and st.session_state.get("_restored_active_on_load") is not True
+    ):
+        oid = int(u.get("id") or 0) or None
+        adm = str(u.get("role") or "").lower() == "admin"
+        last = get_latest_base_analysis_id(
+            conn, owner_user_id=oid, include_all=adm
+        )
+        st.session_state["_restored_active_on_load"] = True
+        if last is not None:
+            st.session_state["active_analysis_id"] = int(last)
+            st.toast("Análise ativa restaurada: última análise salva no histórico.", icon="📌")
+
     with st.sidebar:
         st.markdown("### 🖥️ Layout / Dispositivo")
         prof = st.selectbox(
@@ -2565,6 +2671,72 @@ def main() -> None:
         # Admin: geração de convites
         if str((st.session_state.get("user") or {}).get("role") or "").lower() == "admin":
             st.markdown("### 🛡️ Admin")
+            with st.expander("🗄️ Banco de dados (histórico)", expanded=False):
+                if settings.uses_postgres:
+                    st.markdown("**Armazenamento (PostgreSQL / ex.: Neon):**")
+                    st.caption("O histórico (análises, usuários, feedbacks) está no servidor definido em `DATABASE_URL` — **não** no arquivo `app.db`.")
+                    st.caption("**Arquivos locais:** anexos e prints vão em `DATA_DIR` (padrão: pasta `data/` do projeto) — isso fica fora do Git.")
+                else:
+                    db_abs = str(Path(settings.db_path).resolve())
+                    st.markdown("**Arquivo em uso (fonte do histórico):**")
+                    st.code(db_abs, language="text")
+                    p = Path(db_abs)
+                    if p.is_file():
+                        st.caption(f"Existe: sim — tamanho **{p.stat().st_size:,}** bytes")
+                    else:
+                        st.error("Arquivo ainda **não existe** — a primeira análise criará o banco neste caminho.")
+                n_a = count_all_analyses(conn)
+                n_u = int(
+                    conn.execute("SELECT COUNT(*) AS c FROM uploads")
+                    .fetchone()["c"]  # type: ignore[index]
+                )
+                n_f = int(
+                    conn.execute("SELECT COUNT(*) AS c FROM feedbacks")
+                    .fetchone()["c"]  # type: ignore[index]
+                )
+                st.caption(
+                    f"**Conteúdo:** {n_a} análise(s) · {n_u} upload(s) · {n_f} feedback(s) "
+                    "(números têm de bater com o que você espera; se forem 0, é outro `.db` ou banco vazio)."
+                )
+                if settings.uses_postgres:
+                    st.caption(
+                        "Se o histórico 'sumiu': 1) Confirme se `DATABASE_URL` aponta para o **mesmo** projeto (Neon) de antes. "
+                        "2) Regras de dono: usuário comum vê só o próprio; **admin** vê tudo. 3) Backup: use o painel do Neon (dump / restore)."
+                    )
+                else:
+                    st.caption(
+                        "**Solução** se o histórico 'sumiu': 1) Confira se este é o **mesmo caminho** de antes "
+                        "(subir o Streamlit sempre **nesta** pasta, ou defina `DB_PATH` no `.env`). 2) Restaure uma cópia de "
+                        "`app.db` de backup. 3) Usuário comum: ver só análises do **seu dono**; use **admin** para ver tudo. "
+                        "4) Não conte com o Git — a pasta `data/` está fora do repositório."
+                    )
+                st.markdown("**Backup (recomendado na empresa)**")
+                if settings.uses_postgres:
+                    st.caption("Com Neon/Postgres, faça backup do banco no **console do Neon** (ou `pg_dump`). A pasta local `data/` ainda contém anexos — faça backup dela com o app **fechado** se quiser cópia off-line completa dos arquivos.")
+                else:
+                    st.caption(
+                        "Baixe o banco com frequência e guarde no **OneDrive / Google Drive / rede** da empresa. "
+                        "Os **prints** ficam em `data/uploads/` — para cópia completa, compacte a pasta `data/` com o app **fechado**, "
+                        "ou copie `data/` inteira para o backup de rede."
+                    )
+                if not settings.uses_postgres:
+                    p = Path(settings.db_path).resolve()
+                    if p.is_file():
+                        import datetime as _dt
+
+                        snap = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+                        try:
+                            blob = backup_database_to_bytes(conn)
+                            st.download_button(
+                                label="⬇️ Baixar cópia do banco (app.db seguro)",
+                                data=blob,
+                                file_name=f"app_backup_{snap}.db",
+                                mime="application/x-sqlite3",
+                                use_container_width=True,
+                                key="dl_db_backup",
+                            )
+                        except Exception as e:
+                            st.caption(f"Não foi possível gerar o backup agora: {e}")
             with st.expander("Convites (cadastro)", expanded=False):
                 c1, c2 = st.columns([1, 1])
                 with c1:
@@ -2629,7 +2801,14 @@ def main() -> None:
                 st.session_state["active_analysis_id"] = int(options[pick])
                 st.rerun()
         else:
-            st.caption("Nenhuma análise salva ainda.")
+            n_db = count_all_analyses(conn)
+            if n_db > 0 and not is_admin:
+                st.caption(
+                    f"Histórico rápido vazio, mas o banco tem {n_db} análise(s) — outro dono. "
+                    "Entre como **admin** para listar tudo."
+                )
+            else:
+                st.caption("Nenhuma análise salva ainda.")
         st.markdown("---")
         with st.expander("ℹ️ Navegação", expanded=False):
             st.caption(
@@ -2665,7 +2844,12 @@ def main() -> None:
         c2.metric("Dias úteis trabalhados", info.dias_uteis_trabalhados)
         c3.metric("Dias úteis restantes", info.dias_uteis_restantes)
 
-        st.caption("Regras: não considera sábado/domingo e tenta excluir feriados. Para feriados estaduais, informe a UF.")
+        st.caption(
+            "Regras: sábado e domingo não entram; feriados BR (e estaduais se informar a UF) são excluídos. "
+            "A data de hoje segue o fuso America/Sao_Paulo. "
+            "Úteis **restantes** = do dia de hoje até o fim do mês (inclui o próprio dia útil de hoje). "
+            "Úteis **trabalhados** = corridos no mês até hoje, inclusive o dia atual quando for útil (base de ritmo / projeção)."
+        )
 
     st.markdown("### Selecione o Dashboard:")
     dash = st.radio(
