@@ -5329,20 +5329,18 @@ def main() -> None:
         with tabs[5]:
             page_history(settings, conn)
     elif dash == "Dashboard de Performance":
-        tabs = st.tabs(["Visão Geral", "Indicadores", "Highlights (Semanal/Mensal)", "Simulação/Projeção", "Feedback STAR", "Análise com IA", "Histórico"])
+        tabs = st.tabs(["Visão Geral", "Highlights (Semanal/Mensal)", "Simulação/Projeção", "Feedback STAR", "Análise com IA", "Histórico"])
         with tabs[0]:
             page_performance(settings, conn, key_prefix="perf_overview")
         with tabs[1]:
-            page_performance(settings, conn, key_prefix="perf_indicadores")
-        with tabs[2]:
             page_highlights(settings, conn)
-        with tabs[3]:
+        with tabs[2]:
             page_projection(settings, conn)
-        with tabs[4]:
+        with tabs[3]:
             page_star(settings, conn)
-        with tabs[5]:
+        with tabs[4]:
             page_insights(settings, conn)
-        with tabs[6]:
+        with tabs[5]:
             page_history(settings, conn)
     else:
         page_sala_gestao(settings, conn)
