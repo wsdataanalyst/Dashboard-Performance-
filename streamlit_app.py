@@ -3891,8 +3891,152 @@ def page_sala_gestao(settings, conn) -> None:
 
         report_md = "\n\n".join([head, sec1, sec2, sec3, sec4, sec5, sec6]).strip() + "\n"
 
+        # Gráficos (na tela) — para enriquecer leitura
+        figs: dict[str, object] = {}
+        try:
+            import plotly.express as px
+
+            if isinstance(daily, pd.DataFrame) and not daily.empty:
+                df_line = daily.copy()
+                fig1 = px.line(
+                    df_line,
+                    x="dia",
+                    y="faturamento",
+                    markers=True,
+                    title="Evolução diária — Faturamento",
+                    labels={"dia": "Dia do mês", "faturamento": "Faturamento (R$)"},
+                )
+                fig1.update_traces(line_width=3)
+                figs["evolucao_faturamento"] = fig1
+
+                df_counts = df_line.melt(
+                    id_vars=["dia"],
+                    value_vars=["nfs_emitidas", "clientes_atendidos"],
+                    var_name="metric",
+                    value_name="valor",
+                )
+                df_counts["metric"] = df_counts["metric"].map(
+                    {"nfs_emitidas": "NFS emitidas", "clientes_atendidos": "Clientes atendidos"}
+                )
+                fig2 = px.line(
+                    df_counts,
+                    x="dia",
+                    y="valor",
+                    color="metric",
+                    markers=True,
+                    title="Evolução diária — NFS e Atendidos",
+                    labels={"dia": "Dia do mês", "valor": "Quantidade", "metric": ""},
+                )
+                fig2.update_traces(line_width=3)
+                figs["evolucao_volumes"] = fig2
+
+            if isinstance(dept_today_df, pd.DataFrame) and not dept_today_df.empty and isinstance(dept_yday_df, pd.DataFrame) and not dept_yday_df.empty:
+                a = dept_today_df.copy()
+                b = dept_yday_df.copy()
+                if "departamento" in a.columns and "departamento" in b.columns and "faturamento" in a.columns and "faturamento" in b.columns:
+                    a = a.set_index("departamento")
+                    b = b.set_index("departamento")
+                    da = pd.to_numeric(a["faturamento"], errors="coerce")
+                    db = pd.to_numeric(b["faturamento"], errors="coerce")
+                    d = (da - db).dropna().sort_values(ascending=False)
+                    dd = pd.DataFrame({"departamento": d.index.astype(str), "delta": d.values})
+                    # top 10 por impacto absoluto
+                    dd["abs"] = dd["delta"].abs()
+                    dd = dd.sort_values("abs", ascending=False).head(10)
+                    fig3 = px.bar(
+                        dd.sort_values("delta", ascending=False),
+                        x="delta",
+                        y="departamento",
+                        orientation="h",
+                        title="Departamentos — Delta de faturamento vs dia anterior (Top 10)",
+                        labels={"delta": "Δ Faturamento (R$)", "departamento": ""},
+                    )
+                    figs["dept_delta"] = fig3
+        except Exception:
+            figs = figs
+
+        if figs:
+            st.markdown("### Gráficos (resumo)")
+            for k, fig in figs.items():
+                st.plotly_chart(fig, use_container_width=True, key=f"rel_fig_{k}")
+
+        st.markdown("### Texto do relatório")
         st.text_area("Relatório (markdown)", value=report_md, height=520)
-        st.download_button("⬇️ Baixar relatório (.md)", data=report_md.encode("utf-8"), file_name="relatorio_sala_gestao.md", mime="text/markdown", use_container_width=True)
+
+        cdl1, cdl2 = st.columns(2)
+        with cdl1:
+            st.download_button(
+                "⬇️ Baixar relatório (.md)",
+                data=report_md.encode("utf-8"),
+                file_name="relatorio_sala_gestao.md",
+                mime="text/markdown",
+                use_container_width=True,
+            )
+
+        # PDF (texto + gráficos)
+        def _strip_md(s: str) -> str:
+            # simples e seguro: remove markdown básico
+            out = s.replace("**", "")
+            out = out.replace("## ", "").replace("### ", "")
+            return out
+
+        def _fig_to_png_bytes(fig_obj: object) -> bytes | None:
+            try:
+                # plotly Figure
+                return fig_obj.to_image(format="png", scale=2)  # type: ignore[attr-defined]
+            except Exception:
+                return None
+
+        def _build_pdf_bytes(text_md: str, fig_map: dict[str, object]) -> bytes:
+            from fpdf import FPDF
+            import tempfile
+            from pathlib import Path
+
+            pdf = FPDF(format="A4")
+            pdf.set_auto_page_break(auto=True, margin=12)
+            pdf.add_page()
+            pdf.set_font("Helvetica", size=12)
+            for line in _strip_md(text_md).splitlines():
+                if not line.strip():
+                    pdf.ln(2)
+                    continue
+                pdf.multi_cell(0, 6, line)
+
+            # insere gráficos em páginas separadas (quando existirem)
+            for title, fig_obj in fig_map.items():
+                png = _fig_to_png_bytes(fig_obj)
+                if not png:
+                    continue
+                pdf.add_page()
+                pdf.set_font("Helvetica", size=12)
+                pdf.multi_cell(0, 7, f"Gráfico: {title}")
+                pdf.ln(2)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+                    tmp.write(png)
+                    tmp_path = tmp.name
+                try:
+                    # largura útil A4 ~ 190mm
+                    pdf.image(tmp_path, x=10, w=190)
+                finally:
+                    try:
+                        Path(tmp_path).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+            return bytes(pdf.output(dest="S"))  # type: ignore[arg-type]
+
+        with cdl2:
+            try:
+                pdf_bytes = _build_pdf_bytes(report_md, figs)
+                st.download_button(
+                    "⬇️ Baixar relatório (PDF)",
+                    data=pdf_bytes,
+                    file_name="relatorio_sala_gestao.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+            except Exception as e:
+                st.caption(f"PDF indisponível: {e}")
 
     with tab_vend:
         st.markdown("### Análise de vendedores")
