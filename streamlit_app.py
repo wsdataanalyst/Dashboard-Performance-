@@ -2183,8 +2183,24 @@ def page_sala_gestao(settings, conn) -> None:
                 return False
             return True
 
+        def _ensure_participacao_pct(df: pd.DataFrame) -> pd.DataFrame:
+            if df is None or df.empty:
+                return df
+            if "participacao_pct" in df.columns and pd.to_numeric(df["participacao_pct"], errors="coerce").notna().any():
+                return df
+            if "faturamento" not in df.columns:
+                return df
+            fat_s = pd.to_numeric(df.get("faturamento"), errors="coerce")
+            total = float(fat_s.dropna().sum() or 0.0)
+            if total <= 0:
+                return df
+            out = df.copy()
+            out["participacao_pct"] = (fat_s / total) * 100.0
+            return out
+
         if isinstance(dept_payload, dict) and isinstance(dept_payload.get("departamentos"), list):
             ddf = pd.DataFrame([d for d in dept_payload["departamentos"] if _dept_ok(d.get("departamento"))])
+            ddf = _ensure_participacao_pct(ddf)
             if not ddf.empty:
                 show_cols = [
                     c
@@ -2230,7 +2246,9 @@ def page_sala_gestao(settings, conn) -> None:
         depts_for_ai = []
         try:
             if isinstance(st.session_state.get("dept_payload"), dict):
-                depts_for_ai = [d for d in (st.session_state["dept_payload"].get("departamentos") or []) if _dept_ok((d or {}).get("departamento"))]
+                _tmp = pd.DataFrame([d for d in (st.session_state["dept_payload"].get("departamentos") or []) if _dept_ok((d or {}).get("departamento"))])
+                _tmp = _ensure_participacao_pct(_tmp)
+                depts_for_ai = _tmp.to_dict(orient="records") if not _tmp.empty else []
         except Exception:
             depts_for_ai = []
 
@@ -2268,7 +2286,7 @@ def page_sala_gestao(settings, conn) -> None:
             "- Em 'Meta Faturamento', cite: Meta total, Faturamento até agora, Falta pra meta, Meta por dia útil.\n"
             "- Em 'Dia anterior', cite o Faturamento dia anterior e Margem (hoje vs ontem) se houver.\n"
             "- Em 'Departamentos', listar quantos deptos estão com Alcance Projetado >=100, >=80 e <80; "
-            "apontar melhor margem e pior margem; e oportunidades (falta para meta baixa).\n"
+            "apontar melhor margem e pior margem; trazer TOP 3 em % participação; e oportunidades (falta para meta baixa).\n"
             "- IGNORE completamente departamentos 'Outros' e 'Paineis Eletricos'.\n\n"
             "DADOS:\n"
             + dados_json
@@ -2486,6 +2504,7 @@ def page_sala_gestao(settings, conn) -> None:
         if isinstance(dept_payload, dict) and isinstance(dept_payload.get("departamentos"), list):
             # aplicar as mesmas exclusões do consolidado/insights
             ddf = pd.DataFrame([d for d in dept_payload["departamentos"] if _dept_ok((d or {}).get("departamento"))])
+            ddf = _ensure_participacao_pct(ddf)
             if not ddf.empty:
                 # Cards (fora de tabela)
                 alc = pd.to_numeric(ddf.get("alcance_projetado_pct"), errors="coerce") if "alcance_projetado_pct" in ddf.columns else pd.Series([], dtype="float64")
@@ -2547,11 +2566,18 @@ def page_sala_gestao(settings, conn) -> None:
                             dept = r.get("departamento")
                             falta = r.get("falta_meta")
                             alc_p = r.get("alcance_projetado_pct")
+                            part = r.get("participacao_pct") if "participacao_pct" in opp.columns else None
+                            part_html = (
+                                f"<span class='dp-pill'>% Part.: {float(part):.2f}%</span>"
+                                if part is not None and pd.notna(part)
+                                else ""
+                            )
                             st.markdown(
                                 f"<div class='dp-card' style='padding:14px 16px;margin-bottom:10px'>"
                                 f"<div style='display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap'>"
                                 f"<div style='color:#E5E7EB;font-weight:850'>{dept}</div>"
                                 f"<span class='dp-pill'>Alc. Proj: {float(alc_p or 0):.1f}%</span>"
+                                f"{part_html}"
                                 f"</div>"
                                 f"<div style='margin-top:8px;color:#CBD5E1'>Falta para meta: <b>R$ {float(falta or 0):,.2f}</b></div>"
                                 f"</div>",
@@ -2631,6 +2657,7 @@ def page_sala_gestao(settings, conn) -> None:
                             proj_v = r.get("faturamento_projetado_acumulado") if "faturamento_projetado_acumulado" in near.columns else None
                             fat_v = r.get("faturamento") if "faturamento" in near.columns else None
                             falta = r.get("falta_para_100") if "falta_para_100" in near.columns else None
+                            part = r.get("participacao_pct") if "participacao_pct" in near.columns else None
                             base_calc = str(r.get("base_calc") or "")
                             pill = "Proj." if base_calc == "proj" else ("Real" if base_calc == "real" else "—")
 
@@ -2642,6 +2669,7 @@ def page_sala_gestao(settings, conn) -> None:
   </div>
   <div style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;color:#CBD5E1;">
     <div class="dp-pill" style="background:rgba(255,255,255,.02);">Meta: <b>{html.escape(_fmt_rs(meta))}</b></div>
+    {('<div class="dp-pill" style="background:rgba(255,255,255,.02);">% Part.: <b>' + html.escape(_fmt_pct(part)) + '</b></div>') if part is not None else ''}
     {('<div class="dp-pill" style="background:rgba(255,255,255,.02);">Fat. Proj. Acum: <b>' + html.escape(_fmt_rs(proj_v)) + '</b></div>') if proj_v is not None else ''}
     {('<div class="dp-pill" style="background:rgba(255,255,255,.02);">Faturamento: <b>' + html.escape(_fmt_rs(fat_v)) + '</b></div>') if (proj_v is None and fat_v is not None) else ''}
     {('<div class="dp-pill" style="background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.35);color:#FBBF24;">Falta p/ 100% (' + html.escape(pill) + '): <b>' + html.escape(_fmt_rs(falta)) + '</b></div>') if falta is not None else ''}
@@ -2659,12 +2687,14 @@ def page_sala_gestao(settings, conn) -> None:
                         for _, r in over.head(8).iterrows():
                             dept = r.get("departamento") or "—"
                             alc = r.get("alcance_projetado_pct")
+                            part = r.get("participacao_pct") if "participacao_pct" in over.columns else None
                             st.markdown(
                                 f"""\n<div class="dp-card" style="padding:12px 14px;margin-bottom:10px;">
   <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;">
     <div style="color:#E5E7EB;font-weight:850;">{html.escape(str(dept))}</div>
     <span class="dp-pill" style="background:rgba(34,197,94,.14);border-color:rgba(34,197,94,.35);color:#6EE7B7;">Alc. Proj: <b>{html.escape(_fmt_pct(alc))}</b></span>
   </div>
+  {('<div style="margin-top:8px;color:#CBD5E1"><span class="dp-pill" style="background:rgba(255,255,255,.02);">% Part.: <b>' + html.escape(_fmt_pct(part)) + '</b></span></div>') if part is not None else ''}
 </div>
 """,
                                 unsafe_allow_html=True,
