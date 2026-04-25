@@ -255,6 +255,18 @@ def render_bonus_central_panel_html(df: pd.DataFrame, *, periodo: str, total: fl
             s = src[col]
             return int((s == False).sum())  # noqa: E712
 
+        def _cnt_true(col: str) -> int:
+            if col not in src.columns:
+                return 0
+            s = src[col]
+            return int((s == True).sum())  # noqa: E712
+
+        def _fmt_ind(name: str, ok: int) -> str:
+            if not n:
+                return f"{name}: —"
+            pct = round((ok / n) * 100.0)
+            return f"{name}: {ok}/{n} ({pct}%)"
+
         # Top bônus
         top_nome = None
         top_bonus = None
@@ -297,8 +309,24 @@ def render_bonus_central_panel_html(df: pd.DataFrame, *, periodo: str, total: fl
         top2 = sorted(misses.items(), key=lambda kv: kv[1], reverse=True)[:2]
         garg = " e ".join([f"{k} ({v})" for k, v in top2 if v is not None]) if top2 else "—"
 
+        # Entrega por indicador (quantos bateram / %)
+        ok_marg = int(src["elegivel_margem"].sum()) if "elegivel_margem" in src.columns else 0
+        ok_prazo = _cnt_true("bateu_prazo")
+        ok_conv = _cnt_true("bateu_conversao")
+        ok_tme = _cnt_true("bateu_tme")
+        ok_inter = _cnt_true("bateu_interacao")
+        entrega = " | ".join(
+            [
+                _fmt_ind("Margem/Alc", ok_marg),
+                _fmt_ind("Prazo", ok_prazo),
+                _fmt_ind("Conv", ok_conv),
+                _fmt_ind("TME", ok_tme),
+                _fmt_ind("Inter", ok_inter),
+            ]
+        )
+
         parts = []
-        parts.append(f"{n_eleg}/{n} elegíveis na margem ({bar_pct:.0f}%)" if n else "sem base")
+        parts.append(entrega)
         if top_nome and top_bonus is not None:
             parts.append(f"Top: {top_nome} (R$ {top_bonus:,.0f})")
         if avg_bonus is not None:
@@ -307,7 +335,7 @@ def render_bonus_central_panel_html(df: pd.DataFrame, *, periodo: str, total: fl
             parts.append(f"Quase lá: {near} a 1 indicador do bônus")
         parts.append(f"Gargalos: {garg}")
 
-        insight = " • ".join(parts)
+        insight = " • ".join([p for p in parts if p])
     except Exception:
         insight = "Insight: —"
     insight_esc = html.escape(insight)
@@ -316,7 +344,7 @@ def render_bonus_central_panel_html(df: pd.DataFrame, *, periodo: str, total: fl
 <div class="bonus-panel-wrap">
   <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
     <h2 class="bonus-panel-title" style="margin:0;">Central de Vendas | Resultados de Bônus — {periodo_esc}</h2>
-    <div class="dp-pill" style="max-width: 720px; white-space: normal; line-height: 1.35;">
+    <div class="dp-pill" style="max-width: 980px; white-space: normal; line-height: 1.35; font-size:0.95rem; padding:10px 12px;">
       {insight_esc}
     </div>
   </div>
