@@ -903,8 +903,10 @@ def page_upload(settings, conn) -> None:
                         s = s.replace(".", "").replace(",", ".") if s.count(",") == 1 and s.count(".") >= 1 else s.replace(",", ".")
                         if s == "":
                             return None
-                        return float(s)
-                    return float(v)  # type: ignore[arg-type]
+                        x = float(s)
+                        return None if pd.isna(x) else x
+                    x = float(v)  # type: ignore[arg-type]
+                    return None if pd.isna(x) else x
                 except Exception:
                     return None
 
@@ -952,7 +954,7 @@ def page_upload(settings, conn) -> None:
                                 continue
                             # ints para campos naturalmente inteiros
                             if k in {"prazo_medio", "interacoes", "chamadas", "qtd_faturadas"}:
-                                tgt[k] = int(round(nv))
+                                tgt[k] = int(round(float(nv)))
                             else:
                                 tgt[k] = float(nv)
 
