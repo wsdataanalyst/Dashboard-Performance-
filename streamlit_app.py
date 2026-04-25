@@ -2767,12 +2767,16 @@ def page_sala_gestao(settings, conn) -> None:
                     if isinstance(res.meta, dict) and res.meta.get("mes_referencia"):
                         title_suffix = f" — {res.meta.get('mes_referencia')}"
 
+                    avg_fat = float(pd.to_numeric(df.get("faturamento"), errors="coerce").fillna(0).mean())
+                    avg_nf = float(pd.to_numeric(df.get("nfs_emitidas"), errors="coerce").fillna(0).mean())
+                    avg_cli = float(pd.to_numeric(df.get("clientes_atendidos"), errors="coerce").fillna(0).mean())
+
                     fig_fat = px.line(
                         df,
                         x="dia",
                         y="faturamento",
                         markers=True,
-                        title=f"Faturamento por dia{title_suffix}",
+                        title=f"Faturamento por dia{title_suffix} (média: R$ {avg_fat:,.2f})",
                         labels={"dia": "Dia do mês", "faturamento": "Faturamento (R$)"},
                     )
                     fig_fat.update_traces(line_width=3)
@@ -2793,7 +2797,7 @@ def page_sala_gestao(settings, conn) -> None:
                         y="valor",
                         color="metric",
                         markers=True,
-                        title=f"NFS e Atendidos por dia{title_suffix}",
+                        title=f"NFS e Atendidos por dia{title_suffix} (médias: NFS {avg_nf:.1f} | Atendidos {avg_cli:.1f})",
                         labels={"dia": "Dia do mês", "valor": "Quantidade", "metric": ""},
                     )
                     fig_counts.update_traces(line_width=3)
