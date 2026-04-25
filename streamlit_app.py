@@ -847,11 +847,14 @@ def page_upload(settings, conn) -> None:
             try:
                 with st.spinner("Importando arquivos..."):
                     files_bytes = [(f.name, f.read()) for f in excel_files]
-                    res = import_5_files_to_payload(files_bytes)
+                    # 1) Classifica arquivos para não misturar "Departamentos" com "Vendedores"
+                    perf_files: list[tuple[str, bytes]] = []
+                    dept_files: list[tuple[str, bytes]] = []
 
                     # Cache: evolução diária (Faturamento e Atendidos)
                     daily_ok = False
                     for fname, b in files_bytes:
+                        # tenta identificar "Faturamento e Atendidos"
                         try:
                             dres = import_faturamento_atendidos_daily_df(b)
                             if isinstance(dres.df_daily, pd.DataFrame) and not dres.df_daily.empty:
@@ -871,23 +874,38 @@ def page_upload(settings, conn) -> None:
                                 except Exception:
                                     pass
                                 daily_ok = True
-                                break
+                                continue  # não entra no import de performance
                         except Exception:
-                            continue
+                            pass
 
-                    # Cache: departamentos
-                    try:
-                        dpt = import_departamentos(files_bytes)
-                        dept_rows = (dpt.payload or {}).get("departamentos") if isinstance(dpt.payload, dict) else None
-                        if isinstance(dept_rows, list) and len(dept_rows) > 0:
-                            st.session_state["dept_payload"] = dpt.payload
-                            st.session_state["dept_meta"] = dpt.meta
-                            st.session_state["dept_source_names"] = [n for (n, _) in files_bytes]
-                        # warnings não são erro — só informa
-                        if dpt.warnings:
-                            st.session_state["dept_warnings"] = dpt.warnings
-                    except Exception:
-                        pass
+                        # tenta identificar "Departamentos" (por conteúdo)
+                        try:
+                            dpt1 = import_departamentos([(fname, b)])
+                            dept_rows = (dpt1.payload or {}).get("departamentos") if isinstance(dpt1.payload, dict) else None
+                            if isinstance(dept_rows, list) and len(dept_rows) > 0:
+                                dept_files.append((fname, b))
+                                continue  # não entra no import de performance
+                        except Exception:
+                            pass
+
+                        perf_files.append((fname, b))
+
+                    # 2) Importa Performance SOMENTE com arquivos de vendedores (prints 1–5)
+                    res = import_5_files_to_payload(perf_files)
+
+                    # 3) Cache: departamentos (apenas arquivos classificados como dept)
+                    if dept_files:
+                        try:
+                            dpt = import_departamentos(dept_files)
+                            dept_rows2 = (dpt.payload or {}).get("departamentos") if isinstance(dpt.payload, dict) else None
+                            if isinstance(dept_rows2, list) and len(dept_rows2) > 0:
+                                st.session_state["dept_payload"] = dpt.payload
+                                st.session_state["dept_meta"] = dpt.meta
+                                st.session_state["dept_source_names"] = [n for (n, _) in dept_files]
+                            if dpt.warnings:
+                                st.session_state["dept_warnings"] = dpt.warnings
+                        except Exception:
+                            pass
 
                     st.session_state["upload_files_cache"] = {n: b for (n, b) in files_bytes}
                 if periodo and isinstance(res.payload, dict):
