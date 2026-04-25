@@ -226,13 +226,73 @@ def inject_styles(profile: str = "desktop") -> None:
     margin-bottom: 0.65rem !important;
     line-height: 1.35;
   }
-  .main h3 { font-size: 1.2rem !important; font-weight: 700 !important; }
+  /* H3 como "header moderno" (card) */
+  .main h3 {
+    font-size: 1.05rem !important;
+    font-weight: 900 !important;
+    letter-spacing: .2px;
+    color: var(--text) !important;
+    padding: 12px 14px !important;
+    border-radius: 14px !important;
+    border: 1px solid rgba(255,255,255,.10) !important;
+    background:
+      radial-gradient(900px 220px at 12% 0%, rgba(59,130,246,.16), transparent 60%),
+      radial-gradient(900px 220px at 88% 12%, rgba(110,231,183,.10), transparent 55%),
+      linear-gradient(180deg, rgba(17,26,46,.90), rgba(11,18,32,.92)) !important;
+    box-shadow: 0 10px 26px rgba(0,0,0,.22);
+  }
 
   /* Sidebar: mais legível e aproveitada */
   [data-testid="stSidebar"] > div {
     padding-top: 1.25rem !important;
     padding-left: 0.75rem !important;
     padding-right: 0.75rem !important;
+  }
+  /* Sidebar — visual moderno */
+  [data-testid="stSidebar"] {
+    background:
+      radial-gradient(1200px 520px at 15% 0%, rgba(59,130,246,.20), transparent 50%),
+      radial-gradient(900px 420px at 85% 20%, rgba(110,231,183,.14), transparent 55%),
+      linear-gradient(180deg, rgba(11,18,32,.98), rgba(9,14,26,.98)) !important;
+    border-right: 1px solid rgba(255,255,255,.08);
+  }
+  [data-testid="stSidebar"] .stMarkdown h3 {
+    font-size: 0.9rem !important;
+    padding: 10px 12px !important;
+    border-radius: 12px !important;
+  }
+  /* Radios no sidebar com "pills" */
+  [data-testid="stSidebar"] div[role="radiogroup"] > label {
+    padding: 10px 10px !important;
+    border-radius: 14px !important;
+    border: 1px solid rgba(255,255,255,.10) !important;
+    background: rgba(255,255,255,.02) !important;
+    margin-bottom: 8px !important;
+    transition: transform .12s ease, background .12s ease, border-color .12s ease;
+  }
+  [data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
+    transform: translateY(-1px);
+    background: rgba(255,255,255,.04) !important;
+    border-color: rgba(59,130,246,.22) !important;
+  }
+  /* Expander do sidebar */
+  [data-testid="stSidebar"] [data-testid="stExpander"] details summary {
+    border-radius: 14px !important;
+    border: 1px solid rgba(255,255,255,.10) !important;
+    background: rgba(255,255,255,.02) !important;
+    padding: 10px 12px !important;
+  }
+  /* Inputs no sidebar */
+  [data-testid="stSidebar"] [data-baseweb="input"] > div,
+  [data-testid="stSidebar"] [data-baseweb="select"] > div {
+    border-radius: 14px !important;
+    border-color: rgba(255,255,255,.12) !important;
+    background: rgba(255,255,255,.03) !important;
+  }
+  [data-testid="stSidebar"] .stButton > button {
+    border-radius: 14px !important;
+    border: 1px solid rgba(255,255,255,.12) !important;
+    background: rgba(255,255,255,.04) !important;
   }
   [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
   [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] li {
