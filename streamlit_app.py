@@ -1846,6 +1846,76 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
         st.caption("Salve pelo menos 2 análises para comparar conversão vs interações ao longo do tempo.")
 
     st.markdown("### Indicadores (ranking)")
+    # Mapa de "temperatura": quantos indicadores cada vendedor entrega
+    try:
+        if isinstance(df, pd.DataFrame) and (not df.empty):
+            def _to_bool(v: object) -> bool:
+                if v is None:
+                    return False
+                if isinstance(v, bool):
+                    return bool(v)
+                s = str(v).strip().lower()
+                return s in {"true", "1", "sim", "yes", "y"}
+
+            delivered_cols = [
+                ("elegivel_margem", "Margem+Alcance"),
+                ("bateu_prazo", "Prazo"),
+                ("bateu_conversao", "Conversão"),
+                ("bateu_tme", "TME"),
+                ("bateu_interacao", "Interações"),
+            ]
+            present = [(c, label) for (c, label) in delivered_cols if c in df.columns]
+            if present:
+                dfx = df[["nome"] + [c for (c, _) in present]].copy()
+                for c, _ in present:
+                    dfx[c] = dfx[c].apply(_to_bool)
+                dfx["indicadores_entregues"] = dfx[[c for (c, _) in present]].sum(axis=1).astype(int)
+                dfx = dfx.sort_values(["indicadores_entregues", "nome"], ascending=[False, True]).reset_index(drop=True)
+
+                best = dfx.iloc[0]
+                worst = dfx.iloc[-1]
+                st.markdown("#### Temperatura — indicadores entregues (por vendedor)")
+                s1, s2 = st.columns(2)
+                s1.markdown(
+                    f"**Maior entrega**: **{best['nome']}** — **{int(best['indicadores_entregues'])}** indicador(es)"
+                )
+                s2.markdown(
+                    f"**Menor entrega**: **{worst['nome']}** — **{int(worst['indicadores_entregues'])}** indicador(es)"
+                )
+
+                try:
+                    import plotly.graph_objects as go
+
+                    fig_h = go.Figure(
+                        data=go.Heatmap(
+                            z=[dfx["indicadores_entregues"].tolist()],
+                            x=dfx["nome"].tolist(),
+                            y=["Indicadores entregues"],
+                            colorscale=[
+                                [0.0, "rgba(251,113,133,0.35)"],
+                                [0.4, "rgba(251,191,36,0.35)"],
+                                [0.7, "rgba(110,231,183,0.45)"],
+                                [1.0, "rgba(34,197,94,0.55)"],
+                            ],
+                            zmin=0,
+                            zmax=max(1, int(dfx["indicadores_entregues"].max())),
+                            hovertemplate="<b>%{x}</b><br>Indicadores entregues: %{z}<extra></extra>",
+                            showscale=True,
+                            colorbar=dict(title="Qtd", thickness=12),
+                        )
+                    )
+                    fig_h.update_layout(
+                        height=220,
+                        margin=dict(l=10, r=10, t=10, b=10),
+                        xaxis=dict(tickangle=-35),
+                        yaxis=dict(tickfont=dict(size=12)),
+                    )
+                    st.plotly_chart(fig_h, use_container_width=True, key=f"{key_prefix}_heat_indicadores_entregues")
+                except Exception as e:
+                    st.caption(f"Mapa de calor indisponível: {e}")
+    except Exception:
+        pass
+
     indicador = st.selectbox(
         "Escolha o indicador",
         options=[
