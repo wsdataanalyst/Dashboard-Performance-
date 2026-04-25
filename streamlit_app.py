@@ -1697,14 +1697,15 @@ def page_projection(settings, conn) -> None:
     st.markdown(f"### {titulo}")
     c1, c2, c3, c4 = st.columns(4)
     # Comparativos:
-    # - Atual (faturadas/interações): vs VALOR ATUAL da análise anterior (mais interpretável e sempre disponível)
+    # - Atual (faturadas/interações): vs EXPECTATIVA da análise anterior (projeção anterior)
+    #   Ex.: análise anterior projetava 30, e agora fez 28 → seta vermelha.
     # - Projeções: vs projeção da análise anterior
-    d_fat = _delta_qty_and_pct(proj.qtd_faturadas_atual, prev_proj.qtd_faturadas_atual) if prev_proj is not None else None
-    d_int = _delta_qty_and_pct(proj.interacoes_atual, prev_proj.interacoes_atual) if prev_proj is not None else None
+    d_fat = _delta_qty_and_pct(proj.qtd_faturadas_atual, prev_proj.projecao_faturas) if prev_proj is not None else None
+    d_int = _delta_qty_and_pct(proj.interacoes_atual, prev_proj.projecao_interacoes) if prev_proj is not None else None
     d_proj_fat = _delta_float_and_pct(proj.projecao_faturas, prev_proj.projecao_faturas, digits=1) if prev_proj is not None else None
-    c1.metric("Faturadas (atual)", f"{proj.qtd_faturadas_atual}", delta=(d_fat or "→ 0 (0.0%)"), help="Vs análise anterior (valor atual).")
-    c2.metric("Interações (atual)", f"{proj.interacoes_atual}", delta=(d_int or "→ 0 (0.0%)"), help="Vs análise anterior (valor atual).")
-    c3.metric("Projeção faturadas", f"{proj.projecao_faturas}", delta=(d_proj_fat or "→ +0.0 (0.0%)"), help="Vs análise anterior (projeção).")
+    c1.metric("Faturadas (atual)", f"{proj.qtd_faturadas_atual}", delta=(d_fat or "→ 0 (0.0%)"), help="Vs projeção da análise anterior (expectativa).")
+    c2.metric("Interações (atual)", f"{proj.interacoes_atual}", delta=(d_int or "→ 0 (0.0%)"), help="Vs projeção da análise anterior (expectativa).")
+    c3.metric("Projeção faturadas", f"{proj.projecao_faturas}", delta=(d_proj_fat or "→ +0.0 (0.0%)"), help="Vs projeção da análise anterior.")
     c4.metric("Status", proj.status)
 
     st.markdown("### Ritmo diário")
