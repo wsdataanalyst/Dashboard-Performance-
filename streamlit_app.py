@@ -2940,11 +2940,44 @@ def page_star(settings, conn) -> None:
         ticket = float(s_raw.faturamento) / float(s_raw.qtd_faturadas or 1)
 
     st.markdown("### Resumo do vendedor")
+    import html as _html
+
+    def _kpi_card(title: str, value: str, *, icon: str, accent: str) -> None:
+        st.markdown(
+            f"""
+<div class="dp-card" style="
+  padding:12px 12px;
+  border-color: rgba(59,130,246,.18);
+  background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.18), transparent 60%),
+              radial-gradient(900px 220px at 85% 10%, rgba(110,231,183,.12), transparent 55%),
+              linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
+">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+    <div class="dp-kpi-label">{_html.escape(title)}</div>
+    <div style="
+      width:28px;height:28px;border-radius:10px;
+      display:flex;align-items:center;justify-content:center;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.10);
+      font-size: 0.95rem;
+      color: {accent};
+    ">{_html.escape(icon)}</div>
+  </div>
+  <div class="dp-kpi-value" style="font-size:1.35rem;color:{accent};text-shadow:0 0 24px rgba(59,130,246,.18);">{_html.escape(value)}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Bônus", f"R$ {r.bonus_total:,.2f}")
-    c2.metric("Margem", f"{r.margem_pct if r.margem_pct is not None else '—'}")
-    c3.metric("Conversão", f"{r.conversao_pct if r.conversao_pct is not None else '—'}")
-    c4.metric("Interações", f"{r.interacoes if r.interacoes is not None else '—'}")
+    with c1:
+        _kpi_card("Bônus", f"R$ {r.bonus_total:,.2f}", icon="💵", accent="#6EE7B7")
+    with c2:
+        _kpi_card("Margem", f"{float(r.margem_pct):.2f}%" if r.margem_pct is not None else "—", icon="📊", accent="#A7F3D0")
+    with c3:
+        _kpi_card("Conversão", f"{float(r.conversao_pct):.2f}%" if r.conversao_pct is not None else "—", icon="🔁", accent="#C4B5FD")
+    with c4:
+        _kpi_card("Interações", f"{int(r.interacoes):d}" if r.interacoes is not None else "—", icon="☎️", accent="#93c5fd")
 
     prior = get_last_feedback_for_seller(
         conn, r.nome, owner_user_id=owner_id, include_all=is_admin
