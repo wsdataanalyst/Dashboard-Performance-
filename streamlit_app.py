@@ -1473,6 +1473,18 @@ def page_projection(settings, conn) -> None:
         cur_id = int(getattr(current_row, "id", 0) or 0)
         cur_dt = _parse_dt(getattr(current_row, "created_at", None))
 
+        def _is_perf_row(rr) -> bool:
+            try:
+                payload_r = json.loads(getattr(rr, "payload_json", "") or "")
+            except Exception:
+                return False
+            if not isinstance(payload_r, dict):
+                return False
+            kind = str(payload_r.get("_kind") or "")
+            if kind.startswith("sala_gestao_"):
+                return False
+            return bool(parse_sellers(payload_r))
+
         if cur_dt is not None:
             best = None
             best_dt = None
@@ -1482,6 +1494,8 @@ def page_projection(settings, conn) -> None:
                     continue
                 rdt = _parse_dt(getattr(rr, "created_at", None))
                 if rdt is None or rdt >= cur_dt:
+                    continue
+                if not _is_perf_row(rr):
                     continue
                 if best_dt is None or rdt > best_dt:
                     best = rr
@@ -1495,6 +1509,8 @@ def page_projection(settings, conn) -> None:
         for rr in rows:
             rid = int(getattr(rr, "id", 0) or 0)
             if rid >= cur_id:
+                continue
+            if not _is_perf_row(rr):
                 continue
             if best_id is None or rid > best_id:
                 best = rr
