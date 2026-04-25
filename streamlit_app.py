@@ -1239,14 +1239,13 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
     meta_total = float(totais.get("meta_total") or 0.0) if totais.get("meta_total") is not None else None
     perc_meta = (fat_total / meta_total * 100.0) if (fat_total is not None and meta_total and meta_total > 0) else None
 
-    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Faturamento (time)", f"R$ {fat_total:,.2f}" if fat_total is not None else "—")
     c2.metric("Meta (time)", f"R$ {meta_total:,.2f}" if meta_total is not None else "—")
     c3.metric("% da meta", f"{perc_meta:.1f}%" if perc_meta is not None else "—")
-    c4.metric("Bônus total", f"R$ {stats['total_bonus']:,.2f}")
-    c5.metric("Margem média", f"{stats['media_margem']:.1f}%")
-    c6.metric("Conversão média", f"{stats['media_conversao']:.1f}%")
-    with c7:
+    c4.metric("Margem média", f"{stats['media_margem']:.1f}%")
+    c5.metric("Conversão média", f"{stats['media_conversao']:.1f}%")
+    with c6:
         d_pct = disc.get("desconto_pct")
         pct_txt = f"{float(d_pct):.2f}%" if d_pct is not None and not pd.isna(d_pct) else "—"
         # Card enxuto nesta aba (sem detalhes) para não poluir
