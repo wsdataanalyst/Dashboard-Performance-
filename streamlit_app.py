@@ -1065,14 +1065,6 @@ def page_dashboard(settings, conn) -> None:
     meta_total = float(totais.get("meta_total") or 0.0) if totais.get("meta_total") is not None else None
     perc_meta = (fat_total / meta_total * 100.0) if (fat_total is not None and meta_total and meta_total > 0) else None
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.markdown(f"<div class='dp-card'><div class='dp-kpi-label'>Período</div><div class='dp-kpi-value' style='font-size:1.05rem'>{row.periodo}</div></div>", unsafe_allow_html=True)
-    c2.markdown(f"<div class='dp-card'><div class='dp-kpi-label'>Faturamento (time)</div><div class='dp-kpi-value' style='font-size:1.02rem'>{('R$ ' + format(fat_total, ',.2f')) if fat_total is not None else '—'}</div></div>", unsafe_allow_html=True)
-    c3.markdown(f"<div class='dp-card'><div class='dp-kpi-label'>Meta (time)</div><div class='dp-kpi-value' style='font-size:1.02rem'>{('R$ ' + format(meta_total, ',.2f')) if meta_total is not None else '—'}</div></div>", unsafe_allow_html=True)
-    c4.markdown(f"<div class='dp-card'><div class='dp-kpi-label'>% da meta</div><div class='dp-kpi-value' style='font-size:1.05rem'>{(str(round(perc_meta,1)) + '%') if perc_meta is not None else '—'}</div></div>", unsafe_allow_html=True)
-    c5.markdown(f"<div class='dp-card'><div class='dp-kpi-label'>Bônus total</div><div class='dp-kpi-value'>R$ {total:,.2f}</div></div>", unsafe_allow_html=True)
-    c6.markdown(f"<div class='dp-card'><div class='dp-kpi-label'>Top (bônus)</div><div class='dp-kpi-value' style='font-size:1.02rem'>{top}</div></div>", unsafe_allow_html=True)
-
     if not results:
         st.warning("Sem vendedores no payload.")
         return
@@ -1087,6 +1079,53 @@ def page_dashboard(settings, conn) -> None:
         lambda r: (float(r["faturamento"]) / float(r["qtd_faturadas"])) if (pd.notna(r.get("faturamento")) and (r.get("qtd_faturadas") or 0) > 0) else None,
         axis=1,
     )
+
+    # Cards do Dashboard de Bônus (foco em métricas operacionais)
+    stats = _team_stats(df)
+    tot_inter = int(pd.to_numeric(df.get("interacoes"), errors="coerce").fillna(0).sum()) if "interacoes" in df.columns else 0
+
+    import html as _html
+
+    def _kpi_card(title: str, value: str, *, icon: str, accent: str) -> None:
+        st.markdown(
+            f"""
+<div class="dp-card" style="
+  padding:12px 12px;
+  border-color: rgba(59,130,246,.18);
+  background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.18), transparent 60%),
+              radial-gradient(900px 220px at 85% 10%, rgba(110,231,183,.12), transparent 55%),
+              linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
+">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+    <div class="dp-kpi-label">{_html.escape(title)}</div>
+    <div style="
+      width:28px;height:28px;border-radius:10px;
+      display:flex;align-items:center;justify-content:center;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.10);
+      font-size: 0.95rem;
+      color: {accent};
+    ">{_html.escape(icon)}</div>
+  </div>
+  <div class="dp-kpi-value" style="font-size:1.35rem;color:{accent};text-shadow:0 0 24px rgba(59,130,246,.18);">{_html.escape(value)}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    with c1:
+        _kpi_card("Período", str(row.periodo), icon="🗓", accent="#93c5fd")
+    with c2:
+        _kpi_card("% Margem", f"{stats['media_margem']:.1f}%", icon="📊", accent="#A7F3D0")
+    with c3:
+        _kpi_card("Prazo médio", f"{stats['media_prazo']:.0f}", icon="⏱", accent="#FBBF24")
+    with c4:
+        _kpi_card("Conversão (%)", f"{stats['media_conversao']:.1f}%", icon="🔁", accent="#C4B5FD")
+    with c5:
+        _kpi_card("TME (min)", f"{stats['media_tme']:.1f}", icon="⏳", accent="#6EE7B7")
+    with c6:
+        _kpi_card("Interações", f"{tot_inter:d}", icon="☎", accent="#93c5fd")
 
     tab_resumo, tab_bonus = st.tabs(["Resumo completo", "Central de Vendas | Bônus"])
 
