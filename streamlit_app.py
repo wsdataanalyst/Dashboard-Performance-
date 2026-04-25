@@ -1086,7 +1086,111 @@ def page_dashboard(settings, conn) -> None:
 
     import html as _html
 
-    def _kpi_card(title: str, value: str, *, icon: str, accent: str) -> None:
+    def _parse_dt(s: object):
+        try:
+            from datetime import datetime
+
+            txt = str(s or "")
+            if not txt:
+                return None
+            txt = txt.replace("Z", "+00:00")
+            return datetime.fromisoformat(txt)
+        except Exception:
+            return None
+
+    def _get_prev_perf_payload() -> dict | None:
+        rows = list_analyses(conn, limit=200, owner_user_id=owner_id, include_all=is_admin)
+        if not rows:
+            return None
+        cur_id = int(getattr(row, "id", 0) or 0)
+        cur_dt = _parse_dt(getattr(row, "created_at", None))
+
+        best = None
+        best_dt = None
+        for rr in rows:
+            rid = int(getattr(rr, "id", 0) or 0)
+            if rid == cur_id:
+                continue
+            try:
+                p = json.loads(getattr(rr, "payload_json", "") or "")
+            except Exception:
+                continue
+            if not isinstance(p, dict):
+                continue
+            kind = str(p.get("_kind") or "")
+            if kind.startswith("sala_gestao_"):
+                continue
+            if not parse_sellers(p):
+                continue
+            rdt = _parse_dt(getattr(rr, "created_at", None))
+            if cur_dt is not None and rdt is not None and rdt >= cur_dt:
+                continue
+            if best_dt is None or (rdt is not None and rdt > best_dt):
+                best = p
+                best_dt = rdt
+        return best
+
+    prev_stats = None
+    try:
+        prev_payload = _get_prev_perf_payload()
+        if isinstance(prev_payload, dict):
+            prev_sellers = parse_sellers(prev_payload)
+            prev_results, _ = calcular_time(prev_sellers) if prev_sellers else ([], 0.0)
+            if prev_results:
+                prev_df = pd.DataFrame([r.__dict__ for r in prev_results])
+                prev_stats = _team_stats(prev_df)
+                prev_tot_inter = int(pd.to_numeric(prev_df.get("interacoes"), errors="coerce").fillna(0).sum()) if "interacoes" in prev_df.columns else 0
+                prev_stats["total_interacoes"] = float(prev_tot_inter)
+    except Exception:
+        prev_stats = None
+
+    def _delta_qty_and_pct(cur: object, ref: object, *, digits: int = 1) -> str:
+        try:
+            c = float(cur)  # type: ignore[arg-type]
+            r = float(ref)  # type: ignore[arg-type]
+        except Exception:
+            return "—"
+        if pd.isna(c) or pd.isna(r):
+            return "—"
+        diff = c - r
+        arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "→")
+        if abs(r) < 1e-9:
+            return f"{arrow} {diff:+.{digits}f}"
+        pct = (diff / abs(r)) * 100.0
+        return f"{arrow} {diff:+.{digits}f} ({pct:+.1f}%)"
+
+    def _delta_vs_ideal(cur: object, ideal: float, *, direction: str, digits: int = 1) -> str:
+        """
+        direction:
+          - '>=': maior é melhor (ex.: margem, conversão, interações)
+          - '<=': menor é melhor (ex.: prazo, tme)
+        """
+        try:
+            c = float(cur)  # type: ignore[arg-type]
+        except Exception:
+            return "—"
+        if pd.isna(c):
+            return "—"
+        # diff_pos: positivo = bom (acima do ideal para >=, abaixo do ideal para <=)
+        diff_pos = (c - ideal) if direction == ">=" else (ideal - c)
+        arrow = "▲" if diff_pos > 0 else ("▼" if diff_pos < 0 else "→")
+        if abs(ideal) < 1e-9:
+            return f"{arrow} {diff_pos:+.{digits}f}"
+        pct = (diff_pos / abs(ideal)) * 100.0
+        return f"{arrow} {diff_pos:+.{digits}f} ({pct:+.1f}%)"
+
+    def _delta_color(val: str) -> str:
+        if val.startswith("▲"):
+            return "color:#22c55e;font-weight:800;"
+        if val.startswith("▼"):
+            return "color:#fb7185;font-weight:800;"
+        if val.startswith("→"):
+            return "color:#94a3b8;font-weight:650;"
+        return "color:#94a3b8;"
+
+    def _kpi_card(title: str, value: str, *, icon: str, accent: str, d_prev: str | None = None, d_ideal: str | None = None) -> None:
+        d1 = d_prev or "—"
+        d2 = d_ideal or "—"
         st.markdown(
             f"""
 <div class="dp-card" style="
@@ -1108,6 +1212,10 @@ def page_dashboard(settings, conn) -> None:
     ">{_html.escape(icon)}</div>
   </div>
   <div class="dp-kpi-value" style="font-size:1.35rem;color:{accent};text-shadow:0 0 24px rgba(59,130,246,.18);">{_html.escape(value)}</div>
+  <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
+    <div style="font-size:0.84rem;{_delta_color(d1)}">{_html.escape(d1)} <span style="color:#94a3b8;font-weight:600">(vs anterior)</span></div>
+    <div style="font-size:0.84rem;{_delta_color(d2)}">{_html.escape(d2)} <span style="color:#94a3b8;font-weight:600">(vs ideal)</span></div>
+  </div>
 </div>
 """,
             unsafe_allow_html=True,
@@ -1115,17 +1223,62 @@ def page_dashboard(settings, conn) -> None:
 
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1:
-        _kpi_card("Período", str(row.periodo), icon="🗓", accent="#93c5fd")
+        _kpi_card("Período", str(row.periodo), icon="🗓", accent="#93c5fd", d_prev=None, d_ideal=None)
     with c2:
-        _kpi_card("% Margem", f"{stats['media_margem']:.1f}%", icon="📊", accent="#A7F3D0")
+        cur = float(stats.get("media_margem") or 0.0)
+        ref = float(prev_stats.get("media_margem") or 0.0) if isinstance(prev_stats, dict) else None
+        _kpi_card(
+            "% Margem",
+            f"{cur:.1f}%",
+            icon="📊",
+            accent="#A7F3D0",
+            d_prev=(_delta_qty_and_pct(cur, ref, digits=1) if ref is not None else "—"),
+            d_ideal=_delta_vs_ideal(cur, 26.0, direction=">=", digits=1),
+        )
     with c3:
-        _kpi_card("Prazo médio", f"{stats['media_prazo']:.0f}", icon="⏱", accent="#FBBF24")
+        cur = float(stats.get("media_prazo") or 0.0)
+        ref = float(prev_stats.get("media_prazo") or 0.0) if isinstance(prev_stats, dict) else None
+        _kpi_card(
+            "Prazo médio",
+            f"{cur:.0f}",
+            icon="⏱",
+            accent="#FBBF24",
+            d_prev=(_delta_qty_and_pct(cur, ref, digits=0) if ref is not None else "—"),
+            d_ideal=_delta_vs_ideal(cur, 43.0, direction="<=", digits=0),
+        )
     with c4:
-        _kpi_card("Conversão (%)", f"{stats['media_conversao']:.1f}%", icon="🔁", accent="#C4B5FD")
+        cur = float(stats.get("media_conversao") or 0.0)
+        ref = float(prev_stats.get("media_conversao") or 0.0) if isinstance(prev_stats, dict) else None
+        _kpi_card(
+            "Conversão (%)",
+            f"{cur:.1f}%",
+            icon="🔁",
+            accent="#C4B5FD",
+            d_prev=(_delta_qty_and_pct(cur, ref, digits=1) if ref is not None else "—"),
+            d_ideal=_delta_vs_ideal(cur, 12.0, direction=">=", digits=1),
+        )
     with c5:
-        _kpi_card("TME (min)", f"{stats['media_tme']:.1f}", icon="⏳", accent="#6EE7B7")
+        cur = float(stats.get("media_tme") or 0.0)
+        ref = float(prev_stats.get("media_tme") or 0.0) if isinstance(prev_stats, dict) else None
+        _kpi_card(
+            "TME (min)",
+            f"{cur:.1f}",
+            icon="⏳",
+            accent="#6EE7B7",
+            d_prev=(_delta_qty_and_pct(cur, ref, digits=1) if ref is not None else "—"),
+            d_ideal=_delta_vs_ideal(cur, 5.0, direction="<=", digits=1),
+        )
     with c6:
-        _kpi_card("Interações", f"{tot_inter:d}", icon="☎", accent="#93c5fd")
+        cur = float(tot_inter)
+        ref = float(prev_stats.get("total_interacoes") or 0.0) if isinstance(prev_stats, dict) and prev_stats.get("total_interacoes") is not None else None
+        _kpi_card(
+            "Interações",
+            f"{int(cur):d}",
+            icon="☎",
+            accent="#93c5fd",
+            d_prev=(_delta_qty_and_pct(cur, ref, digits=0) if ref is not None else "—"),
+            d_ideal=_delta_vs_ideal(cur, 200.0, direction=">=", digits=0),
+        )
 
     tab_resumo, tab_bonus = st.tabs(["Resumo completo", "Central de Vendas | Bônus"])
 
