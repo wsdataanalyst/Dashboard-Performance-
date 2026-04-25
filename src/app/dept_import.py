@@ -79,12 +79,19 @@ def _to_float(v: Any) -> float | None:
 
 
 def _as_pct_0_100(v: Any) -> float | None:
+    """
+    Normaliza percentual vindo de Excel/HTML.
+
+    O Excel costuma guardar % como fração (0,6425 = 64,25%; 1,05 = 105%).
+    Valores já em escala de percentual humano (ex.: 64, 105) costumam ser > 3.
+    Mesma regra que `excel_import._as_pct_0_100` para ficar consistente.
+    """
     f = _to_float(v)
     if f is None:
         return None
-    if 0 <= f <= 1.0:
-        return float(f) * 100.0
-    return float(f)
+    if 0 <= f <= 3.0:
+        return round(float(f) * 100.0, 2)
+    return round(float(f), 2)
 
 
 def _clean_dept(name: Any) -> str:
