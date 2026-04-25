@@ -2495,10 +2495,10 @@ def page_projection(settings, conn) -> None:
   <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
     <div>
       <div style="color:#94A3B8;font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:800;">
-        {_html.escape(subtitle)}
+        {html.escape(subtitle)}
       </div>
       <div style="color:#E5E7EB;font-size:1.22rem;font-weight:950;margin-top:6px;line-height:1.2;">
-        {_html.escape(title)}
+        {html.escape(title)}
       </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
@@ -2507,7 +2507,7 @@ def page_projection(settings, conn) -> None:
         background: rgba(255,255,255,.03);
         color: {accent};
         font-weight:850;
-      ">{_html.escape(pill)}</span>
+      ">{html.escape(pill)}</span>
     </div>
   </div>
 </div>
