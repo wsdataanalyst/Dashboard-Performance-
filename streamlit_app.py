@@ -2498,12 +2498,12 @@ def page_sala_gestao(settings, conn) -> None:
                     ddf2["falta_meta"] = (meta - fat)
 
                 n100 = int((alc >= 100).sum()) if len(alc) else 0
-                n80 = int(((alc >= 80) & (alc < 100)).sum()) if len(alc) else 0
+                n80_90 = int(((alc >= 80) & (alc < 90)).sum()) if len(alc) else 0
                 nlt = int((alc < 80).sum()) if len(alc) else 0
 
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Deptos Alcance Proj. >= 100%", str(n100))
-                c2.metric("Deptos Alcance Proj. >= 80%", str(n80))
+                c2.metric("Deptos Alcance Proj. 80% a 90%", str(n80_90))
                 c3.metric("Deptos Alcance Proj. < 80%", str(nlt))
                 if "falta_meta" in ddf2.columns:
                     low = pd.to_numeric(ddf2["falta_meta"], errors="coerce")
@@ -2635,7 +2635,21 @@ def page_sala_gestao(settings, conn) -> None:
                             pill = "Proj." if base_calc == "proj" else ("Real" if base_calc == "real" else "—")
 
                             st.markdown(
-                                f\"\"\"\n<div class=\"dp-card\" style=\"padding:14px 16px;margin-bottom:10px;\">\n  <div style=\"display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;\">\n    <div style=\"color:#E5E7EB;font-weight:900;font-size:1.02rem;\">{html.escape(str(dept))}</div>\n    <span class=\"dp-pill\" style=\"border-color:rgba(255,255,255,.12);\">Alc. Proj: <b>{html.escape(_fmt_pct(alc))}</b></span>\n  </div>\n  <div style=\"margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;color:#CBD5E1;\">\n    <div class=\"dp-pill\" style=\"background:rgba(255,255,255,.02);\">Meta: <b>{html.escape(_fmt_rs(meta))}</b></div>\n    {('<div class=\"dp-pill\" style=\"background:rgba(255,255,255,.02);\">Fat. Proj. Acum: <b>' + html.escape(_fmt_rs(proj_v)) + '</b></div>') if proj_v is not None else ''}\n    {('<div class=\"dp-pill\" style=\"background:rgba(255,255,255,.02);\">Faturamento: <b>' + html.escape(_fmt_rs(fat_v)) + '</b></div>') if (proj_v is None and fat_v is not None) else ''}\n    {('<div class=\"dp-pill\" style=\"background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.35);color:#FBBF24;\">Falta p/ 100% (' + html.escape(pill) + '): <b>' + html.escape(_fmt_rs(falta)) + '</b></div>') if falta is not None else ''}\n  </div>\n</div>\n\"\"\",\n                                unsafe_allow_html=True,\n                            )
+                                f"""\n<div class="dp-card" style="padding:14px 16px;margin-bottom:10px;">
+  <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;">
+    <div style="color:#E5E7EB;font-weight:900;font-size:1.02rem;">{html.escape(str(dept))}</div>
+    <span class="dp-pill" style="border-color:rgba(255,255,255,.12);">Alc. Proj: <b>{html.escape(_fmt_pct(alc))}</b></span>
+  </div>
+  <div style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;color:#CBD5E1;">
+    <div class="dp-pill" style="background:rgba(255,255,255,.02);">Meta: <b>{html.escape(_fmt_rs(meta))}</b></div>
+    {('<div class="dp-pill" style="background:rgba(255,255,255,.02);">Fat. Proj. Acum: <b>' + html.escape(_fmt_rs(proj_v)) + '</b></div>') if proj_v is not None else ''}
+    {('<div class="dp-pill" style="background:rgba(255,255,255,.02);">Faturamento: <b>' + html.escape(_fmt_rs(fat_v)) + '</b></div>') if (proj_v is None and fat_v is not None) else ''}
+    {('<div class="dp-pill" style="background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.35);color:#FBBF24;">Falta p/ 100% (' + html.escape(pill) + '): <b>' + html.escape(_fmt_rs(falta)) + '</b></div>') if falta is not None else ''}
+  </div>
+</div>
+""",
+                                unsafe_allow_html=True,
+                            )
                     else:
                         st.caption("Nenhum departamento entre 80% e 100% de alcance projetado.")
 
@@ -2646,7 +2660,15 @@ def page_sala_gestao(settings, conn) -> None:
                             dept = r.get("departamento") or "—"
                             alc = r.get("alcance_projetado_pct")
                             st.markdown(
-                                f\"\"\"\n<div class=\"dp-card\" style=\"padding:12px 14px;margin-bottom:10px;\">\n  <div style=\"display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;\">\n    <div style=\"color:#E5E7EB;font-weight:850;\">{html.escape(str(dept))}</div>\n    <span class=\"dp-pill\" style=\"background:rgba(34,197,94,.14);border-color:rgba(34,197,94,.35);color:#6EE7B7;\">Alc. Proj: <b>{html.escape(_fmt_pct(alc))}</b></span>\n  </div>\n</div>\n\"\"\",\n                                unsafe_allow_html=True,\n                            )
+                                f"""\n<div class="dp-card" style="padding:12px 14px;margin-bottom:10px;">
+  <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;">
+    <div style="color:#E5E7EB;font-weight:850;">{html.escape(str(dept))}</div>
+    <span class="dp-pill" style="background:rgba(34,197,94,.14);border-color:rgba(34,197,94,.35);color:#6EE7B7;">Alc. Proj: <b>{html.escape(_fmt_pct(alc))}</b></span>
+  </div>
+</div>
+""",
+                                unsafe_allow_html=True,
+                            )
                     if base.empty:
                         st.caption("Nenhum departamento com alcance projetado ≥ 80%.")
 
