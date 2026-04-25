@@ -256,6 +256,22 @@ def inject_styles(profile: str = "desktop") -> None:
       linear-gradient(180deg, rgba(11,18,32,.98), rgba(9,14,26,.98)) !important;
     border-right: 1px solid rgba(255,255,255,.08);
   }
+  /* Texto do sidebar com contraste melhor */
+  [data-testid="stSidebar"] * {
+    color: rgba(229,231,235,.94);
+  }
+  [data-testid="stSidebar"] .stCaption,
+  [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] small,
+  [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p small {
+    color: rgba(148,163,184,.95) !important;
+  }
+  [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+  [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] li,
+  [data-testid="stSidebar"] label,
+  [data-testid="stSidebar"] span {
+    color: rgba(229,231,235,.94) !important;
+  }
+
   [data-testid="stSidebar"] .stMarkdown h3 {
     font-size: 0.9rem !important;
     padding: 10px 12px !important;
@@ -269,6 +285,16 @@ def inject_styles(profile: str = "desktop") -> None:
     background: rgba(255,255,255,.02) !important;
     margin-bottom: 8px !important;
     transition: transform .12s ease, background .12s ease, border-color .12s ease;
+  }
+  /* Radio selecionado: destaque + texto bem legível */
+  [data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) {
+    background: rgba(59,130,246,.10) !important;
+    border-color: rgba(59,130,246,.30) !important;
+    box-shadow: 0 10px 22px rgba(0,0,0,.22);
+  }
+  [data-testid="stSidebar"] div[role="radiogroup"] > label:has(input:checked) * {
+    color: rgba(229,231,235,.98) !important;
+    font-weight: 850 !important;
   }
   [data-testid="stSidebar"] div[role="radiogroup"] > label:hover {
     transform: translateY(-1px);
@@ -289,10 +315,25 @@ def inject_styles(profile: str = "desktop") -> None:
     border-color: rgba(255,255,255,.12) !important;
     background: rgba(255,255,255,.03) !important;
   }
+  /* Texto dentro de inputs/selects no sidebar */
+  [data-testid="stSidebar"] input,
+  [data-testid="stSidebar"] textarea,
+  [data-testid="stSidebar"] [data-baseweb="select"] * {
+    color: rgba(229,231,235,.96) !important;
+  }
+  [data-testid="stSidebar"] [data-baseweb="select"] [aria-selected="true"] {
+    color: rgba(229,231,235,.98) !important;
+  }
+  [data-testid="stSidebar"] [data-baseweb="select"] svg {
+    fill: rgba(148,163,184,.95) !important;
+  }
   [data-testid="stSidebar"] .stButton > button {
     border-radius: 14px !important;
     border: 1px solid rgba(255,255,255,.12) !important;
     background: rgba(255,255,255,.04) !important;
+  }
+  [data-testid="stSidebar"] .stButton > button * {
+    color: rgba(229,231,235,.98) !important;
   }
   [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
   [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] li {
