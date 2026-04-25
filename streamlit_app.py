@@ -1222,39 +1222,8 @@ def page_dashboard(settings, conn) -> None:
             unsafe_allow_html=True,
         )
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        # Período: sem deltas (não faz sentido comparar)
-        st.markdown(
-            f"""
-<div class="dp-card" style="
-  padding:12px 12px;
-  min-height: 158px;
-  display:flex;
-  flex-direction:column;
-  justify-content:space-between;
-  border-color: rgba(59,130,246,.18);
-  background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.18), transparent 60%),
-              radial-gradient(900px 220px at 85% 10%, rgba(110,231,183,.12), transparent 55%),
-              linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
-">
-  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-    <div class="dp-kpi-label">Período</div>
-    <div style="
-      width:28px;height:28px;border-radius:10px;
-      display:flex;align-items:center;justify-content:center;
-      background: rgba(255,255,255,.04);
-      border: 1px solid rgba(255,255,255,.10);
-      font-size: 0.95rem;
-      color:#93c5fd;
-    ">🗓</div>
-  </div>
-  <div class="dp-kpi-value" style="font-size:1.18rem;color:#e5e7eb;line-height:1.2;">{_html.escape(str(row.periodo))}</div>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-    with c2:
         cur = float(stats.get("media_margem") or 0.0)
         ref = float(prev_stats.get("media_margem") or 0.0) if isinstance(prev_stats, dict) else None
         _kpi_card(
@@ -1265,7 +1234,7 @@ def page_dashboard(settings, conn) -> None:
             d_prev=(_delta_qty_and_pct(cur, ref, digits=1) if ref is not None else "—"),
             d_ideal=_delta_vs_ideal(cur, 26.0, direction=">=", digits=1),
         )
-    with c3:
+    with c2:
         cur = float(stats.get("media_prazo") or 0.0)
         ref = float(prev_stats.get("media_prazo") or 0.0) if isinstance(prev_stats, dict) else None
         _kpi_card(
@@ -1276,7 +1245,7 @@ def page_dashboard(settings, conn) -> None:
             d_prev=(_delta_qty_and_pct(cur, ref, digits=0) if ref is not None else "—"),
             d_ideal=_delta_vs_ideal(cur, 43.0, direction="<=", digits=0),
         )
-    with c4:
+    with c3:
         cur = float(stats.get("media_conversao") or 0.0)
         ref = float(prev_stats.get("media_conversao") or 0.0) if isinstance(prev_stats, dict) else None
         _kpi_card(
@@ -1287,7 +1256,7 @@ def page_dashboard(settings, conn) -> None:
             d_prev=(_delta_qty_and_pct(cur, ref, digits=1) if ref is not None else "—"),
             d_ideal=_delta_vs_ideal(cur, 12.0, direction=">=", digits=1),
         )
-    with c5:
+    with c4:
         cur = float(stats.get("media_tme") or 0.0)
         ref = float(prev_stats.get("media_tme") or 0.0) if isinstance(prev_stats, dict) else None
         _kpi_card(
@@ -1298,7 +1267,7 @@ def page_dashboard(settings, conn) -> None:
             d_prev=(_delta_qty_and_pct(cur, ref, digits=1) if ref is not None else "—"),
             d_ideal=_delta_vs_ideal(cur, 5.0, direction="<=", digits=1),
         )
-    with c6:
+    with c5:
         cur = float(tot_inter)
         ref = float(prev_stats.get("total_interacoes") or 0.0) if isinstance(prev_stats, dict) and prev_stats.get("total_interacoes") is not None else None
         _kpi_card(
