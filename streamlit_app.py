@@ -1908,6 +1908,19 @@ def page_projection(settings, conn) -> None:
     except Exception:
         pass
 
+    # Move para o topo: "O que falta para bater a meta"
+    if proj.meta_faturamento is not None and proj.meta_faturamento > 0:
+        st.markdown("### O que falta para bater a meta")
+        x1, x2, x3 = st.columns(3)
+        x1.metric("Meta faturamento", f"R$ {proj.meta_faturamento:,.2f}")
+        x2.metric("Falta (R$)", f"R$ {proj.faturamento_faltando:,.2f}" if proj.faturamento_faltando is not None else "—")
+        x3.metric(
+            "NFs/dia necessárias (mesmo ticket)",
+            f"{proj.nfs_por_dia_necessarias}" if proj.nfs_por_dia_necessarias is not None else "—",
+        )
+        if proj.ticket_necessario_com_mesmo_ritmo is not None:
+            st.caption(f"Se mantiver o mesmo ritmo de NFs/dia, o ticket médio necessário seria ~ **R$ {proj.ticket_necessario_com_mesmo_ritmo:,.2f}**.")
+
     c1, c2, c3, c4 = st.columns(4)
     # Comparativos:
     # - Atual (faturadas/interações): vs "meta de amanhã" calculada na análise anterior.
@@ -2041,18 +2054,6 @@ def page_projection(settings, conn) -> None:
             help_prev="vs análise anterior",
             help_ideal="vs meta (ideal)",
         )
-
-    if proj.meta_faturamento is not None and proj.meta_faturamento > 0:
-        st.markdown("### O que falta para bater a meta")
-        x1, x2, x3 = st.columns(3)
-        x1.metric("Meta faturamento", f"R$ {proj.meta_faturamento:,.2f}")
-        x2.metric("Falta (R$)", f"R$ {proj.faturamento_faltando:,.2f}" if proj.faturamento_faltando is not None else "—")
-        x3.metric(
-            "NFs/dia necessárias (mesmo ticket)",
-            f"{proj.nfs_por_dia_necessarias}" if proj.nfs_por_dia_necessarias is not None else "—",
-        )
-        if proj.ticket_necessario_com_mesmo_ritmo is not None:
-            st.caption(f"Se mantiver o mesmo ritmo de NFs/dia, o ticket médio necessário seria ~ **R$ {proj.ticket_necessario_com_mesmo_ritmo:,.2f}**.")
 
 
 def page_star(settings, conn) -> None:
