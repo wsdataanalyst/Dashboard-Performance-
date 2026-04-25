@@ -3980,6 +3980,25 @@ def page_sala_gestao(settings, conn) -> None:
             out = out.replace("## ", "").replace("### ", "")
             return out
 
+        def _pdf_safe_text(s: str) -> str:
+            """
+            Helvetica no FPDF não suporta alguns caracteres unicode (ex.: '—', '•', setas).
+            Normaliza para ASCII/Latin-1 seguro.
+            """
+            if s is None:
+                return ""
+            out = str(s)
+            out = out.replace("—", "-")
+            out = out.replace("•", "-")
+            out = out.replace("▲", "^").replace("▼", "v").replace("→", ">")
+            out = out.replace("\u00A0", " ")  # nbsp
+            # remove qualquer coisa fora de latin-1
+            try:
+                out = out.encode("latin-1", errors="ignore").decode("latin-1")
+            except Exception:
+                pass
+            return out
+
         def _fig_to_png_bytes(fig_obj: object) -> bytes | None:
             try:
                 # plotly Figure
@@ -4000,7 +4019,7 @@ def page_sala_gestao(settings, conn) -> None:
                 if not line.strip():
                     pdf.ln(2)
                     continue
-                pdf.multi_cell(0, 6, line)
+                pdf.multi_cell(0, 6, _pdf_safe_text(line))
 
             # insere gráficos em páginas separadas (quando existirem)
             for title, fig_obj in fig_map.items():
@@ -4009,7 +4028,7 @@ def page_sala_gestao(settings, conn) -> None:
                     continue
                 pdf.add_page()
                 pdf.set_font("Helvetica", size=12)
-                pdf.multi_cell(0, 7, f"Gráfico: {title}")
+                pdf.multi_cell(0, 7, _pdf_safe_text(f"Gráfico: {title}"))
                 pdf.ln(2)
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                     tmp.write(png)
