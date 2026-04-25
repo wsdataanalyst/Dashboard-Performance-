@@ -1322,11 +1322,37 @@ def page_evolution(settings, conn) -> None:
         st.info("Você precisa de pelo menos 2 análises salvas para ver a evolução.")
         return
 
-    df = pd.DataFrame(
-        [{"id": r.id, "created_at": r.created_at, "periodo": r.periodo, "total_bonus": r.total_bonus} for r in rows]
-    )
-    # ordem cronológica
-    df = df.sort_values("id", ascending=True)
+    # Filtra somente análises de performance/bônus (evita misturar Sala de Gestão e registros sem vendedores).
+    hist: list[dict] = []
+    for r in reversed(rows):  # cronológico (antigo -> novo)
+        try:
+            p = json.loads(getattr(r, "payload_json", "") or "")
+        except Exception:
+            continue
+        if not isinstance(p, dict):
+            continue
+        kind = str(p.get("_kind") or "")
+        if kind.startswith("sala_gestao_"):
+            continue
+        if not parse_sellers(p):
+            continue
+        hist.append(
+            {
+                "id": int(r.id),
+                "created_at": str(r.created_at),
+                "periodo": str(r.periodo),
+                "total_bonus": float(getattr(r, "total_bonus", 0.0) or 0.0),
+            }
+        )
+
+    df = pd.DataFrame(hist)
+    if df.empty or len(df) < 2:
+        st.info("Você precisa de pelo menos 2 análises válidas (com vendedores) para ver a evolução.")
+        return
+
+    # Eixo X contínuo (evita “buracos” quando há períodos apagados/ignorados).
+    df = df.sort_values("id", ascending=True).reset_index(drop=True)
+    df["seq"] = list(range(1, len(df) + 1))
 
     c1, c2 = st.columns(2)
     c1.metric("Análises", f"{len(df)}")
@@ -1335,7 +1361,15 @@ def page_evolution(settings, conn) -> None:
     try:
         import plotly.express as px
 
-        fig = px.line(df, x="periodo", y="total_bonus", markers=True, title="Evolução do bônus total")
+        fig = px.line(
+            df,
+            x="seq",
+            y="total_bonus",
+            markers=True,
+            title="Evolução do bônus total",
+            hover_data={"periodo": True, "created_at": True, "seq": False},
+            labels={"seq": "Snapshot", "total_bonus": "Bônus total (R$)"},
+        )
         fig.update_layout(height=380)
         st.plotly_chart(fig, use_container_width=True, key="bonus_chart_evolution")
     except Exception as e:
