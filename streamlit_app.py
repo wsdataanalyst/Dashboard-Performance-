@@ -867,21 +867,110 @@ def page_upload(settings, conn) -> None:
                 lambda r: (float(r["faturamento"]) / float(r["qtd_faturadas"])) if (pd.notna(r.get("faturamento")) and (r.get("qtd_faturadas") or 0) > 0) else None,
                 axis=1,
             )
+            st.markdown("### Ajuste rápido (edite aqui antes de salvar)")
+            st.caption("Edite os valores que estiverem errados e clique em **Aplicar ajustes na prévia**.")
+
+            cols_edit = [
+                "nome",
+                "alcance_pct",
+                "margem_pct",
+                "prazo_medio",
+                "conversao_pct",
+                "tme_minutos",
+                "interacoes",
+                "chamadas",
+                "qtd_faturadas",
+                "faturamento",
+                "meta_faturamento",
+            ]
+            cols_edit = [c for c in cols_edit if c in df_prev.columns]
+            df_edit_base = df_prev[cols_edit].copy()
+
+            edited = st.data_editor(
+                df_edit_base,
+                use_container_width=True,
+                hide_index=True,
+                num_rows="fixed",
+                key="preview_editor_vendedores",
+            )
+
+            def _to_num(v: object) -> float | None:
+                if v is None:
+                    return None
+                try:
+                    if isinstance(v, str):
+                        s = v.strip().replace("R$", "").replace("%", "").strip()
+                        s = s.replace(".", "").replace(",", ".") if s.count(",") == 1 and s.count(".") >= 1 else s.replace(",", ".")
+                        if s == "":
+                            return None
+                        return float(s)
+                    return float(v)  # type: ignore[arg-type]
+                except Exception:
+                    return None
+
+            if st.button("✅ Aplicar ajustes na prévia", use_container_width=True, key="btn_apply_preview_edits"):
+                try:
+                    # Atualiza payload["vendedores"] com o que foi editado
+                    raw_v = payload.get("vendedores") if isinstance(payload.get("vendedores"), list) else []
+                    v_by_name: dict[str, dict] = {}
+                    for item in raw_v:
+                        if isinstance(item, dict) and item.get("nome"):
+                            v_by_name[str(item.get("nome")).strip()] = item
+
+                    edited_rows = edited.to_dict(orient="records") if hasattr(edited, "to_dict") else []
+                    for r in edited_rows:
+                        nome = str(r.get("nome") or "").strip()
+                        if not nome:
+                            continue
+                        tgt = v_by_name.get(nome)
+                        if tgt is None:
+                            tgt = {"nome": nome}
+                            raw_v.append(tgt)
+                            v_by_name[nome] = tgt
+
+                        # campos numéricos (mantém None quando vazio)
+                        for k in [
+                            "alcance_pct",
+                            "margem_pct",
+                            "prazo_medio",
+                            "conversao_pct",
+                            "tme_minutos",
+                            "interacoes",
+                            "chamadas",
+                            "qtd_faturadas",
+                            "faturamento",
+                            "meta_faturamento",
+                        ]:
+                            if k not in r:
+                                continue
+                            nv = _to_num(r.get(k))
+                            if nv is None:
+                                # não apaga campos existentes se usuário deixou vazio sem querer
+                                # (só seta None se o campo não existia)
+                                if k not in tgt:
+                                    tgt[k] = None
+                                continue
+                            # ints para campos naturalmente inteiros
+                            if k in {"prazo_medio", "interacoes", "chamadas", "qtd_faturadas"}:
+                                tgt[k] = int(round(nv))
+                            else:
+                                tgt[k] = float(nv)
+
+                    payload["vendedores"] = raw_v
+                    st.session_state["payload"] = payload
+                    st.success("Ajustes aplicados na prévia. Os cálculos e o bônus serão recalculados automaticamente.")
+                    st.rerun()
+                except Exception as e:
+                    st.error("Não consegui aplicar os ajustes.")
+                    st.caption(str(e))
+
+            # Colunas somente leitura para revisão
+            st.markdown("### Resultado recalculado (somente leitura)")
             st.dataframe(
                 df_prev[
                     [
                         "nome",
-                        "alcance_pct",
-                        "margem_pct",
-                        "prazo_medio",
-                        "conversao_pct",
-                        "tme_minutos",
-                        "interacoes",
-                        "chamadas",
                         "bonus_total",
-                        "qtd_faturadas",
-                        "faturamento",
-                        "meta_faturamento",
                         "ticket_medio",
                     ]
                 ],
