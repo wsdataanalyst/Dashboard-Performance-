@@ -137,6 +137,29 @@ def _merge(base: dict[str, dict], updates: list[dict[str, Any]]) -> None:
                 continue
             if v is None or (isinstance(v, float) and pd.isna(v)):
                 continue
+            # Evita que a ordem de upload sobrescreva valores "maiores" por valores menores.
+            # Ex.: faturamento em prints diferentes (ou export atualizado).
+            if k in {
+                "faturamento",
+                "meta_faturamento",
+                "qtd_faturadas",
+                "interacoes",
+                "chamadas",
+                "iniciados",
+                "recebidos",
+                "finalizados",
+            }:
+                cur = r.get(k)
+                try:
+                    cv = float(cur) if cur is not None and not (isinstance(cur, float) and pd.isna(cur)) else None
+                    nv = float(v)
+                except Exception:
+                    r[k] = v
+                    continue
+                # mantém o maior (mais seguro para não perder atualização)
+                if cv is None or nv >= cv:
+                    r[k] = v
+                continue
             r[k] = v
 
 
