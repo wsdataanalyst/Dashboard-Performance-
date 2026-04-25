@@ -27,19 +27,28 @@ def _profile_css(profile: str) -> str:
 """
     if p == "tablet":
         return """
-  /* Perfil Tablet / iPad — mais largura útil, menos padding lateral */
+  /* Perfil Tablet / iPad — mais largura útil, fonte menor para não cortar números */
   .main .block-container {
     padding-top: 1.5rem !important;
     padding-left: 0.55rem !important;
     padding-right: 0.55rem !important;
     max-width: 100% !important;
   }
-  .dp-title{ font-size:1.28rem !important; }
-  .dp-sub{ font-size: 0.98rem !important; }
-  .dp-kpi-value{ font-size:1.38rem !important; }
-  .dp-card { padding: 13px 14px !important; }
-  .main h3 { font-size: 1.14rem !important; }
+  /* Tipografia base um pouco menor no iPad */
+  .main, .main p, .main li, .main label { font-size: 0.95rem !important; }
+  .stCaption, .main .stCaption { font-size: 0.82rem !important; }
+  .dp-title{ font-size:1.14rem !important; }
+  .dp-sub{ font-size: 0.92rem !important; }
+  .dp-kpi-label{ font-size: 0.72rem !important; }
+  .dp-kpi-value{ font-size:1.22rem !important; }
+  .dp-card { padding: 12px 12px !important; }
+  .main h3 { font-size: 1.06rem !important; }
   .stButton > button { min-height: 44px !important; }
+  /* Métricas Streamlit (evita cortar valores longos) */
+  [data-testid="stMetricLabel"] { font-size: 0.85rem !important; }
+  [data-testid="stMetricValue"] { font-size: 1.25rem !important; }
+  /* Dataframe: texto menor para caber colunas */
+  div[data-testid="stDataFrame"] { font-size: 0.9rem !important; }
 """
     # desktop (default)
     return """

@@ -2570,18 +2570,85 @@ def page_sala_gestao(settings, conn) -> None:
                     )
                 st.dataframe(ddf, use_container_width=True, hide_index=True)
 
-                st.markdown("### Potenciais oportunidades (alcance projetado >= 80)")
-                if "alcance_projetado_pct" in ddf.columns:
-                    s = pd.to_numeric(ddf["alcance_projetado_pct"], errors="coerce")
-                    opp = ddf[s >= 80].copy()
-                    if not opp.empty:
-                        st.dataframe(
-                            opp.sort_values("alcance_projetado_pct", ascending=False),
-                            use_container_width=True,
-                            hide_index=True,
-                        )
+                st.markdown("### Potenciais oportunidades (Alcance Projetado ≥ 80%)")
+                st.caption(
+                    "Lista baseada na **última base carregada**. Considera **Alcance Projetado** e, quando existir, "
+                    "**Fat. Projetado Acumulado / Meta** para calcular a falta para 100%."
+                )
+                if "alcance_projetado_pct" in ddf2.columns:
+                    alc_s = pd.to_numeric(ddf2.get("alcance_projetado_pct"), errors="coerce")
+                    base = ddf2.copy()
+                    base["alcance_projetado_pct"] = alc_s
+                    base = base[base["alcance_projetado_pct"].notna() & (base["alcance_projetado_pct"] >= 80)].copy()
+
+                    def _fmt_rs(x: object) -> str:
+                        try:
+                            v = float(x)  # type: ignore[arg-type]
+                        except Exception:
+                            return "—"
+                        return f"R$ {v:,.2f}"
+
+                    def _fmt_pct(x: object) -> str:
+                        try:
+                            v = float(x)  # type: ignore[arg-type]
+                        except Exception:
+                            return "—"
+                        return f"{v:,.2f}%"
+
+                    # falta para 100%: prioriza Fat.Proj.Acum / Meta; fallback no faturamento
+                    mm = pd.to_numeric(base.get("meta_faturamento"), errors="coerce") if "meta_faturamento" in base.columns else None
+                    proj = (
+                        pd.to_numeric(base.get("faturamento_projetado_acumulado"), errors="coerce")
+                        if "faturamento_projetado_acumulado" in base.columns
+                        else None
+                    )
+                    fat = pd.to_numeric(base.get("faturamento"), errors="coerce") if "faturamento" in base.columns else None
+
+                    if mm is not None and mm.notna().any():
+                        if proj is not None and proj.notna().any():
+                            base["falta_para_100"] = (mm - proj)
+                            base["base_calc"] = "proj"
+                        elif fat is not None and fat.notna().any():
+                            base["falta_para_100"] = (mm - fat)
+                            base["base_calc"] = "real"
+
+                    # Subconjuntos: perto de bater (80-100) e já passou de 100
+                    near = base[(base["alcance_projetado_pct"] < 100)].copy()
+                    over = base[(base["alcance_projetado_pct"] >= 100)].copy()
+
+                    if not near.empty:
+                        # Ordenar por menor falta (se existir), senão por maior alcance
+                        if "falta_para_100" in near.columns:
+                            near["_ord"] = pd.to_numeric(near["falta_para_100"], errors="coerce")
+                            near = near.sort_values(["_ord", "alcance_projetado_pct"], ascending=[True, False])
+                        else:
+                            near = near.sort_values("alcance_projetado_pct", ascending=False)
+                        st.markdown("**🟡 Quase lá (80% a 99,99%)**")
+                        for _, r in near.head(12).iterrows():
+                            dept = r.get("departamento") or "—"
+                            alc = r.get("alcance_projetado_pct")
+                            meta = r.get("meta_faturamento")
+                            proj_v = r.get("faturamento_projetado_acumulado") if "faturamento_projetado_acumulado" in near.columns else None
+                            fat_v = r.get("faturamento") if "faturamento" in near.columns else None
+                            falta = r.get("falta_para_100") if "falta_para_100" in near.columns else None
+                            base_calc = str(r.get("base_calc") or "")
+                            pill = "Proj." if base_calc == "proj" else ("Real" if base_calc == "real" else "—")
+
+                            st.markdown(
+                                f\"\"\"\n<div class=\"dp-card\" style=\"padding:14px 16px;margin-bottom:10px;\">\n  <div style=\"display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;\">\n    <div style=\"color:#E5E7EB;font-weight:900;font-size:1.02rem;\">{html.escape(str(dept))}</div>\n    <span class=\"dp-pill\" style=\"border-color:rgba(255,255,255,.12);\">Alc. Proj: <b>{html.escape(_fmt_pct(alc))}</b></span>\n  </div>\n  <div style=\"margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;color:#CBD5E1;\">\n    <div class=\"dp-pill\" style=\"background:rgba(255,255,255,.02);\">Meta: <b>{html.escape(_fmt_rs(meta))}</b></div>\n    {('<div class=\"dp-pill\" style=\"background:rgba(255,255,255,.02);\">Fat. Proj. Acum: <b>' + html.escape(_fmt_rs(proj_v)) + '</b></div>') if proj_v is not None else ''}\n    {('<div class=\"dp-pill\" style=\"background:rgba(255,255,255,.02);\">Faturamento: <b>' + html.escape(_fmt_rs(fat_v)) + '</b></div>') if (proj_v is None and fat_v is not None) else ''}\n    {('<div class=\"dp-pill\" style=\"background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.35);color:#FBBF24;\">Falta p/ 100% (' + html.escape(pill) + '): <b>' + html.escape(_fmt_rs(falta)) + '</b></div>') if falta is not None else ''}\n  </div>\n</div>\n\"\"\",\n                                unsafe_allow_html=True,\n                            )
                     else:
-                        st.caption("Nenhum departamento com alcance projetado >= 80.")
+                        st.caption("Nenhum departamento entre 80% e 100% de alcance projetado.")
+
+                    if not over.empty:
+                        over = over.sort_values("alcance_projetado_pct", ascending=False)
+                        st.markdown("**🟢 Meta já batida (≥ 100%)**")
+                        for _, r in over.head(8).iterrows():
+                            dept = r.get("departamento") or "—"
+                            alc = r.get("alcance_projetado_pct")
+                            st.markdown(
+                                f\"\"\"\n<div class=\"dp-card\" style=\"padding:12px 14px;margin-bottom:10px;\">\n  <div style=\"display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;\">\n    <div style=\"color:#E5E7EB;font-weight:850;\">{html.escape(str(dept))}</div>\n    <span class=\"dp-pill\" style=\"background:rgba(34,197,94,.14);border-color:rgba(34,197,94,.35);color:#6EE7B7;\">Alc. Proj: <b>{html.escape(_fmt_pct(alc))}</b></span>\n  </div>\n</div>\n\"\"\",\n                                unsafe_allow_html=True,\n                            )
+                    if base.empty:
+                        st.caption("Nenhum departamento com alcance projetado ≥ 80%.")
 
                 if st.button("💾 Salvar Departamentos (Sala de Gestão)", use_container_width=True):
                     payload = dict(dept_payload)
@@ -2665,6 +2732,17 @@ def main() -> None:
             "No **iPad**, use o perfil **Tablet** e, em tabelas largas, deslize horizontalmente. "
             "Paisagem costuma mostrar mais colunas sem cortar números."
         )
+        c_refresh1, c_refresh2 = st.columns([1, 1])
+        with c_refresh1:
+            if st.button("🔄 Atualizar (Refresh)", use_container_width=True, key="btn_refresh"):
+                st.rerun()
+        with c_refresh2:
+            if st.button("🧹 Limpar filtros UI", use_container_width=True, key="btn_clear_ui"):
+                # Mantém sessão/login e análise ativa; limpa só escolhas de interface.
+                for k in ("ui_profile", "proj_mode", "tab_main", "sg_provider"):
+                    if k in st.session_state:
+                        st.session_state.pop(k, None)
+                st.rerun()
         st.markdown("---")
         st.markdown("### 📌 Sessão")
         user = st.session_state.get("user") or {}
