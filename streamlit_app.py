@@ -3029,8 +3029,8 @@ def page_sala_gestao(settings, conn) -> None:
     cal = st.session_state.get("calendar_info") or {}
     dias_restantes = int(cal.get("dias_uteis_restantes") or 0)
 
-    tab_consol, tab_kpis, tab_evol, tab_vend, tab_dept, tab_radar = st.tabs(
-        ["Consolidado", "Projeção e KPIs", "Evolução dia a dia", "Vendedores", "Departamentos", "Radar (manual)"]
+    tab_consol, tab_kpis, tab_evol, tab_rel, tab_vend, tab_dept, tab_radar = st.tabs(
+        ["Consolidado", "Projeção e KPIs", "Evolução dia a dia", "Relatório executivo", "Vendedores", "Departamentos", "Radar (manual)"]
     )
 
     def _last_payload_of_kind(kind: str) -> dict | None:
@@ -3625,6 +3625,9 @@ def page_sala_gestao(settings, conn) -> None:
                 if df is None or df.empty:
                     st.info("Sem dados diários para plotar (verifique o arquivo).")
                 else:
+                    # deixa disponível para o relatório executivo
+                    st.session_state["sg_daily_df"] = df
+                    st.session_state["sg_daily_meta"] = res.meta
                     import plotly.express as px
 
                     title_suffix = ""
@@ -3729,6 +3732,167 @@ def page_sala_gestao(settings, conn) -> None:
             except Exception as e:
                 st.error("Falha ao ler o Excel para evolução diária.")
                 st.caption(str(e))
+
+    with tab_rel:
+        st.markdown("### Relatório executivo (auto)")
+        st.caption("Gera um texto no padrão de highlights, usando os dados do seu dashboard (sem precisar IA).")
+
+        # Base ativa (vendedores / totais)
+        active_id = st.session_state.get("active_analysis_id")
+        payload_base: dict | None = None
+        if active_id is not None:
+            r0 = get_analysis(conn, int(active_id), owner_user_id=owner_id, include_all=is_admin)
+            if r0:
+                try:
+                    payload_base = json.loads(r0.payload_json)
+                except Exception:
+                    payload_base = None
+
+        totais = (payload_base or {}).get("totais") if isinstance(payload_base, dict) else {}
+        if not isinstance(totais, dict):
+            totais = {}
+
+        fat_atual = float(totais.get("faturamento_total") or 0.0)
+        meta_total = float(totais.get("meta_total") or 0.0)
+        perc_meta = (fat_atual / meta_total * 100.0) if meta_total > 0 else None
+        falta_meta = max(0.0, meta_total - fat_atual) if meta_total > 0 else 0.0
+        falta_por_dia = (falta_meta / dias_restantes) if dias_restantes > 0 else None
+
+        # KPIs diários (últimos salvos)
+        prev = _last_payload_of_kind("sala_gestao_kpis") or {}
+        prev_k = prev.get("kpis") if isinstance(prev, dict) else {}
+        if not isinstance(prev_k, dict):
+            prev_k = {}
+
+        # Vendedores (faixas de alcance)
+        vend_counts = {"meta_batida": 0, "acima_80": 0, "abaixo_80": 0}
+        try:
+            if isinstance(payload_base, dict):
+                sellers = parse_sellers(payload_base)
+                results, _ = calcular_time(sellers) if sellers else ([], 0.0)
+                vend_df = pd.DataFrame([r.__dict__ for r in results]) if results else pd.DataFrame()
+                vend_df = _enrich_results_df_for_performance(vend_df, sellers)
+                if not vend_df.empty and "alcance_real_pct" in vend_df.columns:
+                    s = pd.to_numeric(vend_df["alcance_real_pct"], errors="coerce")
+                    vend_counts["meta_batida"] = int((s >= 100).sum())
+                    vend_counts["acima_80"] = int(((s >= 80) & (s < 100)).sum())
+                    vend_counts["abaixo_80"] = int((s < 80).sum())
+        except Exception:
+            pass
+
+        # Departamentos: últimos 2 salvos para comparativo
+        dept_prev = _last_payloads_of_kind("sala_gestao_departamentos", 2)
+        dept_today_df = None
+        dept_yday_df = None
+        try:
+            if len(dept_prev) >= 1 and isinstance(dept_prev[0], dict):
+                dept_today_df = pd.DataFrame(dept_prev[0].get("departamentos") or [])
+            if len(dept_prev) >= 2 and isinstance(dept_prev[1], dict):
+                dept_yday_df = pd.DataFrame(dept_prev[1].get("departamentos") or [])
+        except Exception:
+            dept_today_df = None
+            dept_yday_df = None
+
+        def _fmt_rs(v: object) -> str:
+            try:
+                return f"R$ {float(v):,.2f}"
+            except Exception:
+                return "—"
+
+        def _fmt_pct(v: object, digits: int = 1) -> str:
+            try:
+                return f"{float(v):.{digits}f}%"
+            except Exception:
+                return "—"
+
+        # Evolução diária (se já carregou o Excel nessa sessão)
+        daily = st.session_state.get("sg_daily_df")
+        daily_meta = st.session_state.get("sg_daily_meta") if isinstance(st.session_state.get("sg_daily_meta"), dict) else {}
+
+        daily_line = "—"
+        try:
+            if isinstance(daily, pd.DataFrame) and not daily.empty:
+                d = daily.copy()
+                fat_s = pd.to_numeric(d.get("faturamento"), errors="coerce").fillna(0.0)
+                nf_s = pd.to_numeric(d.get("nfs_emitidas"), errors="coerce").fillna(0.0)
+                cli_s = pd.to_numeric(d.get("clientes_atendidos"), errors="coerce").fillna(0.0)
+                best_day = int(d.loc[fat_s.idxmax(), "dia"]) if len(d) else None
+                worst_day = int(d.loc[fat_s.idxmin(), "dia"]) if len(d) else None
+                daily_line = (
+                    f"Evolução diária: média faturamento {_fmt_rs(float(fat_s.mean()))}, "
+                    f"média NFs {float(nf_s.mean()):.1f}, média atendidos {float(cli_s.mean()):.1f}. "
+                    f"Melhor dia: {best_day} | Pior dia: {worst_day}."
+                )
+        except Exception:
+            pass
+
+        mes_ref = str(daily_meta.get("mes_referencia") or "").strip()
+        head = f"## Relatório executivo — Sala de Gestão\n\n**Período**: {mes_ref or str((payload_base or {}).get('periodo') or '—')}\n"
+
+        sec1 = (
+            "### 1) Resultado vs Meta\n"
+            f"- **Faturamento (até agora)**: {_fmt_rs(fat_atual)}\n"
+            f"- **Meta do time**: {_fmt_rs(meta_total) if meta_total > 0 else '—'}\n"
+            f"- **% da meta**: {_fmt_pct(perc_meta) if perc_meta is not None else '—'}\n"
+            f"- **Gap p/ meta**: {_fmt_rs(falta_meta) if meta_total > 0 else '—'}\n"
+            f"- **Meta por dia útil (necessária)**: {_fmt_rs(falta_por_dia) if falta_por_dia is not None else '—'}\n"
+        )
+
+        sec2 = (
+            "### 2) Dia anterior (KPIs operacionais)\n"
+            f"- **Faturamento (dia anterior)**: {_fmt_rs(prev_k.get('faturamento_dia_anterior'))}\n"
+            f"- **NFs (dia anterior)**: {int(prev_k.get('nf_dia_anterior') or 0)}\n"
+            f"- **Clientes (dia anterior)**: {int(prev_k.get('clientes_dia_anterior') or 0)}\n"
+        )
+
+        sec3 = (
+            "### 3) Cadência (dia a dia)\n"
+            f"- {daily_line}\n"
+        )
+
+        sec4 = (
+            "### 4) Vendedores (execução)\n"
+            f"- **Meta batida (>=100%)**: {vend_counts.get('meta_batida', 0)}\n"
+            f"- **Alcance >=80%**: {vend_counts.get('acima_80', 0)}\n"
+            f"- **Alcance <80%**: {vend_counts.get('abaixo_80', 0)}\n"
+        )
+
+        sec5 = "### 5) Departamentos (movimento vs dia anterior)\n"
+        try:
+            if isinstance(dept_today_df, pd.DataFrame) and not dept_today_df.empty and isinstance(dept_yday_df, pd.DataFrame) and not dept_yday_df.empty:
+                a = dept_today_df.copy()
+                b = dept_yday_df.copy()
+                a["departamento"] = a.get("departamento").astype(str)
+                b["departamento"] = b.get("departamento").astype(str)
+                a = a.set_index("departamento")
+                b = b.set_index("departamento")
+                # delta de faturamento se existir
+                if "faturamento" in a.columns and "faturamento" in b.columns:
+                    da = pd.to_numeric(a["faturamento"], errors="coerce")
+                    db = pd.to_numeric(b["faturamento"], errors="coerce")
+                    d = (da - db).dropna().sort_values(ascending=False)
+                    top_up = d.head(3)
+                    top_down = d.tail(3)
+                    sec5 += "- **Top 3 alta (faturamento)**: " + ", ".join([f"{k} ({_fmt_rs(v)})" for k, v in top_up.items()]) + "\n"
+                    sec5 += "- **Top 3 queda (faturamento)**: " + ", ".join([f"{k} ({_fmt_rs(v)})" for k, v in top_down.items()]) + "\n"
+                else:
+                    sec5 += "- Sem coluna de faturamento para comparar.\n"
+            else:
+                sec5 += "- Para comparar, salve Departamentos em pelo menos 2 dias.\n"
+        except Exception:
+            sec5 += "- Não consegui montar o comparativo de departamentos.\n"
+
+        sec6 = (
+            "### 6) Próximos passos (direto ao ponto)\n"
+            "- **Cadência**: estabilizar clientes atendidos/dia para sustentar NFs e faturamento.\n"
+            "- **Qualidade**: recuperar ticket/mix se houver queda com base estável de clientes.\n"
+            "- **Foco**: atacar o maior gargalo do dia (volume, conversão, ou mix por departamento).\n"
+        )
+
+        report_md = "\n\n".join([head, sec1, sec2, sec3, sec4, sec5, sec6]).strip() + "\n"
+
+        st.text_area("Relatório (markdown)", value=report_md, height=520)
+        st.download_button("⬇️ Baixar relatório (.md)", data=report_md.encode("utf-8"), file_name="relatorio_sala_gestao.md", mime="text/markdown", use_container_width=True)
 
     with tab_vend:
         st.markdown("### Análise de vendedores")
