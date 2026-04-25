@@ -2143,12 +2143,20 @@ def page_projection(settings, conn) -> None:
     cal = st.session_state.get("calendar_info")
     default_total = int(cal["dias_uteis_total"]) if isinstance(cal, dict) and "dias_uteis_total" in cal else 22
     default_trab = int(cal["dias_uteis_trabalhados"]) if isinstance(cal, dict) and "dias_uteis_trabalhados" in cal else min(15, default_total)
+    default_rest = max(0, int(default_total) - int(default_trab))
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         dias_total = st.number_input("Total de dias úteis no mês", min_value=1, max_value=31, value=int(default_total))
     with col2:
-        dias_trab = st.number_input("Dias úteis trabalhados até agora", min_value=1, max_value=int(dias_total), value=min(int(default_trab), int(dias_total)))
+        dias_rest = st.number_input(
+            "Dias úteis restantes no mês",
+            min_value=0,
+            max_value=int(dias_total),
+            value=min(int(default_rest), int(dias_total)),
+            help="O app recalcula automaticamente os dias trabalhados = total - restantes.",
+        )
+        dias_trab = max(1, int(dias_total) - int(dias_rest))
     with col3:
         meta_faturamento = st.number_input("Meta de faturamento (R$)", min_value=0.0, max_value=1e9, value=0.0, step=1000.0, format="%.2f")
     with col4:
@@ -2433,6 +2441,19 @@ def page_projection(settings, conn) -> None:
             return f"R$ {float(v):,.2f}"
         except Exception:
             return "—"
+
+    def _fmt_money_with_meta_pct(v: object, meta_v: object) -> str:
+        try:
+            vv = float(v)
+        except Exception:
+            return "—"
+        try:
+            mm = float(meta_v)
+        except Exception:
+            mm = 0.0
+        if mm and mm > 0:
+            return f"R$ {vv:,.2f} ({(vv/mm)*100.0:.1f}%)"
+        return f"R$ {vv:,.2f}"
 
     def _fmt_pct(v: object, digits: int = 2) -> str:
         try:
@@ -2785,7 +2806,7 @@ def page_projection(settings, conn) -> None:
     with m4:
         _render_dual_kpi(
             "Projeção faturamento",
-            _fmt_money(proj.projecao_faturamento) if proj.projecao_faturamento is not None else "—",
+            _fmt_money_with_meta_pct(proj.projecao_faturamento, meta_eff_for_ideal) if proj.projecao_faturamento is not None else "—",
             (_delta_money_and_pct(proj.projecao_faturamento, prev_proj.projecao_faturamento) if prev_proj is not None else "→ R$ +0.00 (0.0%)"),
             _delta_vs(meta_eff_for_ideal, float(proj.projecao_faturamento), kind="money") if (meta_eff_for_ideal is not None and proj.projecao_faturamento is not None) else "—",
             help_prev="vs análise anterior",
