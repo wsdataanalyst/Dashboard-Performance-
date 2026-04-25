@@ -3140,39 +3140,86 @@ def page_sala_gestao(settings, conn) -> None:
                 return f"R$ {d:,.2f} ({pct:+.1f}%)"
             return f"{d:,.0f} ({pct:+.1f}%)"
 
+        import html as _html
+        import re as _re
+
+        def _sg_delta_style(delta_text: str | None, *, inverse: bool) -> str:
+            if not delta_text or str(delta_text).strip() in {"—", "-"}:
+                return "color:#94a3b8;font-weight:650;"
+            s = str(delta_text).strip()
+            m = _re.search(r"([+-])\s*\d", s)
+            sign = m.group(1) if m else None
+            if sign is None:
+                return "color:#94a3b8;font-weight:650;"
+            is_pos = sign == "+"
+            good = (not inverse and is_pos) or (inverse and not is_pos)
+            return ("color:#22c55e;font-weight:800;" if good else "color:#fb7185;font-weight:800;")
+
+        def _sg_kpi_card(title: str, value: str, *, icon: str, accent: str, delta: str | None = None, inverse: bool = False) -> None:
+            d = delta or "—"
+            st.markdown(
+                f"""
+<div class="dp-card" style="
+  padding:12px 12px;
+  border-color: rgba(59,130,246,.18);
+  background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.18), transparent 60%),
+              radial-gradient(900px 220px at 85% 10%, rgba(110,231,183,.12), transparent 55%),
+              linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
+">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+    <div class="dp-kpi-label">{_html.escape(title)}</div>
+    <div style="
+      width:28px;height:28px;border-radius:10px;
+      display:flex;align-items:center;justify-content:center;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.10);
+      font-size: 0.95rem;
+      color: {accent};
+    ">{_html.escape(icon)}</div>
+  </div>
+  <div class="dp-kpi-value" style="font-size:1.35rem;color:{accent};text-shadow:0 0 24px rgba(59,130,246,.18);">{_html.escape(value)}</div>
+  <div style="margin-top:8px;font-size:0.84rem;{_sg_delta_style(d, inverse=inverse)}">{_html.escape(d)}</div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric(
-            "Faturamento (até agora)",
-            f"R$ {fat_atual:,.2f}",
-            delta=_fmt_delta_with_pct(
-                (fat_atual - prev_fat_total) if isinstance(prev_fat_total, (int, float)) else None,
-                prev_fat_total if isinstance(prev_fat_total, (int, float)) else None,
-                is_money=True,
-            ),
-        )
-        c2.metric("Meta (time)", f"R$ {meta_total:,.2f}" if meta_total > 0 else "—")
-        c3.metric(
-            "% da meta",
-            f"{perc_meta:.1f}%" if perc_meta is not None else "—",
-        )
-        c4.metric(
-            "Falta p/ meta",
-            f"R$ {falta_meta:,.2f}" if meta_total > 0 else "—",
-        )
+        with c1:
+            _sg_kpi_card(
+                "Faturamento (até agora)",
+                f"R$ {fat_atual:,.2f}",
+                icon="💰",
+                accent="#6EE7B7",
+                delta=_fmt_delta_with_pct(
+                    (fat_atual - prev_fat_total) if isinstance(prev_fat_total, (int, float)) else None,
+                    prev_fat_total if isinstance(prev_fat_total, (int, float)) else None,
+                    is_money=True,
+                ),
+            )
+        with c2:
+            _sg_kpi_card("Meta (time)", f"R$ {meta_total:,.2f}" if meta_total > 0 else "—", icon="🎯", accent="#93c5fd", delta=None)
+        with c3:
+            _sg_kpi_card("% da meta", f"{perc_meta:.1f}%" if perc_meta is not None else "—", icon="📈", accent="#FBBF24", delta=None)
+        with c4:
+            _sg_kpi_card("Falta p/ meta", f"R$ {falta_meta:,.2f}" if meta_total > 0 else "—", icon="🧾", accent="#fb7185", delta=None)
 
         k0, k1, k2, k3 = st.columns(4)
-        k0.metric(
-            "Meta por dia útil (necessária)",
-            f"R$ {falta_por_dia:,.2f}" if falta_por_dia is not None else "—",
-            delta=_fmt_delta_with_pct(
-                (falta_por_dia - prev_falta_por_dia)
-                if (falta_por_dia is not None and isinstance(prev_falta_por_dia, (int, float)))
-                else None,
-                prev_falta_por_dia if isinstance(prev_falta_por_dia, (int, float)) else None,
-                is_money=True,
-            ),
-            delta_color="inverse",
-        )
+        with k0:
+            _sg_kpi_card(
+                "Meta por dia útil (necessária)",
+                f"R$ {falta_por_dia:,.2f}" if falta_por_dia is not None else "—",
+                icon="🗓",
+                accent="#93c5fd",
+                delta=_fmt_delta_with_pct(
+                    (falta_por_dia - prev_falta_por_dia)
+                    if (falta_por_dia is not None and isinstance(prev_falta_por_dia, (int, float)))
+                    else None,
+                    prev_falta_por_dia if isinstance(prev_falta_por_dia, (int, float)) else None,
+                    is_money=True,
+                ),
+                inverse=True,
+            )
         fat_dia_ant = prev0_k.get("faturamento_dia_anterior")
         nf_dia_ant = prev0_k.get("nf_dia_anterior")
         cli_dia_ant = prev0_k.get("clientes_dia_anterior")
@@ -3185,33 +3232,42 @@ def page_sala_gestao(settings, conn) -> None:
         prev_cli_dia_ant = prev1_k.get("clientes_dia_anterior")
         prev_marg_hoje_pct = prev1_k.get("margem_hoje_pct")
 
-        k1.metric(
-            "Faturamento (dia anterior)",
-            (f"R$ {float(fat_dia_ant or 0.0):,.2f}" if fat_dia_ant is not None else "—"),
-            delta=_fmt_delta_with_pct(
-                (float(fat_dia_ant) - float(prev_fat_dia_ant)) if (fat_dia_ant is not None and prev_fat_dia_ant is not None) else None,
-                float(prev_fat_dia_ant) if prev_fat_dia_ant is not None else None,
-                is_money=True,
-            ),
-        )
-        k2.metric(
-            "NFs (dia anterior)",
-            int(nf_dia_ant or 0),
-            delta=_fmt_delta_with_pct(
-                (float(int(nf_dia_ant) - int(prev_nf_dia_ant))) if (nf_dia_ant is not None and prev_nf_dia_ant is not None) else None,
-                float(int(prev_nf_dia_ant)) if prev_nf_dia_ant is not None else None,
-                is_money=False,
-            ),
-        )
-        k3.metric(
-            "Clientes (dia anterior)",
-            int(cli_dia_ant or 0),
-            delta=_fmt_delta_with_pct(
-                (float(int(cli_dia_ant) - int(prev_cli_dia_ant))) if (cli_dia_ant is not None and prev_cli_dia_ant is not None) else None,
-                float(int(prev_cli_dia_ant)) if prev_cli_dia_ant is not None else None,
-                is_money=False,
-            ),
-        )
+        with k1:
+            _sg_kpi_card(
+                "Faturamento (dia anterior)",
+                (f"R$ {float(fat_dia_ant or 0.0):,.2f}" if fat_dia_ant is not None else "—"),
+                icon="🧾",
+                accent="#6EE7B7",
+                delta=_fmt_delta_with_pct(
+                    (float(fat_dia_ant) - float(prev_fat_dia_ant)) if (fat_dia_ant is not None and prev_fat_dia_ant is not None) else None,
+                    float(prev_fat_dia_ant) if prev_fat_dia_ant is not None else None,
+                    is_money=True,
+                ),
+            )
+        with k2:
+            _sg_kpi_card(
+                "NFs (dia anterior)",
+                str(int(nf_dia_ant or 0)),
+                icon="🧾",
+                accent="#93c5fd",
+                delta=_fmt_delta_with_pct(
+                    (float(int(nf_dia_ant) - int(prev_nf_dia_ant))) if (nf_dia_ant is not None and prev_nf_dia_ant is not None) else None,
+                    float(int(prev_nf_dia_ant)) if prev_nf_dia_ant is not None else None,
+                    is_money=False,
+                ),
+            )
+        with k3:
+            _sg_kpi_card(
+                "Clientes (dia anterior)",
+                str(int(cli_dia_ant or 0)),
+                icon="👥",
+                accent="#C4B5FD",
+                delta=_fmt_delta_with_pct(
+                    (float(int(cli_dia_ant) - int(prev_cli_dia_ant))) if (cli_dia_ant is not None and prev_cli_dia_ant is not None) else None,
+                    float(int(prev_cli_dia_ant)) if prev_cli_dia_ant is not None else None,
+                    is_money=False,
+                ),
+            )
         # Margem média (replica o "Performance > Visão Geral")
         margem_media = None
         try:
@@ -3271,13 +3327,18 @@ def page_sala_gestao(settings, conn) -> None:
             return f"{diff_pp:+.1f} pp ({rel:+.1f}%)"
 
         k4, k5, k6, k7 = st.columns(4)
-        k4.metric("Acumulado NFs", int(prev0_k.get("nf_acumulado") or 0))
-        k5.metric("Acumulado Clientes", int(prev0_k.get("clientes_acumulado") or 0))
-        k6.metric(
-            "Margem média (time)",
-            f"{margem_media:.1f}%" if margem_media is not None else "—",
-            delta=_fmt_delta_pp_and_pct(margem_media, prev_margem_media),
-        )
+        with k4:
+            _sg_kpi_card("Acumulado NFs", str(int(prev0_k.get("nf_acumulado") or 0)), icon="📦", accent="#93c5fd", delta=None)
+        with k5:
+            _sg_kpi_card("Acumulado Clientes", str(int(prev0_k.get("clientes_acumulado") or 0)), icon="👥", accent="#C4B5FD", delta=None)
+        with k6:
+            _sg_kpi_card(
+                "Margem média (time)",
+                f"{margem_media:.1f}%" if margem_media is not None else "—",
+                icon="📊",
+                accent="#A7F3D0",
+                delta=_fmt_delta_pp_and_pct(margem_media, prev_margem_media),
+            )
         k7.empty()
 
         # Vendedores (alcance)
