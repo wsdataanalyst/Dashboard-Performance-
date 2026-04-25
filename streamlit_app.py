@@ -4005,6 +4005,19 @@ def page_sala_gestao(settings, conn) -> None:
                 pass
             return out
 
+        def _break_long_words(s: str, max_len: int = 60) -> str:
+            """
+            Evita erro do FPDF quando existe "palavra" maior que a largura útil.
+            Insere quebras suaves em sequências longas sem espaços.
+            """
+            import re
+
+            def _chunk(m: re.Match) -> str:
+                w = m.group(0)
+                return " ".join(w[i : i + max_len] for i in range(0, len(w), max_len))
+
+            return re.sub(r"\S{" + str(max_len + 1) + r",}", _chunk, s)
+
         def _fig_to_png_bytes(fig_obj: object) -> bytes | None:
             try:
                 # plotly Figure
@@ -4020,12 +4033,13 @@ def page_sala_gestao(settings, conn) -> None:
             pdf = FPDF(format="A4")
             pdf.set_auto_page_break(auto=True, margin=12)
             pdf.add_page()
-            pdf.set_font("Helvetica", size=12)
+            pdf.set_font("Helvetica", size=11)
             for line in _strip_md(text_md).splitlines():
                 if not line.strip():
                     pdf.ln(2)
                     continue
-                pdf.multi_cell(0, 6, _pdf_safe_text(line))
+                safe = _break_long_words(_pdf_safe_text(line))
+                pdf.multi_cell(0, 6, safe)
 
             # insere gráficos em páginas separadas (quando existirem)
             for title, fig_obj in fig_map.items():
@@ -4033,15 +4047,15 @@ def page_sala_gestao(settings, conn) -> None:
                 if not png:
                     continue
                 pdf.add_page()
-                pdf.set_font("Helvetica", size=12)
-                pdf.multi_cell(0, 7, _pdf_safe_text(f"Gráfico: {title}"))
+                pdf.set_font("Helvetica", size=11)
+                pdf.multi_cell(0, 7, _break_long_words(_pdf_safe_text(f"Gráfico: {title}")))
                 pdf.ln(2)
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                     tmp.write(png)
                     tmp_path = tmp.name
                 try:
-                    # largura útil A4 ~ 190mm
-                    pdf.image(tmp_path, x=10, w=190)
+                    # largura útil A4 = 210mm - 2*margem (12) = 186mm
+                    pdf.image(tmp_path, x=12, w=186)
                 finally:
                     try:
                         Path(tmp_path).unlink(missing_ok=True)
