@@ -2001,7 +2001,7 @@ def page_projection(settings, conn) -> None:
             help_prev="vs análise anterior",
             help_ideal="vs ideal p/ meta",
         )
-    k3.metric("Dias restantes", f"{proj.dias_restantes}")
+    k3.empty()
     with k4:
         _render_dual_kpi(
             "Conversão proj.",
