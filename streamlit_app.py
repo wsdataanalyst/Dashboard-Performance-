@@ -2524,14 +2524,66 @@ def page_projection(settings, conn) -> None:
     # Move para o topo: "O que falta para bater a meta"
     if proj.meta_faturamento is not None and proj.meta_faturamento > 0:
         st.markdown("### O que falta para bater a meta")
+        def _render_modern_kpi(title: str, value: str, *, icon: str, accent: str, subtitle: str | None = None) -> None:
+            sub = subtitle or ""
+            st.markdown(
+                f"""
+<div class="dp-card" style="
+  padding:14px 14px;
+  min-height: 142px;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+    <div class="dp-kpi-label">{_html.escape(title)}</div>
+    <div style="
+      width:28px;height:28px;border-radius:10px;
+      display:flex;align-items:center;justify-content:center;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.10);
+      font-size: 0.95rem;
+      color: {accent};
+    ">{_html.escape(icon)}</div>
+  </div>
+  <div class="dp-kpi-value" style="font-size:1.35rem;color:{accent};text-shadow:0 0 24px rgba(59,130,246,.18);">{_html.escape(value)}</div>
+  <div style="margin-top:8px;color:#94a3b8;font-weight:650;font-size:0.84rem;">{_html.escape(sub) if sub else ""}</div>
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+
         x1, x2, x3, x4 = st.columns(4)
-        x1.metric("Meta faturamento", f"R$ {proj.meta_faturamento:,.2f}")
-        x2.metric("Falta (R$)", f"R$ {proj.faturamento_faltando:,.2f}" if proj.faturamento_faltando is not None else "—")
-        x3.metric(
-            "NFs/dia necessárias (mesmo ticket)",
-            f"{proj.nfs_por_dia_necessarias}" if proj.nfs_por_dia_necessarias is not None else "—",
-        )
-        x4.metric("Status", proj.status)
+        with x1:
+            _render_modern_kpi("Meta faturamento", f"R$ {proj.meta_faturamento:,.2f}", icon="🎯", accent="#93c5fd")
+        with x2:
+            _render_modern_kpi(
+                "Falta (R$)",
+                f"R$ {proj.faturamento_faltando:,.2f}" if proj.faturamento_faltando is not None else "—",
+                icon="🧾",
+                accent="#fb7185",
+            )
+        with x3:
+            _render_modern_kpi(
+                "NFs/dia necessárias",
+                f"{proj.nfs_por_dia_necessarias:.2f}" if proj.nfs_por_dia_necessarias is not None else "—",
+                icon="📦",
+                accent="#C4B5FD",
+                subtitle="mesmo ticket",
+            )
+        with x4:
+            status_txt = str(proj.status or "—")
+            status_lower = status_txt.lower()
+            if "ating" in status_lower or "meta" in status_lower and "próximo" not in status_lower and "proximo" not in status_lower:
+                status_accent = "#6EE7B7"
+                status_icon = "✅"
+            elif "próximo" in status_lower or "proximo" in status_lower:
+                status_accent = "#FBBF24"
+                status_icon = "⚠️"
+            else:
+                status_accent = "#fb7185"
+                status_icon = "⛔"
+            _render_modern_kpi("Status", status_txt, icon=status_icon, accent=status_accent)
         if proj.ticket_necessario_com_mesmo_ritmo is not None:
             st.caption(f"Se mantiver o mesmo ritmo de NFs/dia, o ticket médio necessário seria ~ **R$ {proj.ticket_necessario_com_mesmo_ritmo:,.2f}**.")
 
@@ -2621,12 +2673,28 @@ def page_projection(settings, conn) -> None:
         pctq_txt = f"{float(pct_qtd):.2f}%" if pct_qtd is not None and not pd.isna(pct_qtd) else "—"
         st.markdown(
             f"""
-<div class="dp-card" style="padding:14px 14px;">
-  <div class="dp-kpi-label">Desconto (% aplicado)</div>
+<div class="dp-card" style="
+  padding:14px 14px;
+  min-height: 176px;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+    <div class="dp-kpi-label">Desconto (% aplicado)</div>
+    <div style="
+      width:28px;height:28px;border-radius:10px;
+      display:flex;align-items:center;justify-content:center;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.10);
+      font-size: 0.95rem;
+      color: #93c5fd;
+    ">🏷</div>
+  </div>
   <div class="dp-kpi-value">{pct_txt}</div>
   <div style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;">
     <span class="dp-pill" style="background:rgba(255,255,255,.02);">Valor: <b>{val_txt}</b></span>
-    <span class="dp-pill" style="background:rgba(255,255,255,.02);">Qtd desconto: <b>{qtd_txt}</b></span>
+    <span class="dp-pill" style="background:rgba(255,255,255,.02);">Qtd desc.: <b>{qtd_txt}</b></span>
     <span class="dp-pill" style="background:rgba(255,255,255,.02);">% qtd: <b>{pctq_txt}</b></span>
   </div>
 </div>
