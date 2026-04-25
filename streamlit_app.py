@@ -3732,6 +3732,141 @@ def page_sala_gestao(settings, conn) -> None:
                     if isinstance(res.meta, dict) and res.meta.get("mes_referencia"):
                         title_suffix = f" — {res.meta.get('mes_referencia')}"
 
+                    # Resumo diário (inclui sábado) + seletor de dia
+                    try:
+                        import datetime as _dt
+                        import re as _re
+
+                        def _parse_month_year(mes_ref: str | None) -> tuple[int, int]:
+                            today = _dt.date.today()
+                            if not mes_ref:
+                                return today.year, today.month
+                            s = str(mes_ref).strip().lower()
+                            # tenta: "04/2026", "4/26", "2026-04"
+                            m = _re.search(r"(?<!\d)(\d{1,2})\s*[/\-]\s*(\d{2,4})(?!\d)", s)
+                            if m:
+                                mm = int(m.group(1))
+                                yy = int(m.group(2))
+                                if yy < 100:
+                                    yy += 2000
+                                if 1 <= mm <= 12:
+                                    return yy, mm
+                            m2 = _re.search(r"(?<!\d)(\d{4})\s*[/\-]\s*(\d{1,2})(?!\d)", s)
+                            if m2:
+                                yy = int(m2.group(1))
+                                mm = int(m2.group(2))
+                                if 1 <= mm <= 12:
+                                    return yy, mm
+                            # tenta: "abril/2026" etc
+                            months = {
+                                "jan": 1,
+                                "janeiro": 1,
+                                "fev": 2,
+                                "fevereiro": 2,
+                                "mar": 3,
+                                "marco": 3,
+                                "março": 3,
+                                "abr": 4,
+                                "abril": 4,
+                                "mai": 5,
+                                "maio": 5,
+                                "jun": 6,
+                                "junho": 6,
+                                "jul": 7,
+                                "julho": 7,
+                                "ago": 8,
+                                "agosto": 8,
+                                "set": 9,
+                                "setembro": 9,
+                                "out": 10,
+                                "outubro": 10,
+                                "nov": 11,
+                                "novembro": 11,
+                                "dez": 12,
+                                "dezembro": 12,
+                            }
+                            yy = None
+                            my = _re.search(r"(?<!\d)(\d{4})(?!\d)", s)
+                            if my:
+                                yy = int(my.group(1))
+                            for k, v in months.items():
+                                if k in s:
+                                    return (yy or today.year), v
+                            return today.year, today.month
+
+                        yy, mm = _parse_month_year((res.meta or {}).get("mes_referencia") if isinstance(res.meta, dict) else None)
+                        d0 = df.copy()
+                        d0 = d0.sort_values("dia").reset_index(drop=True)
+                        fat_s = pd.to_numeric(d0.get("faturamento"), errors="coerce").fillna(0.0)
+                        nf_s = pd.to_numeric(d0.get("nfs_emitidas"), errors="coerce").fillna(0.0)
+                        cli_s = pd.to_numeric(d0.get("clientes_atendidos"), errors="coerce").fillna(0.0)
+
+                        # último dia com movimento (prioriza faturamento; fallback volume)
+                        move = (fat_s > 0) | (nf_s > 0) | (cli_s > 0)
+                        last_move_day = int(d0.loc[move, "dia"].iloc[-1]) if move.any() else int(d0["dia"].max())
+
+                        # regra prática: segunda-feira sugere o sábado/último movimento automaticamente
+                        today = _dt.date.today()
+                        default_day = last_move_day if today.weekday() == 0 else int(d0["dia"].max())
+
+                        # opções com dia da semana (quando conseguimos inferir mês/ano)
+                        wd_short = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+                        day_values = [int(x) for x in d0["dia"].tolist()]
+                        labels = []
+                        for dd in day_values:
+                            try:
+                                wd = _dt.date(int(yy), int(mm), int(dd)).weekday()
+                                labels.append(f"Dia {dd:02d} ({wd_short[wd]})")
+                            except Exception:
+                                labels.append(f"Dia {dd:02d}")
+
+                        label_to_day = {labels[i]: day_values[i] for i in range(len(labels))}
+                        default_label = next((lab for lab, dd in label_to_day.items() if dd == default_day), labels[-1] if labels else None)
+
+                        st.markdown("#### Fechamento diário (inclui sábado)")
+                        cL, cR = st.columns([1.35, 1])
+                        with cL:
+                            sel_label = st.selectbox(
+                                "Selecione o dia para análise",
+                                options=labels,
+                                index=(labels.index(default_label) if (default_label in labels) else max(0, len(labels) - 1)),
+                                help="Dica: na segunda-feira o app sugere automaticamente o último dia com movimento (geralmente sábado).",
+                                key="sg_daily_selected_label",
+                            )
+                        with cR:
+                            st.caption(f"**Último dia com movimento**: {last_move_day:02d}")
+
+                        sel_day = int(label_to_day.get(sel_label) or default_day)
+                        row = d0[d0["dia"] == sel_day].head(1)
+                        fat_v = float(pd.to_numeric(row["faturamento"], errors="coerce").fillna(0.0).iloc[0]) if not row.empty else 0.0
+                        nf_v = int(pd.to_numeric(row["nfs_emitidas"], errors="coerce").fillna(0).iloc[0]) if not row.empty else 0
+                        cli_v = int(pd.to_numeric(row["clientes_atendidos"], errors="coerce").fillna(0).iloc[0]) if not row.empty else 0
+
+                        a1, a2, a3, a4 = st.columns(4)
+                        with a1:
+                            _sg_kpi_card("Dia selecionado", f"{sel_day:02d}", icon="🗓️", accent="#93c5fd", delta=None)
+                        with a2:
+                            _sg_kpi_card("Faturamento (dia)", f"R$ {fat_v:,.2f}", icon="💰", accent="#6EE7B7", delta=None)
+                        with a3:
+                            _sg_kpi_card("NFS (dia)", f"{nf_v:d}", icon="📦", accent="#C4B5FD", delta=None)
+                        with a4:
+                            _sg_kpi_card("Atendidos (dia)", f"{cli_v:d}", icon="👥", accent="#FBBF24", delta=None)
+
+                        # destaque explícito para sábado quando houver movimento nele
+                        try:
+                            d0["_weekday"] = d0["dia"].apply(lambda dd: _dt.date(int(yy), int(mm), int(dd)).weekday())
+                            sat = d0[(d0["_weekday"] == 5) & ((pd.to_numeric(d0["faturamento"], errors="coerce").fillna(0.0) > 0.0) | (pd.to_numeric(d0["nfs_emitidas"], errors="coerce").fillna(0) > 0) | (pd.to_numeric(d0["clientes_atendidos"], errors="coerce").fillna(0) > 0))]
+                            if not sat.empty:
+                                sat_last = sat.sort_values("dia").iloc[-1]
+                                st.info(
+                                    f"Existe **movimento no sábado** (dia {int(sat_last['dia']):02d}): "
+                                    f"R$ {float(sat_last['faturamento']):,.2f} | NFS {int(sat_last['nfs_emitidas'])} | Atendidos {int(sat_last['clientes_atendidos'])}."
+                                )
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+
                     avg_fat = float(pd.to_numeric(df.get("faturamento"), errors="coerce").fillna(0).mean())
                     avg_nf = float(pd.to_numeric(df.get("nfs_emitidas"), errors="coerce").fillna(0).mean())
                     avg_cli = float(pd.to_numeric(df.get("clientes_atendidos"), errors="coerce").fillna(0).mean())
