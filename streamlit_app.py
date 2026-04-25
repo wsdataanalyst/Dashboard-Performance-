@@ -2400,6 +2400,7 @@ def page_sala_gestao(settings, conn) -> None:
         meta_total = float(totais.get("meta_total") or 0.0)
         falta_meta = max(0.0, meta_total - fat_atual) if meta_total > 0 else 0.0
         falta_por_dia = (falta_meta / dias_restantes) if dias_restantes > 0 else None
+        perc_meta = (fat_atual / meta_total * 100.0) if meta_total > 0 else None
 
         # Comparativos (setas) — vs último registro salvo de KPIs (que carrega um snapshot de totais)
         prevs_kpis = _last_payloads_of_kind("sala_gestao_kpis", 2)
@@ -2424,6 +2425,11 @@ def page_sala_gestao(settings, conn) -> None:
         )
         prev_falta_por_dia = (
             (prev_falta_meta / dias_restantes) if (prev_falta_meta is not None and dias_restantes > 0) else None
+        )
+        prev_perc_meta = (
+            (float(prev_fat_total) / float(prev_meta_total) * 100.0)
+            if (prev_fat_total is not None and prev_meta_total is not None and prev_meta_total > 0)
+            else None
         )
 
         def _fmt_delta_with_pct(delta: float | None, prev_val: float | None, is_money: bool) -> str | None:
@@ -2453,6 +2459,11 @@ def page_sala_gestao(settings, conn) -> None:
         )
         c2.metric("Meta (time)", f"R$ {meta_total:,.2f}" if meta_total > 0 else "—")
         c3.metric(
+            "% da meta",
+            f"{perc_meta:.1f}%" if perc_meta is not None else "—",
+            delta=(f"{(perc_meta - prev_perc_meta):+.1f} pp" if (perc_meta is not None and prev_perc_meta is not None) else None),
+        )
+        c4.metric(
             "Falta p/ meta",
             f"R$ {falta_meta:,.2f}" if meta_total > 0 else "—",
             delta=_fmt_delta_with_pct(
@@ -2462,8 +2473,10 @@ def page_sala_gestao(settings, conn) -> None:
             ),
             delta_color="inverse",
         )
-        c4.metric(
-            "Falta por dia útil",
+
+        k0, k1, k2, k3 = st.columns(4)
+        k0.metric(
+            "Meta por dia útil (necessária)",
             f"R$ {falta_por_dia:,.2f}" if falta_por_dia is not None else "—",
             delta=_fmt_delta_with_pct(
                 (falta_por_dia - prev_falta_por_dia)
@@ -2474,8 +2487,6 @@ def page_sala_gestao(settings, conn) -> None:
             ),
             delta_color="inverse",
         )
-
-        k1, k2, k3, k4 = st.columns(4)
         fat_dia_ant = prev0_k.get("faturamento_dia_anterior")
         nf_dia_ant = prev0_k.get("nf_dia_anterior")
         cli_dia_ant = prev0_k.get("clientes_dia_anterior")
@@ -2515,37 +2526,28 @@ def page_sala_gestao(settings, conn) -> None:
                 is_money=False,
             ),
         )
+        # Margem média (replica o "Performance > Visão Geral")
+        margem_media = None
+        try:
+            if isinstance(payload_base, dict):
+                sellers_tmp = parse_sellers(payload_base)
+                results_tmp, _ = calcular_time(sellers_tmp) if sellers_tmp else ([], 0.0)
+                if results_tmp:
+                    df_tmp = pd.DataFrame([r.__dict__ for r in results_tmp])
+                    stats_tmp = _team_stats(df_tmp)
+                    margem_media = float(stats_tmp.get("media_margem")) if stats_tmp.get("media_margem") is not None else None
+        except Exception:
+            margem_media = None
+
+        k4, k5, k6, k7 = st.columns(4)
+        k4.metric("Acumulado NFs", int(prev0_k.get("nf_acumulado") or 0))
+        k5.metric("Acumulado Clientes", int(prev0_k.get("clientes_acumulado") or 0))
+        k6.metric("Margem média (time)", f"{margem_media:.1f}%" if margem_media is not None else "—")
         # Margem: indicador principal = margem hoje; delta = hoje vs ontem (já existia)
-        k4.metric(
+        k7.metric(
             "Margem (hoje vs ontem)",
             (f"{float(marg_hoje_pct or 0.0):.1f}%" if marg_hoje_pct is not None else "—"),
             delta=(f"{round(float(marg_hoje_pct) - float(marg_ontem_pct), 1):+.1f} pp" if (marg_hoje_pct is not None and marg_ontem_pct is not None) else None),
-        )
-
-        k5, k6, k7, k8 = st.columns(4)
-        k5.metric("Acumulado NFs", int(prev0_k.get("nf_acumulado") or 0))
-        k6.metric("Acumulado Clientes", int(prev0_k.get("clientes_acumulado") or 0))
-        k7.metric(
-            "Meta por dia útil (necessária)",
-            f"R$ {falta_por_dia:,.2f}" if falta_por_dia is not None else "—",
-            delta=_fmt_delta_with_pct(
-                (falta_por_dia - prev_falta_por_dia)
-                if (falta_por_dia is not None and isinstance(prev_falta_por_dia, (int, float)))
-                else None,
-                prev_falta_por_dia if isinstance(prev_falta_por_dia, (int, float)) else None,
-                is_money=True,
-            ),
-            delta_color="inverse",
-        )
-        k8.metric(
-            "Falta p/ meta",
-            f"R$ {falta_meta:,.2f}" if meta_total > 0 else "—",
-            delta=_fmt_delta_with_pct(
-                (falta_meta - prev_falta_meta) if isinstance(prev_falta_meta, (int, float)) else None,
-                prev_falta_meta if isinstance(prev_falta_meta, (int, float)) else None,
-                is_money=True,
-            ),
-            delta_color="inverse",
         )
 
         # Vendedores (alcance)
