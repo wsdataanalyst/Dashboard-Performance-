@@ -3732,6 +3732,8 @@ def page_sala_gestao(settings, conn) -> None:
                     if isinstance(res.meta, dict) and res.meta.get("mes_referencia"):
                         title_suffix = f" — {res.meta.get('mes_referencia')}"
 
+                    df_plot = df
+
                     # Resumo diário (inclui sábado) + seletor de dia
                     try:
                         import datetime as _dt
@@ -3855,24 +3857,79 @@ def page_sala_gestao(settings, conn) -> None:
                         # destaque explícito para sábado quando houver movimento nele
                         try:
                             d0["_weekday"] = d0["dia"].apply(lambda dd: _dt.date(int(yy), int(mm), int(dd)).weekday())
+                            # gráficos não precisam contar sábado (remove sábado da visão dos gráficos/tabela)
+                            df_plot = d0[d0["_weekday"] != 5].drop(columns=["_weekday"], errors="ignore").copy()
+
                             sat = d0[(d0["_weekday"] == 5) & ((pd.to_numeric(d0["faturamento"], errors="coerce").fillna(0.0) > 0.0) | (pd.to_numeric(d0["nfs_emitidas"], errors="coerce").fillna(0) > 0) | (pd.to_numeric(d0["clientes_atendidos"], errors="coerce").fillna(0) > 0))]
                             if not sat.empty:
                                 sat_last = sat.sort_values("dia").iloc[-1]
+                                # sexta mais recente antes desse sábado (se existir)
+                                fri = d0[(d0["_weekday"] == 4) & (d0["dia"] < int(sat_last["dia"]))].sort_values("dia")
+                                fri_last = fri.iloc[-1] if not fri.empty else None
+
+                                sat_f = float(pd.to_numeric(sat_last.get("faturamento"), errors="coerce") or 0.0)
+                                sat_nf = int(pd.to_numeric(sat_last.get("nfs_emitidas"), errors="coerce") or 0)
+                                sat_cli = int(pd.to_numeric(sat_last.get("clientes_atendidos"), errors="coerce") or 0)
+
+                                fri_f = float(pd.to_numeric(fri_last.get("faturamento"), errors="coerce") or 0.0) if fri_last is not None else 0.0
+                                fri_nf = int(pd.to_numeric(fri_last.get("nfs_emitidas"), errors="coerce") or 0) if fri_last is not None else 0
+                                fri_cli = int(pd.to_numeric(fri_last.get("clientes_atendidos"), errors="coerce") or 0) if fri_last is not None else 0
+                                fri_day = int(fri_last.get("dia")) if fri_last is not None else None
+
+                                total_f = fri_f + sat_f
+                                total_nf = fri_nf + sat_nf
+                                total_cli = fri_cli + sat_cli
+
                                 st.info(
-                                    f"Existe **movimento no sábado** (dia {int(sat_last['dia']):02d}): "
-                                    f"R$ {float(sat_last['faturamento']):,.2f} | NFS {int(sat_last['nfs_emitidas'])} | Atendidos {int(sat_last['clientes_atendidos'])}."
+                                    (
+                                        f"Existe **movimento no sábado** (dia {int(sat_last['dia']):02d}): "
+                                        f"R$ {sat_f:,.2f} | NFS {sat_nf} | Atendidos {sat_cli}. "
+                                        + (
+                                            f"**Sexta** (dia {fri_day:02d}): R$ {fri_f:,.2f} | NFS {fri_nf} | Atendidos {fri_cli}. "
+                                            if fri_day is not None
+                                            else ""
+                                        )
+                                        + f"**Total Sex+Sáb**: R$ {total_f:,.2f} | NFS {total_nf} | Atendidos {total_cli}."
+                                    )
                                 )
+
+                                # cards adicionais para leitura rápida (faturamento + volumes)
+                                b1, b2, b3 = st.columns(3)
+                                with b1:
+                                    _sg_kpi_card(
+                                        "Sexta (total do dia)",
+                                        (f"R$ {fri_f:,.2f}" if fri_day is not None else "—"),
+                                        icon="📌",
+                                        accent="#93c5fd",
+                                        delta=(f"NFS {fri_nf} | Atendidos {fri_cli}" if fri_day is not None else None),
+                                    )
+                                with b2:
+                                    _sg_kpi_card(
+                                        "Sábado (total do dia)",
+                                        f"R$ {sat_f:,.2f}",
+                                        icon="🧾",
+                                        accent="#6EE7B7",
+                                        delta=f"NFS {sat_nf} | Atendidos {sat_cli}",
+                                    )
+                                with b3:
+                                    _sg_kpi_card(
+                                        "Total Sex+Sáb",
+                                        f"R$ {total_f:,.2f}",
+                                        icon="🧮",
+                                        accent="#FBBF24",
+                                        delta=f"NFS {total_nf} | Atendidos {total_cli}",
+                                    )
                         except Exception:
                             pass
                     except Exception:
                         pass
 
-                    avg_fat = float(pd.to_numeric(df.get("faturamento"), errors="coerce").fillna(0).mean())
-                    avg_nf = float(pd.to_numeric(df.get("nfs_emitidas"), errors="coerce").fillna(0).mean())
-                    avg_cli = float(pd.to_numeric(df.get("clientes_atendidos"), errors="coerce").fillna(0).mean())
+                    avg_fat = float(pd.to_numeric(df_plot.get("faturamento"), errors="coerce").fillna(0).mean())
+                    avg_nf = float(pd.to_numeric(df_plot.get("nfs_emitidas"), errors="coerce").fillna(0).mean())
+                    avg_cli = float(pd.to_numeric(df_plot.get("clientes_atendidos"), errors="coerce").fillna(0).mean())
 
                     fig_fat = px.line(
-                        df,
+                        df_plot,
                         x="dia",
                         y="faturamento",
                         markers=True,
@@ -3882,7 +3939,7 @@ def page_sala_gestao(settings, conn) -> None:
                     fig_fat.update_traces(line_width=3)
                     st.plotly_chart(fig_fat, use_container_width=True, key="sg_evol_faturamento_line")
 
-                    df_counts = df.melt(
+                    df_counts = df_plot.melt(
                         id_vars=["dia"],
                         value_vars=["nfs_emitidas", "clientes_atendidos"],
                         var_name="metric",
@@ -3904,7 +3961,7 @@ def page_sala_gestao(settings, conn) -> None:
                     st.plotly_chart(fig_counts, use_container_width=True, key="sg_evol_counts_line")
 
                     with st.expander("Ver base diária (tabela)"):
-                        df_show = df.copy()
+                        df_show = df_plot.copy()
                         df_show = df_show.sort_values("dia").reset_index(drop=True)
 
                         def _delta_str(v: float, is_money: bool) -> str:
