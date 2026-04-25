@@ -2649,7 +2649,10 @@ def main() -> None:
             format_func=lambda x: {"desktop": "Notebook / PC", "tablet": "iPad / Tablet", "mobile": "Smartphone"}[x],
             key="ui_profile",
         )
-        st.caption("Dica: altere o perfil e recarregue para aplicar melhor o espaçamento.")
+        st.caption(
+            "Em telas estreitas o layout já ajusta margens, abas e toques. "
+            "O perfil **Tablet** ou **Smartphone** reforça tipografia e espaçamento."
+        )
         st.markdown("---")
         st.markdown("### 📌 Sessão")
         user = st.session_state.get("user") or {}

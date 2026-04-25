@@ -7,33 +7,127 @@ def _profile_css(profile: str) -> str:
     p = (profile or "desktop").lower().strip()
     if p == "mobile":
         return """
-  /* Perfil Mobile */
+  /* Perfil Mobile (reforço além das media queries) */
   .main .block-container {
-    padding-top: 1.4rem !important;
-    padding-bottom: 2.0rem !important;
-    padding-left: 0.75rem !important;
-    padding-right: 0.75rem !important;
+    padding-top: 1.25rem !important;
+    padding-bottom: 2.25rem !important;
+    padding-left: 0.65rem !important;
+    padding-right: 0.65rem !important;
+    max-width: 100% !important;
   }
-  .dp-title{ font-size:1.12rem !important; }
-  .dp-sub{ font-size:.92rem !important; }
-  .dp-kpi-value{ font-size:1.22rem !important; }
-  [data-testid="stSidebar"] > div { padding-left: .5rem !important; padding-right: .5rem !important; }
+  .dp-header { padding: 14px 14px !important; border-radius: 14px !important; }
+  .dp-title{ font-size:1.18rem !important; line-height: 1.25 !important; }
+  .dp-sub{ font-size:0.95rem !important; line-height: 1.5 !important; }
+  .dp-kpi-value{ font-size:1.28rem !important; }
+  .dp-kpi-label{ font-size: 0.72rem !important; }
+  .dp-card { padding: 12px 12px !important; border-radius: 14px !important; }
+  .main h3 { font-size: 1.08rem !important; }
+  [data-testid="stSidebar"] > div { padding-left: .55rem !important; padding-right: .55rem !important; }
+  .stButton > button { padding: 0.7rem 0.85rem !important; min-height: 46px !important; font-size: 0.98rem !important; }
 """
     if p == "tablet":
         return """
-  /* Perfil Tablet */
+  /* Perfil Tablet / iPad */
   .main .block-container {
-    padding-top: 1.8rem !important;
-    padding-left: 1.0rem !important;
-    padding-right: 1.0rem !important;
+    padding-top: 1.65rem !important;
+    padding-left: 0.9rem !important;
+    padding-right: 0.9rem !important;
+    max-width: 100% !important;
   }
-  .dp-title{ font-size:1.22rem !important; }
-  .dp-kpi-value{ font-size:1.35rem !important; }
+  .dp-title{ font-size:1.28rem !important; }
+  .dp-sub{ font-size: 0.98rem !important; }
+  .dp-kpi-value{ font-size:1.38rem !important; }
+  .dp-card { padding: 13px 14px !important; }
+  .main h3 { font-size: 1.14rem !important; }
+  .stButton > button { min-height: 44px !important; }
 """
     # desktop (default)
     return """
   /* Perfil Desktop */
   .main .block-container { max-width: 1500px; }
+"""
+
+
+def _responsive_viewport_css() -> str:
+    """
+    CSS por largura real do navegador — melhora iPad/iPhone mesmo com perfil “desktop”.
+    Inclui fonte 16px em inputs (Safari não dá zoom ao focar) e alvos de toque maiores.
+    """
+    return """
+  /* ——— Telas médias (iPad retrato, tablets) ——— */
+  @media screen and (max-width: 1100px) {
+    html {
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+    }
+    .stButton > button {
+      touch-action: manipulation;
+    }
+    .main .block-container {
+      max-width: 100% !important;
+      padding-left: 1rem !important;
+      padding-right: 1rem !important;
+    }
+    .dp-title { font-size: clamp(1.1rem, 2.8vw, 1.35rem) !important; }
+    .dp-kpi-value { font-size: clamp(1.2rem, 3.2vw, 1.45rem) !important; }
+    [data-testid="stTabs"] [role="tab"],
+    [data-testid="stTabs"] button {
+      font-size: 0.95rem !important;
+      padding: 0.55rem 0.75rem !important;
+      min-height: 44px !important;
+    }
+    [data-testid="stTabs"] [role="tablist"],
+    [data-testid="stTabs"] [data-baseweb="tab-list"] {
+      flex-wrap: wrap !important;
+      gap: 4px !important;
+    }
+  }
+
+  /* ——— Smartphones ——— */
+  @media screen and (max-width: 640px) {
+    .main .block-container {
+      padding-top: 1.1rem !important;
+      padding-left: 0.65rem !important;
+      padding-right: 0.65rem !important;
+    }
+    .main h1, .main h2, .main h3 {
+      margin-top: 1rem !important;
+      font-size: clamp(1rem, 4.2vw, 1.15rem) !important;
+    }
+    .dp-header { margin-bottom: 12px !important; }
+    .dp-title { font-size: 1.14rem !important; }
+    .dp-sub { font-size: 0.9rem !important; }
+    .dp-kpi-value { font-size: 1.22rem !important; }
+    .bonus-panel-title { font-size: 1.05rem !important; }
+    .bonus-metric-value { font-size: 1.45rem !important; }
+    .bonus-table { font-size: 0.82rem !important; }
+    .bonus-table thead th { padding: 10px 10px !important; font-size: 0.65rem !important; }
+    .bonus-table tbody td { padding: 9px 10px !important; }
+    .bonus-vendedor { min-width: 110px !important; }
+    [data-testid="stMetricLabel"] { font-size: 0.82rem !important; }
+    [data-testid="stMetricValue"] { font-size: 1.35rem !important; }
+    .stButton > button {
+      min-height: 46px !important;
+      padding: 0.65rem 0.9rem !important;
+      font-size: 0.95rem !important;
+    }
+    /* iOS: fonte < 16px em input dispara zoom ao focar */
+    .stTextInput input,
+    .stTextArea textarea,
+    [data-testid="stNumberInput"] input,
+    [data-baseweb="input"] input,
+    [data-baseweb="select"] > div {
+      font-size: 16px !important;
+      line-height: 1.35 !important;
+    }
+    [data-testid="stExpander"] details summary,
+    .streamlit-expanderHeader {
+      font-size: 1rem !important;
+      min-height: 44px !important;
+      align-items: center !important;
+    }
+    div[data-testid="stDataFrame"] { margin-left: -2px; margin-right: -2px; }
+  }
 """
 
 
@@ -340,9 +434,15 @@ def inject_styles(profile: str = "desktop") -> None:
   }
 
 __PROFILE_CSS__
+__RESPONSIVE_CSS__
 </style>
 """
-    st.markdown(css.replace("__PROFILE_CSS__", _profile_css(profile)), unsafe_allow_html=True)
+    st.markdown(
+        css.replace("__PROFILE_CSS__", _profile_css(profile)).replace(
+            "__RESPONSIVE_CSS__", _responsive_viewport_css()
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def render_header(title: str, subtitle: str, right: str | None = None) -> None:

@@ -9,6 +9,8 @@ from typing import Any
 
 import pandas as pd
 
+from .percent_norm import normalize_alcance_projetado, normalize_small_excel_percent
+
 
 @dataclass(frozen=True)
 class DeptImportResult:
@@ -78,22 +80,6 @@ def _to_float(v: Any) -> float | None:
         return None
 
 
-def _as_pct_0_100(v: Any) -> float | None:
-    """
-    Normaliza percentual vindo de Excel/HTML.
-
-    O Excel costuma guardar % como fração (0,6425 = 64,25%; 1,05 = 105%).
-    Valores já em escala de percentual humano (ex.: 64, 105) costumam ser > 3.
-    Mesma regra que `excel_import._as_pct_0_100` para ficar consistente.
-    """
-    f = _to_float(v)
-    if f is None:
-        return None
-    if 0 <= f <= 3.0:
-        return round(float(f) * 100.0, 2)
-    return round(float(f), 2)
-
-
 def _clean_dept(name: Any) -> str:
     s = str(name or "").strip()
     s = re.sub(r"\s{2,}", " ", s).strip()
@@ -146,15 +132,15 @@ def import_departamentos(files: list[tuple[str, bytes]]) -> DeptImportResult:
                     if v is not None:
                         rec["meta_faturamento"] = v
                 if c_part:
-                    v = _as_pct_0_100(r.get(c_part))
+                    v = normalize_small_excel_percent(r.get(c_part))
                     if v is not None:
                         rec["participacao_pct"] = v
                 if c_alc:
-                    v = _as_pct_0_100(r.get(c_alc))
+                    v = normalize_alcance_projetado(r.get(c_alc))
                     if v is not None:
                         rec["alcance_projetado_pct"] = v
                 if c_marg:
-                    v = _as_pct_0_100(r.get(c_marg))
+                    v = normalize_small_excel_percent(r.get(c_marg))
                     if v is not None:
                         rec["margem_pct"] = v
 

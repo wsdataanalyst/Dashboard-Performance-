@@ -11,6 +11,7 @@ from typing import Any
 import pandas as pd
 
 from .domain import filter_excluded_sellers_from_payload, is_excluded_seller_name
+from .percent_norm import normalize_alcance_projetado, normalize_small_excel_percent
 
 
 @dataclass(frozen=True)
@@ -161,16 +162,6 @@ def _to_float(v: Any) -> float | None:
         return float(s)
     except Exception:
         return None
-
-
-def _as_pct_0_100(v: Any) -> float | None:
-    x = _to_float(v)
-    if x is None:
-        return None
-    # Alguns relatórios exportam 194,97% como 1.9497
-    if 0 <= x <= 3.0:
-        return round(x * 100.0, 2)
-    return round(x, 2)
 
 
 def _pick_name_col(df: pd.DataFrame) -> str:
@@ -335,9 +326,9 @@ def import_5_files_to_payload(files: list[tuple[str, bytes]]) -> ImportResult:
                     updates.append(
                         {
                             "nome": nome,
-                            "alcance_projetado_pct": _as_pct_0_100(r.get(c_alc)),
+                            "alcance_projetado_pct": normalize_alcance_projetado(r.get(c_alc)),
                             "alcance_pct": float(alcance_real) if alcance_real is not None else None,
-                            "margem_pct": _as_pct_0_100(r.get(c_marg)),
+                            "margem_pct": normalize_small_excel_percent(r.get(c_marg)),
                             "faturamento": fat,
                             "meta_faturamento": meta,
                         }
