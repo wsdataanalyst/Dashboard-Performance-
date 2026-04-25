@@ -247,9 +247,49 @@ def render_bonus_central_panel_html(df: pd.DataFrame, *, periodo: str, total: fl
     narr = _bonus_panel_narrative(src, total, n_eleg)
     rows_joined = "\n".join(rows)
 
+    # Insight curto para o título (ocupa o "vazio" ao lado do período)
+    try:
+        # onde mais está travando (contagem de não-bateu)
+        def _cnt_false(col: str) -> int:
+            if col not in src.columns:
+                return 0
+            s = src[col]
+            return int((s == False).sum())  # noqa: E712
+
+        misses = {
+            "margem": int((~src["elegivel_margem"]).sum()) if "elegivel_margem" in src.columns else 0,
+            "prazo": _cnt_false("bateu_prazo"),
+            "conversao": _cnt_false("bateu_conversao"),
+            "tme": _cnt_false("bateu_tme"),
+            "interacao": _cnt_false("bateu_interacao"),
+        }
+        worst_key = max(misses, key=lambda k: misses.get(k, 0)) if misses else "margem"
+        worst_label = {
+            "margem": "margem/alcance",
+            "prazo": "prazo",
+            "conversao": "conversão",
+            "tme": "TME",
+            "interacao": "interações",
+        }.get(worst_key, worst_key)
+        worst_n = int(misses.get(worst_key, 0) or 0)
+        insight = (
+            f"Insight: {n_eleg}/{n} elegíveis na margem ({bar_pct:.0f}%). "
+            f"Maior gargalo hoje: {worst_label} ({worst_n} fora)."
+            if n
+            else "Insight: sem dados suficientes."
+        )
+    except Exception:
+        insight = "Insight: —"
+    insight_esc = html.escape(insight)
+
     return f"""
 <div class="bonus-panel-wrap">
-  <h2 class="bonus-panel-title">Central de Vendas | Resultados de Bônus — {periodo_esc}</h2>
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <h2 class="bonus-panel-title" style="margin:0;">Central de Vendas | Resultados de Bônus — {periodo_esc}</h2>
+    <div class="dp-pill" style="max-width: 720px; white-space: normal; line-height: 1.35;">
+      {insight_esc}
+    </div>
+  </div>
   <p class="bonus-panel-note">TME considerado dentro da meta por instabilidade na plataforma (quando aplicável ao período).</p>
   <div class="bonus-metric-grid">
     <div class="bonus-metric-card">
