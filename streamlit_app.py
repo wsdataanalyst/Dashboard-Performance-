@@ -4318,12 +4318,15 @@ def page_sala_gestao(settings, conn) -> None:
             pdf.set_auto_page_break(auto=True, margin=12)
             pdf.add_page()
             pdf.set_font("Helvetica", size=11)
+            epw = float(pdf.w - pdf.l_margin - pdf.r_margin)
             for line in _strip_md(text_md).splitlines():
                 if not line.strip():
                     pdf.ln(2)
                     continue
                 safe = _break_long_words(_pdf_safe_text(line))
-                pdf.multi_cell(0, 6, safe)
+                # força cursor no início da linha para evitar "width < 1 char"
+                pdf.set_x(pdf.l_margin)
+                pdf.multi_cell(epw, 6, safe)
 
             # insere gráficos em páginas separadas (quando existirem)
             for title, fig_obj in fig_map.items():
@@ -4332,7 +4335,8 @@ def page_sala_gestao(settings, conn) -> None:
                     continue
                 pdf.add_page()
                 pdf.set_font("Helvetica", size=11)
-                pdf.multi_cell(0, 7, _break_long_words(_pdf_safe_text(f"Gráfico: {title}")))
+                pdf.set_x(pdf.l_margin)
+                pdf.multi_cell(epw, 7, _break_long_words(_pdf_safe_text(f"Gráfico: {title}")))
                 pdf.ln(2)
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                     tmp.write(png)
