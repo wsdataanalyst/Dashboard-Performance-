@@ -47,7 +47,7 @@ from src.app.feedback_star import (
 )
 from src.app.excel_import import import_5_files_to_payload
 from src.app.dept_import import import_departamentos
-from src.app.kpi_import import import_faturamento_atendidos_xlsx
+from src.app.kpi_import import import_faturamento_atendidos_daily_df, import_faturamento_atendidos_xlsx
 from src.app.ocr_fallback import extract_payload_from_prints_ocr
 from src.app.projection import projetar_resultados
 from src.app.calendar_utils import compute_calendar_info
@@ -2344,8 +2344,8 @@ def page_sala_gestao(settings, conn) -> None:
     cal = st.session_state.get("calendar_info") or {}
     dias_restantes = int(cal.get("dias_uteis_restantes") or 0)
 
-    tab_consol, tab_kpis, tab_vend, tab_dept, tab_radar = st.tabs(
-        ["Consolidado", "Projeção e KPIs", "Vendedores", "Departamentos", "Radar (manual)"]
+    tab_consol, tab_kpis, tab_evol, tab_vend, tab_dept, tab_radar = st.tabs(
+        ["Consolidado", "Projeção e KPIs", "Evolução dia a dia", "Vendedores", "Departamentos", "Radar (manual)"]
     )
 
     def _last_payload_of_kind(kind: str) -> dict | None:
@@ -2737,6 +2737,73 @@ def page_sala_gestao(settings, conn) -> None:
                 total_bonus=0.0,
             )
             st.success(f"KPIs salvos como análise **#{analysis_id}**.")
+
+    with tab_evol:
+        st.markdown("### Evolução dia a dia — NFS, Atendidos e Faturamento")
+        st.caption("Gráficos separados para evitar confusão de escala (R$ vs contagens).")
+
+        evol_file = st.file_uploader(
+            "Documento: Faturamento e Atendidos.xlsx (mês atual)",
+            type=["xlsx"],
+            accept_multiple_files=False,
+            key="sg_evolucao_upload",
+        )
+
+        if evol_file:
+            try:
+                res = import_faturamento_atendidos_daily_df(evol_file.read())
+                if res.warnings:
+                    st.warning("Importei, mas com avisos:")
+                    for w in res.warnings:
+                        st.caption(w)
+
+                df = res.df_daily
+                if df is None or df.empty:
+                    st.info("Sem dados diários para plotar (verifique o arquivo).")
+                else:
+                    import plotly.express as px
+
+                    title_suffix = ""
+                    if isinstance(res.meta, dict) and res.meta.get("mes_referencia"):
+                        title_suffix = f" — {res.meta.get('mes_referencia')}"
+
+                    fig_fat = px.line(
+                        df,
+                        x="dia",
+                        y="faturamento",
+                        markers=True,
+                        title=f"Faturamento por dia{title_suffix}",
+                        labels={"dia": "Dia do mês", "faturamento": "Faturamento (R$)"},
+                    )
+                    fig_fat.update_traces(line_width=3)
+                    st.plotly_chart(fig_fat, use_container_width=True, key="sg_evol_faturamento_line")
+
+                    df_counts = df.melt(
+                        id_vars=["dia"],
+                        value_vars=["nfs_emitidas", "clientes_atendidos"],
+                        var_name="metric",
+                        value_name="valor",
+                    )
+                    df_counts["metric"] = df_counts["metric"].map(
+                        {"nfs_emitidas": "NFS emitidas", "clientes_atendidos": "Clientes atendidos"}
+                    )
+                    fig_counts = px.line(
+                        df_counts,
+                        x="dia",
+                        y="valor",
+                        color="metric",
+                        markers=True,
+                        title=f"NFS e Atendidos por dia{title_suffix}",
+                        labels={"dia": "Dia do mês", "valor": "Quantidade", "metric": ""},
+                    )
+                    fig_counts.update_traces(line_width=3)
+                    st.plotly_chart(fig_counts, use_container_width=True, key="sg_evol_counts_line")
+
+                    with st.expander("Ver base diária (tabela)"):
+                        st.dataframe(df, use_container_width=True, hide_index=True)
+            except Exception as e:
+                st.error("Falha ao ler o Excel para evolução diária.")
+                st.caption(str(e))
 
     with tab_vend:
         st.markdown("### Análise de vendedores")
