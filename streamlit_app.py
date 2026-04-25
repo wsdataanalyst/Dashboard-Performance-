@@ -2401,28 +2401,101 @@ def page_sala_gestao(settings, conn) -> None:
         falta_meta = max(0.0, meta_total - fat_atual) if meta_total > 0 else 0.0
         falta_por_dia = (falta_meta / dias_restantes) if dias_restantes > 0 else None
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Faturamento (até agora)", f"R$ {fat_atual:,.2f}")
-        c2.metric("Meta (time)", f"R$ {meta_total:,.2f}" if meta_total > 0 else "—")
-        c3.metric("Falta p/ meta", f"R$ {falta_meta:,.2f}" if meta_total > 0 else "—")
-        c4.metric("Falta por dia útil", f"R$ {falta_por_dia:,.2f}" if falta_por_dia is not None else "—")
+        # Comparativos (setas) — vs último registro salvo de KPIs (que carrega um snapshot de totais)
+        prevs_kpis = _last_payloads_of_kind("sala_gestao_kpis", 2)
+        prev0 = prevs_kpis[0] if len(prevs_kpis) >= 1 else {}
+        prev1 = prevs_kpis[1] if len(prevs_kpis) >= 2 else {}
+        prev0_totais = prev0.get("totais") if isinstance(prev0, dict) else {}
+        prev1_k = prev1.get("kpis") if isinstance(prev1, dict) else {}
+        prev0_k = prev0.get("kpis") if isinstance(prev0, dict) else {}
+        if not isinstance(prev0_totais, dict):
+            prev0_totais = {}
+        if not isinstance(prev0_k, dict):
+            prev0_k = {}
+        if not isinstance(prev1_k, dict):
+            prev1_k = {}
 
-        prev = _last_payload_of_kind("sala_gestao_kpis") or {}
-        prev_k = prev.get("kpis") if isinstance(prev, dict) else {}
-        if not isinstance(prev_k, dict):
-            prev_k = {}
+        prev_fat_total = float(prev0_totais.get("faturamento_total") or 0.0) if prev0_totais else None
+        prev_meta_total = float(prev0_totais.get("meta_total") or 0.0) if prev0_totais else None
+        prev_falta_meta = (
+            max(0.0, float(prev_meta_total or 0.0) - float(prev_fat_total or 0.0))
+            if prev_meta_total is not None and prev_meta_total > 0 and prev_fat_total is not None
+            else None
+        )
+        prev_falta_por_dia = (
+            (prev_falta_meta / dias_restantes) if (prev_falta_meta is not None and dias_restantes > 0) else None
+        )
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric(
+            "Faturamento (até agora)",
+            f"R$ {fat_atual:,.2f}",
+            delta=(f"R$ {fat_atual - prev_fat_total:,.2f}" if isinstance(prev_fat_total, (int, float)) else None),
+        )
+        c2.metric("Meta (time)", f"R$ {meta_total:,.2f}" if meta_total > 0 else "—")
+        c3.metric(
+            "Falta p/ meta",
+            f"R$ {falta_meta:,.2f}" if meta_total > 0 else "—",
+            delta=(f"R$ {falta_meta - prev_falta_meta:,.2f}" if isinstance(prev_falta_meta, (int, float)) else None),
+            delta_color="inverse",
+        )
+        c4.metric(
+            "Falta por dia útil",
+            f"R$ {falta_por_dia:,.2f}" if falta_por_dia is not None else "—",
+            delta=(f"R$ {falta_por_dia - prev_falta_por_dia:,.2f}" if (falta_por_dia is not None and isinstance(prev_falta_por_dia, (int, float))) else None),
+            delta_color="inverse",
+        )
 
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Faturamento (dia anterior)", f"R$ {float(prev_k.get('faturamento_dia_anterior') or 0.0):,.2f}" if prev_k.get("faturamento_dia_anterior") is not None else "—")
-        k2.metric("NFs (dia anterior)", int(prev_k.get("nf_dia_anterior") or 0))
-        k3.metric("Clientes (dia anterior)", int(prev_k.get("clientes_dia_anterior") or 0))
-        k4.metric("Margem (hoje vs ontem)", f"{float(prev_k.get('margem_hoje_pct') or 0.0):.1f}%", delta=round(float(prev_k.get("margem_hoje_pct") or 0.0) - float(prev_k.get("margem_dia_anterior_pct") or 0.0), 1))
+        fat_dia_ant = prev0_k.get("faturamento_dia_anterior")
+        nf_dia_ant = prev0_k.get("nf_dia_anterior")
+        cli_dia_ant = prev0_k.get("clientes_dia_anterior")
+        marg_hoje_pct = prev0_k.get("margem_hoje_pct")
+        marg_ontem_pct = prev0_k.get("margem_dia_anterior_pct")
+
+        # Comparação do "dia anterior" com o "dia anterior do dia anterior" (penúltimo registro)
+        prev_fat_dia_ant = prev1_k.get("faturamento_dia_anterior")
+        prev_nf_dia_ant = prev1_k.get("nf_dia_anterior")
+        prev_cli_dia_ant = prev1_k.get("clientes_dia_anterior")
+        prev_marg_hoje_pct = prev1_k.get("margem_hoje_pct")
+
+        k1.metric(
+            "Faturamento (dia anterior)",
+            (f"R$ {float(fat_dia_ant or 0.0):,.2f}" if fat_dia_ant is not None else "—"),
+            delta=(f"R$ {float(fat_dia_ant) - float(prev_fat_dia_ant):,.2f}" if (fat_dia_ant is not None and prev_fat_dia_ant is not None) else None),
+        )
+        k2.metric(
+            "NFs (dia anterior)",
+            int(nf_dia_ant or 0),
+            delta=(f"{int(nf_dia_ant) - int(prev_nf_dia_ant)}" if (nf_dia_ant is not None and prev_nf_dia_ant is not None) else None),
+        )
+        k3.metric(
+            "Clientes (dia anterior)",
+            int(cli_dia_ant or 0),
+            delta=(f"{int(cli_dia_ant) - int(prev_cli_dia_ant)}" if (cli_dia_ant is not None and prev_cli_dia_ant is not None) else None),
+        )
+        # Margem: indicador principal = margem hoje; delta = hoje vs ontem (já existia)
+        k4.metric(
+            "Margem (hoje vs ontem)",
+            (f"{float(marg_hoje_pct or 0.0):.1f}%" if marg_hoje_pct is not None else "—"),
+            delta=(f"{round(float(marg_hoje_pct) - float(marg_ontem_pct), 1):+.1f} pp" if (marg_hoje_pct is not None and marg_ontem_pct is not None) else None),
+        )
 
         k5, k6, k7, k8 = st.columns(4)
-        k5.metric("Acumulado NFs", int(prev_k.get("nf_acumulado") or 0))
-        k6.metric("Acumulado Clientes", int(prev_k.get("clientes_acumulado") or 0))
-        k7.metric("Meta por dia útil (necessária)", f"R$ {falta_por_dia:,.2f}" if falta_por_dia is not None else "—")
-        k8.metric("Falta p/ meta", f"R$ {falta_meta:,.2f}" if meta_total > 0 else "—")
+        k5.metric("Acumulado NFs", int(prev0_k.get("nf_acumulado") or 0))
+        k6.metric("Acumulado Clientes", int(prev0_k.get("clientes_acumulado") or 0))
+        k7.metric(
+            "Meta por dia útil (necessária)",
+            f"R$ {falta_por_dia:,.2f}" if falta_por_dia is not None else "—",
+            delta=(f"R$ {falta_por_dia - prev_falta_por_dia:,.2f}" if (falta_por_dia is not None and isinstance(prev_falta_por_dia, (int, float))) else None),
+            delta_color="inverse",
+        )
+        k8.metric(
+            "Falta p/ meta",
+            f"R$ {falta_meta:,.2f}" if meta_total > 0 else "—",
+            delta=(f"R$ {falta_meta - prev_falta_meta:,.2f}" if isinstance(prev_falta_meta, (int, float)) else None),
+            delta_color="inverse",
+        )
 
         # Vendedores (alcance)
         st.markdown("### Vendedores — faixas de % Alcance")
