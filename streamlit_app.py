@@ -2476,10 +2476,18 @@ def page_projection(settings, conn) -> None:
             return "color:#94a3b8;font-weight:650;"
         return "color:#94a3b8;"
 
+    _PROJ_KPI_MIN_H = 176
+
     def _render_dual_kpi(title: str, value: str, d_prev: str, d_ideal: str, *, help_prev: str, help_ideal: str) -> None:
         st.markdown(
             f"""
-<div class="dp-card" style="padding:14px 14px;">
+<div class="dp-card" style="
+  padding:14px 14px;
+  min-height: {_PROJ_KPI_MIN_H}px;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+">
   <div class="dp-kpi-label">{_html.escape(title)}</div>
   <div class="dp-kpi-value">{_html.escape(value)}</div>
   <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px;">
@@ -2675,7 +2683,7 @@ def page_projection(settings, conn) -> None:
             f"""
 <div class="dp-card" style="
   padding:14px 14px;
-  min-height: 176px;
+  min-height: {_PROJ_KPI_MIN_H}px;
   display:flex;
   flex-direction:column;
   justify-content:space-between;
