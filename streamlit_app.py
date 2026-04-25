@@ -3338,13 +3338,49 @@ def page_highlights(settings, conn) -> None:
 
     # Cards do período atual
     st.markdown("### Período atual (análise ativa)")
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Faturamento (time)", f"R$ {float(base['tot_faturamento']):,.2f}")
-    c2.metric("NFs (time)", f"{int(base['tot_nfs'])}")
-    c3.metric("Interações (time)", f"{int(base['tot_interacoes'])}")
-    c4.metric("Ticket médio (média)", f"R$ {base['media_ticket']:,.2f}" if base.get("media_ticket") else "—")
+    import html as _html
+
+    def _kpi_card(title: str, value: str, *, icon: str, accent: str) -> None:
+        st.markdown(
+            f"""
+<div class="dp-card" style="
+  padding:12px 12px;
+  border-color: rgba(59,130,246,.18);
+  background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.18), transparent 60%),
+              radial-gradient(900px 220px at 85% 10%, rgba(110,231,183,.12), transparent 55%),
+              linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
+">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+    <div class="dp-kpi-label">{_html.escape(title)}</div>
+    <div style="
+      width:28px;height:28px;border-radius:10px;
+      display:flex;align-items:center;justify-content:center;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.10);
+      font-size: 0.95rem;
+      color: {accent};
+    ">{_html.escape(icon)}</div>
+  </div>
+  <div class="dp-kpi-value" style="font-size:1.35rem;color:{accent};text-shadow:0 0 24px rgba(59,130,246,.18);">{_html.escape(value)}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
     dp = [float(getattr(s, "desconto_pct", 0.0)) for s in sellers if getattr(s, "desconto_pct", None) is not None]
-    c5.metric("Desconto (médio)", f"{(sum(dp)/len(dp)):.2f}%" if dp else "—")
+    disc_txt = f"{(sum(dp)/len(dp)):.2f}%" if dp else "—"
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        _kpi_card("Faturamento (time)", f"R$ {float(base['tot_faturamento']):,.2f}", icon="💰", accent="#6EE7B7")
+    with c2:
+        _kpi_card("NFs (time)", f"{int(base['tot_nfs'])}", icon="📦", accent="#93c5fd")
+    with c3:
+        _kpi_card("Interações (time)", f"{int(base['tot_interacoes'])}", icon="☎️", accent="#C4B5FD")
+    with c4:
+        _kpi_card("Ticket médio (média)", f"R$ {base['media_ticket']:,.2f}" if base.get("media_ticket") else "—", icon="🧾", accent="#FBBF24")
+    with c5:
+        _kpi_card("Desconto (médio)", disc_txt, icon="🏷", accent="#93c5fd")
 
     try:
         import plotly.express as px
