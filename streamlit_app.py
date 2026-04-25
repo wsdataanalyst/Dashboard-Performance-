@@ -1689,18 +1689,72 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
             unsafe_allow_html=True,
         )
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    with c1:
+    # KPIs (Visão Geral): inclui projeção de faturamento (time)
+    proj_fat_txt = "—"
+    if key_prefix == "perf_overview":
+        try:
+            from src.app.domain import Seller as SellerDC
+            from src.app.projection import projetar_resultados
+
+            cal2 = st.session_state.get("calendar_info")
+            dt_total = int(st.session_state.get("proj_dias_uteis_total") or (cal2.get("dias_uteis_total") if isinstance(cal2, dict) else 22))
+            dt_rest = int(
+                st.session_state.get("proj_dias_uteis_restantes")
+                if st.session_state.get("proj_dias_uteis_restantes") is not None
+                else max(0, int(dt_total) - int(cal2.get("dias_uteis_trabalhados") or 0))
+            )
+            dt_trab = max(1, int(dt_total) - int(dt_rest))
+
+            qtd_sum = int(sum(int(x.qtd_faturadas or 0) for x in sellers))
+            ini_sum = int(sum(int(x.iniciados or 0) for x in sellers))
+            rec_sum = int(sum(int(x.recebidos or 0) for x in sellers))
+            ch_sum = int(sum(int(x.chamadas or 0) for x in sellers))
+
+            soma = SellerDC(
+                nome="Time",
+                qtd_faturadas=qtd_sum,
+                iniciados=ini_sum,
+                recebidos=rec_sum,
+                chamadas=ch_sum,
+                faturamento=float(fat_total) if fat_total is not None else None,
+                meta_faturamento=float(meta_total) if meta_total is not None else None,
+            )
+            ticket_auto = (float(fat_total) / float(qtd_sum)) if (fat_total is not None and qtd_sum > 0) else None
+            meta_eff = float(meta_total) if (meta_total is not None and float(meta_total) > 0) else soma.meta_faturamento
+            proj0 = projetar_resultados(
+                soma,
+                dias_uteis_total=int(dt_total),
+                dias_uteis_trabalhados=int(dt_trab),
+                meta_faturamento=float(meta_eff) if meta_eff is not None else None,
+                ticket_medio_override=float(ticket_auto) if ticket_auto is not None else None,
+            )
+            if proj0.projecao_faturamento is not None and meta_eff is not None and float(meta_eff) > 0:
+                pct_proj = (float(proj0.projecao_faturamento) / float(meta_eff)) * 100.0
+                proj_fat_txt = f"R$ {float(proj0.projecao_faturamento):,.2f} ({pct_proj:.1f}%)"
+            elif proj0.projecao_faturamento is not None:
+                proj_fat_txt = f"R$ {float(proj0.projecao_faturamento):,.2f}"
+        except Exception:
+            proj_fat_txt = "—"
+
+    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+    with r1c1:
         _kpi_card("Faturamento (time)", (f"R$ {fat_total:,.2f}" if fat_total is not None else "—"), icon="💰", accent="#6EE7B7")
-    with c2:
+    with r1c2:
         _kpi_card("Meta (time)", (f"R$ {meta_total:,.2f}" if meta_total is not None else "—"), icon="🎯", accent="#93c5fd")
-    with c3:
+    with r1c3:
         _kpi_card("% da meta", (f"{perc_meta:.1f}%" if perc_meta is not None else "—"), icon="📈", accent="#FBBF24")
-    with c4:
+    with r1c4:
+        if key_prefix == "perf_overview":
+            _kpi_card("Projeção faturamento", proj_fat_txt, icon="🔮", accent="#FDE68A")
+        else:
+            _kpi_card("Projeção faturamento", "—", icon="🔮", accent="#FDE68A")
+
+    r2c1, r2c2, r2c3 = st.columns(3)
+    with r2c1:
         _kpi_card("Margem média", f"{stats['media_margem']:.1f}%", icon="📊", accent="#A7F3D0")
-    with c5:
+    with r2c2:
         _kpi_card("Conversão média", f"{stats['media_conversao']:.1f}%", icon="🔁", accent="#C4B5FD")
-    with c6:
+    with r2c3:
         d_pct = disc.get("desconto_pct")
         pct_txt = f"{float(d_pct):.2f}%" if d_pct is not None and not pd.isna(d_pct) else "—"
         _kpi_card("Desconto", pct_txt, icon="🏷", accent="#93c5fd")
@@ -2147,7 +2201,13 @@ def page_projection(settings, conn) -> None:
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        dias_total = st.number_input("Total de dias úteis no mês", min_value=1, max_value=31, value=int(default_total))
+        dias_total = st.number_input(
+            "Total de dias úteis no mês",
+            min_value=1,
+            max_value=31,
+            value=int(default_total),
+            key="proj_dias_uteis_total",
+        )
     with col2:
         dias_rest = st.number_input(
             "Dias úteis restantes no mês",
@@ -2155,6 +2215,7 @@ def page_projection(settings, conn) -> None:
             max_value=int(dias_total),
             value=min(int(default_rest), int(dias_total)),
             help="O app recalcula automaticamente os dias trabalhados = total - restantes.",
+            key="proj_dias_uteis_restantes",
         )
         dias_trab = max(1, int(dias_total) - int(dias_rest))
     with col3:
