@@ -2481,7 +2481,41 @@ def page_projection(settings, conn) -> None:
             except Exception:
                 prev_proj = None
 
-    st.markdown(f"### {titulo}")
+    def _section_header(title: str, subtitle: str, *, pill: str, accent: str) -> None:
+        st.markdown(
+            f"""
+<div class="dp-card" style="
+  padding:14px 16px;
+  border-color: rgba(59,130,246,.18);
+  background:
+    radial-gradient(900px 220px at 12% 0%, rgba(59,130,246,.18), transparent 60%),
+    radial-gradient(900px 220px at 88% 12%, rgba(110,231,183,.10), transparent 55%),
+    linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
+">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <div>
+      <div style="color:#94A3B8;font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:800;">
+        {_html.escape(subtitle)}
+      </div>
+      <div style="color:#E5E7EB;font-size:1.22rem;font-weight:950;margin-top:6px;line-height:1.2;">
+        {_html.escape(title)}
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+      <span class="dp-pill" style="
+        border-color: rgba(255,255,255,.12);
+        background: rgba(255,255,255,.03);
+        color: {accent};
+        font-weight:850;
+      ">{_html.escape(pill)}</span>
+    </div>
+  </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    _section_header(str(titulo), "Simulação / Projeção", pill="Time", accent="#93c5fd")
 
     import html as _html
 
@@ -2613,7 +2647,7 @@ def page_projection(settings, conn) -> None:
 
     # Move para o topo: "O que falta para bater a meta"
     if proj.meta_faturamento is not None and proj.meta_faturamento > 0:
-        st.markdown("### O que falta para bater a meta")
+        _section_header("O que falta para bater a meta", "Foco do dia", pill="Meta & gap", accent="#FBBF24")
         def _render_modern_kpi(title: str, value: str, *, icon: str, accent: str, subtitle: str | None = None) -> None:
             sub = subtitle or ""
             st.markdown(
@@ -2732,7 +2766,7 @@ def page_projection(settings, conn) -> None:
             help_ideal="vs ideal p/ meta",
         )
 
-    st.markdown("### Ritmo diário")
+    _section_header("Ritmo diário", "Cadência operacional", pill="Dia útil", accent="#6EE7B7")
     k1, k2, k3, k4 = st.columns(4)
     d_mfat = _pct_delta(proj.media_diaria_faturas, prev_proj.media_diaria_faturas) if prev_proj is not None else None
     d_mint = _pct_delta(proj.media_diaria_interacoes, prev_proj.media_diaria_interacoes) if prev_proj is not None else None
@@ -2831,7 +2865,7 @@ def page_projection(settings, conn) -> None:
             help_ideal="vs ideal p/ meta",
         )
 
-    st.markdown("### Meta em faturamento (mantendo o ritmo/ticket)")
+    _section_header("Meta em faturamento", "Mantendo o ritmo / ticket", pill="R$ & %", accent="#C4B5FD")
     m1, m2, m3, m4 = st.columns(4)
     d_ticket = _pct_delta(proj.ticket_medio, prev_proj.ticket_medio) if prev_proj is not None else None
     d_fat_atual = _pct_delta(proj.faturamento_atual, prev_proj.faturamento_atual) if prev_proj is not None else None
