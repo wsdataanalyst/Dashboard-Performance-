@@ -2000,7 +2000,56 @@ def page_projection(settings, conn) -> None:
             help_prev="vs análise anterior",
             help_ideal="vs ideal p/ meta",
         )
-    k3.empty()
+    # Card de desconto (puxa do arquivo "Qtd Faturadas")
+    def _render_discount_card(*, pct_aplicado: float | None, valor: float | None, qtd: int | None, pct_qtd: float | None) -> None:
+        pct_txt = f"{float(pct_aplicado):.2f}%" if pct_aplicado is not None and not pd.isna(pct_aplicado) else "—"
+        val_txt = f"R$ {float(valor):,.2f}" if valor is not None and not pd.isna(valor) else "—"
+        qtd_txt = f"{int(qtd):d}" if qtd is not None else "—"
+        pctq_txt = f"{float(pct_qtd):.2f}%" if pct_qtd is not None and not pd.isna(pct_qtd) else "—"
+        st.markdown(
+            f"""
+<div class="dp-card" style="padding:14px 14px;">
+  <div class="dp-kpi-label">Desconto (% aplicado)</div>
+  <div class="dp-kpi-value">{pct_txt}</div>
+  <div style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;">
+    <span class="dp-pill" style="background:rgba(255,255,255,.02);">Valor: <b>{val_txt}</b></span>
+    <span class="dp-pill" style="background:rgba(255,255,255,.02);">Qtd desconto: <b>{qtd_txt}</b></span>
+    <span class="dp-pill" style="background:rgba(255,255,255,.02);">% qtd: <b>{pctq_txt}</b></span>
+  </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    desc_pct = None
+    desc_val = None
+    qdesc = None
+    qdesc_pct = None
+    try:
+        if modo == "Por vendedor":
+            desc_pct = getattr(s, "desconto_pct", None)
+            desc_val = getattr(s, "desconto_valor", None)
+            qdesc = getattr(s, "qtd_desconto", None)
+            qdesc_pct = getattr(s, "qtd_desconto_pct", None)
+        else:
+            # time: soma valores/quantidades; % usa média simples quando disponível
+            desc_vals = [getattr(x, "desconto_valor", None) for x in sellers]
+            qdesc_vals = [getattr(x, "qtd_desconto", None) for x in sellers]
+            desc_pcts = [getattr(x, "desconto_pct", None) for x in sellers]
+            qdesc_pcts = [getattr(x, "qtd_desconto_pct", None) for x in sellers]
+            dsum = sum(float(v) for v in desc_vals if v is not None and not pd.isna(v))
+            qsum = sum(int(v) for v in qdesc_vals if v is not None)
+            desc_val = dsum if dsum != 0 else None
+            qdesc = qsum if qsum != 0 else None
+            dp = [float(v) for v in desc_pcts if v is not None and not pd.isna(v)]
+            qp = [float(v) for v in qdesc_pcts if v is not None and not pd.isna(v)]
+            desc_pct = (sum(dp) / len(dp)) if dp else None
+            qdesc_pct = (sum(qp) / len(qp)) if qp else None
+    except Exception:
+        pass
+
+    with k3:
+        _render_discount_card(pct_aplicado=desc_pct, valor=desc_val, qtd=qdesc, pct_qtd=qdesc_pct)
     with k4:
         _render_dual_kpi(
             "Conversão proj.",

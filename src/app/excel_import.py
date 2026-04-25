@@ -121,6 +121,29 @@ def _find_col(df: pd.DataFrame, *needles: str) -> str | None:
     return None
 
 
+def _find_pct_near(df: pd.DataFrame, base_col: str) -> str | None:
+    """Tenta achar a coluna de % ao lado de uma coluna base (ex.: 'Desconto' -> '%')."""
+    try:
+        cols = list(df.columns)
+        idx = cols.index(base_col)
+    except Exception:
+        return None
+    for j in (idx + 1, idx - 1, idx + 2, idx - 2):
+        if j < 0 or j >= len(cols):
+            continue
+        name = str(cols[j])
+        n = _norm_col(name)
+        if n in {"%", "pct"} or "%" in name:
+            return name
+    # fallback: qualquer coluna que tenha % e também "desconto" no nome
+    for c in df.columns:
+        s = str(c)
+        n = _norm_col(s)
+        if "%" in s and ("desconto" in n):
+            return s
+    return None
+
+
 def _merge(base: dict[str, dict], updates: list[dict[str, Any]]) -> None:
     for u in updates:
         nome = _clean_name(u.get("nome") or "")
@@ -142,6 +165,8 @@ def _merge(base: dict[str, dict], updates: list[dict[str, Any]]) -> None:
             if k in {
                 "faturamento",
                 "meta_faturamento",
+                "desconto_valor",
+                "qtd_desconto",
                 "qtd_faturadas",
                 "interacoes",
                 "chamadas",
@@ -304,6 +329,10 @@ def import_5_files_to_payload(files: list[tuple[str, bytes]]) -> ImportResult:
                 c_nome = _pick_name_col(t)
                 c_qtd = _find_col(t, "qtd fatur", "qtd. fatur", "qtd faturadas", "qtd. faturadas")
                 c_fat = _find_col(t, "faturamento")
+                c_desc = _find_col(t, "desconto")
+                c_qdesc = _find_col(t, "qtd desconto", "qtd. desconto")
+                c_desc_pct = _find_pct_near(t, c_desc) if c_desc else None
+                c_qdesc_pct = _find_pct_near(t, c_qdesc) if c_qdesc else None
                 updates = []
                 for _, r in t.iterrows():
                     nome = _clean_name(r.get(c_nome) or "")
@@ -312,6 +341,14 @@ def import_5_files_to_payload(files: list[tuple[str, bytes]]) -> ImportResult:
                     rec: dict[str, Any] = {"nome": nome, "qtd_faturadas": _to_int(r.get(c_qtd))}
                     if c_fat:
                         rec["faturamento"] = _to_float(r.get(c_fat))
+                    if c_desc:
+                        rec["desconto_valor"] = _to_float(r.get(c_desc))
+                    if c_desc_pct:
+                        rec["desconto_pct"] = normalize_small_excel_percent(r.get(c_desc_pct))
+                    if c_qdesc:
+                        rec["qtd_desconto"] = _to_int(r.get(c_qdesc))
+                    if c_qdesc_pct:
+                        rec["qtd_desconto_pct"] = normalize_small_excel_percent(r.get(c_qdesc_pct))
                     updates.append(rec)
                 _merge(base, updates)
                 handled = True

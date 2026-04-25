@@ -21,6 +21,10 @@ class Seller:
     tme_minutos: float | None = None
     faturamento: float | None = None
     meta_faturamento: float | None = None
+    desconto_valor: float | None = None
+    desconto_pct: float | None = None
+    qtd_desconto: int | None = None
+    qtd_desconto_pct: float | None = None
 
 
 def _to_float(v: Any) -> float | None:
@@ -182,6 +186,10 @@ def parse_sellers(payload: dict[str, Any]) -> list[Seller]:
                 tme_minutos=_to_float(item.get("tme_minutos")),
                 faturamento=_to_float(item.get("faturamento")),
                 meta_faturamento=_to_float(item.get("meta_faturamento") or item.get("meta_total")),
+                desconto_valor=_to_float(item.get("desconto_valor") or item.get("desconto")),
+                desconto_pct=_to_float(item.get("desconto_pct")),
+                qtd_desconto=_to_int(item.get("qtd_desconto")),
+                qtd_desconto_pct=_to_float(item.get("qtd_desconto_pct")),
             )
         )
     return sellers
