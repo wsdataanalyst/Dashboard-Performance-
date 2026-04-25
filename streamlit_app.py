@@ -1717,7 +1717,8 @@ def page_projection(settings, conn) -> None:
                         dias_uteis_total=int(dias_total),
                         dias_uteis_trabalhados=int(dias_trab),
                         meta_faturamento=prev_meta_eff,
-                        ticket_medio_override=float(ticket_override) if ticket_override > 0 else None,
+                        # Comparativo deve refletir o dado do documento anterior (sem override atual)
+                        ticket_medio_override=None,
                     )
                     prev_expect = prev_proj
             except Exception:
@@ -1789,7 +1790,8 @@ def page_projection(settings, conn) -> None:
                     dias_uteis_total=int(dias_total),
                     dias_uteis_trabalhados=int(dias_trab),
                     meta_faturamento=prev_meta_eff,
-                    ticket_medio_override=float(ticket_override_time) if ticket_override_time > 0 else None,
+                    # Comparativo deve refletir o dado do documento anterior (sem override atual)
+                    ticket_medio_override=None,
                 )
                 prev_expect = prev_proj
             except Exception:
