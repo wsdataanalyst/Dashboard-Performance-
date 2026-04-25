@@ -819,7 +819,8 @@ def page_upload(settings, conn) -> None:
 
     st.markdown("### 📄 Importar Excel (mais confiável que OCR)")
     excel_files = st.file_uploader(
-        "Envie os 5 arquivos (um por print) — aceita .xlsx / .xls (inclui export HTML).",
+        "Envie os **7 arquivos** de uma vez (aceita .xlsx / .xls, incluindo export HTML). "
+        "O app reconhece automaticamente: Performance (prints 1–5), **Faturamento e Atendidos** (dia a dia) e **Departamentos**.",
         type=["xlsx", "xls"],
         accept_multiple_files=True,
         key="excel_upload",
@@ -828,14 +829,68 @@ def page_upload(settings, conn) -> None:
         if st.button("📥 Importar arquivos (Excel/HTML)", use_container_width=True):
             try:
                 with st.spinner("Importando arquivos..."):
-                    res = import_5_files_to_payload([(f.name, f.read()) for f in excel_files])
+                    files_bytes = [(f.name, f.read()) for f in excel_files]
+                    res = import_5_files_to_payload(files_bytes)
+
+                    # Cache: evolução diária (Faturamento e Atendidos)
+                    daily_ok = False
+                    for fname, b in files_bytes:
+                        try:
+                            dres = import_faturamento_atendidos_daily_df(b)
+                            if isinstance(dres.df_daily, pd.DataFrame) and not dres.df_daily.empty:
+                                st.session_state["sg_daily_df"] = dres.df_daily
+                                st.session_state["sg_daily_meta"] = dres.meta
+                                st.session_state["sg_daily_source_name"] = fname
+                                # também preenche KPIs do dia anterior automaticamente
+                                try:
+                                    kres = import_faturamento_atendidos_xlsx(b)
+                                    if kres.kpis:
+                                        st.session_state["sg_nf_dia"] = int(kres.kpis.get("nf_dia_anterior") or 0)
+                                        st.session_state["sg_nf_acum"] = int(kres.kpis.get("nf_acumulado") or 0)
+                                        st.session_state["sg_cli_dia"] = int(kres.kpis.get("clientes_dia_anterior") or 0)
+                                        st.session_state["sg_cli_acum"] = int(kres.kpis.get("clientes_acumulado") or 0)
+                                        st.session_state["sg_fat_dia_anterior"] = float(kres.kpis.get("faturamento_dia_anterior") or 0.0)
+                                        st.session_state["sg_kpi_source_name"] = fname
+                                except Exception:
+                                    pass
+                                daily_ok = True
+                                break
+                        except Exception:
+                            continue
+
+                    # Cache: departamentos
+                    try:
+                        dpt = import_departamentos(files_bytes)
+                        dept_rows = (dpt.payload or {}).get("departamentos") if isinstance(dpt.payload, dict) else None
+                        if isinstance(dept_rows, list) and len(dept_rows) > 0:
+                            st.session_state["dept_payload"] = dpt.payload
+                            st.session_state["dept_meta"] = dpt.meta
+                            st.session_state["dept_source_names"] = [n for (n, _) in files_bytes]
+                        # warnings não são erro — só informa
+                        if dpt.warnings:
+                            st.session_state["dept_warnings"] = dpt.warnings
+                    except Exception:
+                        pass
+
+                    st.session_state["upload_files_cache"] = {n: b for (n, b) in files_bytes}
                 if periodo and isinstance(res.payload, dict):
                     res.payload["periodo"] = periodo
                 st.session_state["payload"] = res.payload
                 st.session_state["extraction_meta"] = res.meta
-                if res.warnings:
+                # Avisos consolidados
+                combined_warnings: list[str] = []
+                try:
+                    combined_warnings.extend(list(res.warnings or []))
+                except Exception:
+                    pass
+                if not daily_ok:
+                    combined_warnings.append(
+                        "Não encontrei o arquivo 'Faturamento e Atendidos' neste lote (aba Evolução dia a dia ficará sem base até importar)."
+                    )
+
+                if combined_warnings:
                     st.warning("Importação concluída com avisos.")
-                    for w in res.warnings:
+                    for w in combined_warnings:
                         st.caption(w)
                 else:
                     st.success("Importação concluída.")
@@ -857,6 +912,14 @@ def page_upload(settings, conn) -> None:
         st.session_state.pop("payload", None)
         st.session_state.pop("extraction_meta", None)
         st.session_state.pop("insights", None)
+        st.session_state.pop("sg_daily_df", None)
+        st.session_state.pop("sg_daily_meta", None)
+        st.session_state.pop("sg_daily_source_name", None)
+        st.session_state.pop("dept_payload", None)
+        st.session_state.pop("dept_meta", None)
+        st.session_state.pop("dept_source_names", None)
+        st.session_state.pop("dept_warnings", None)
+        st.session_state.pop("upload_files_cache", None)
         st.rerun()
 
     if run_ia:
@@ -3572,33 +3635,11 @@ def page_sala_gestao(settings, conn) -> None:
     with tab_kpis:
         st.markdown("### Projeção de faturamento / alcance")
 
-        st.markdown("### Importar KPIs diários (Faturamento e Atendidos.xlsx)")
-        kpi_file = st.file_uploader(
-            "Arquivo diário (Faturamento e Atendidos.xlsx)",
-            type=["xlsx"],
-            accept_multiple_files=False,
-            key="kpi_daily_upload",
-        )
-        if kpi_file and st.button("📥 Carregar KPIs do Excel", use_container_width=True, key="btn_kpi_excel"):
-            try:
-                res = import_faturamento_atendidos_xlsx(kpi_file.read())
-                if res.warnings:
-                    st.warning("Importei, mas com avisos:")
-                    for w in res.warnings:
-                        st.caption(w)
-                if res.kpis:
-                    st.session_state["sg_nf_dia"] = int(res.kpis.get("nf_dia_anterior") or 0)
-                    st.session_state["sg_nf_acum"] = int(res.kpis.get("nf_acumulado") or 0)
-                    st.session_state["sg_cli_dia"] = int(res.kpis.get("clientes_dia_anterior") or 0)
-                    st.session_state["sg_cli_acum"] = int(res.kpis.get("clientes_acumulado") or 0)
-                    st.session_state["sg_fat_dia_anterior"] = float(res.kpis.get("faturamento_dia_anterior") or 0.0)
-                    st.success(
-                        f"KPIs carregados (ref: dia {res.kpis.get('dia_referencia')} {res.kpis.get('mes_referencia') or ''})."
-                    )
-                    st.rerun()
-            except Exception as e:
-                st.error("Falha ao ler o Excel diário.")
-                st.caption(str(e))
+        src_name = st.session_state.get("sg_kpi_source_name") or st.session_state.get("sg_daily_source_name")
+        if src_name:
+            st.caption(f"KPIs diários carregados automaticamente a partir de **{src_name}** (Nova análise).")
+        else:
+            st.info("Para preencher os KPIs diários automaticamente, envie o arquivo **Faturamento e Atendidos.xlsx** em **Nova análise**.")
 
         active_id = st.session_state.get("active_analysis_id")
         payload_base: dict | None = None
@@ -3704,225 +3745,101 @@ def page_sala_gestao(settings, conn) -> None:
         st.markdown("### Evolução dia a dia — NFS, Atendidos e Faturamento")
         st.caption("Gráficos separados para evitar confusão de escala (R$ vs contagens).")
 
-        evol_file = st.file_uploader(
-            "Documento: Faturamento e Atendidos.xlsx (mês atual)",
-            type=["xlsx"],
-            accept_multiple_files=False,
-            key="sg_evolucao_upload",
-        )
-
-        if evol_file:
+        daily = st.session_state.get("sg_daily_df")
+        daily_meta = st.session_state.get("sg_daily_meta")
+        if not isinstance(daily, pd.DataFrame) or daily.empty:
+            st.info("Envie o arquivo **Faturamento e Atendidos.xlsx** em **Nova análise** para habilitar esta aba.")
+        else:
             try:
-                res = import_faturamento_atendidos_daily_df(evol_file.read())
-                if res.warnings:
-                    st.warning("Importei, mas com avisos:")
-                    for w in res.warnings:
-                        st.caption(w)
+                df = daily
+                res_meta = daily_meta if isinstance(daily_meta, dict) else {}
+                import plotly.express as px
 
-                df = res.df_daily
-                if df is None or df.empty:
-                    st.info("Sem dados diários para plotar (verifique o arquivo).")
-                else:
-                    # deixa disponível para o relatório executivo
-                    st.session_state["sg_daily_df"] = df
-                    st.session_state["sg_daily_meta"] = res.meta
-                    import plotly.express as px
+                title_suffix = ""
+                if isinstance(res_meta, dict) and res_meta.get("mes_referencia"):
+                    title_suffix = f" — {res_meta.get('mes_referencia')}"
 
-                    title_suffix = ""
-                    if isinstance(res.meta, dict) and res.meta.get("mes_referencia"):
-                        title_suffix = f" — {res.meta.get('mes_referencia')}"
+                df_plot = df
 
-                    df_plot = df
+                # Resumo diário (inclui sábado) + seletor de dia
+                try:
+                    import datetime as _dt
+                    import re as _re
 
-                    # Resumo diário (inclui sábado) + seletor de dia
-                    try:
-                        import datetime as _dt
-                        import re as _re
-
-                        def _parse_month_year(mes_ref: str | None) -> tuple[int, int]:
-                            today = _dt.date.today()
-                            if not mes_ref:
-                                return today.year, today.month
-                            s = str(mes_ref).strip().lower()
-                            # tenta: "04/2026", "4/26", "2026-04"
-                            m = _re.search(r"(?<!\d)(\d{1,2})\s*[/\-]\s*(\d{2,4})(?!\d)", s)
-                            if m:
-                                mm = int(m.group(1))
-                                yy = int(m.group(2))
-                                if yy < 100:
-                                    yy += 2000
-                                if 1 <= mm <= 12:
-                                    return yy, mm
-                            m2 = _re.search(r"(?<!\d)(\d{4})\s*[/\-]\s*(\d{1,2})(?!\d)", s)
+                    mes_ref = (res_meta or {}).get("mes_referencia") if isinstance(res_meta, dict) else None
+                    today = _dt.date.today()
+                    yy, mm = today.year, today.month
+                    if mes_ref:
+                        s = str(mes_ref).strip().lower()
+                        m = _re.search(r"(?<!\d)(\d{1,2})\s*[/\\-]\s*(\d{2,4})(?!\d)", s)
+                        if m:
+                            mm = int(m.group(1))
+                            yy = int(m.group(2))
+                            if yy < 100:
+                                yy += 2000
+                        else:
+                            m2 = _re.search(r"(?<!\d)(\d{4})\s*[/\\-]\s*(\d{1,2})(?!\d)", s)
                             if m2:
                                 yy = int(m2.group(1))
                                 mm = int(m2.group(2))
-                                if 1 <= mm <= 12:
-                                    return yy, mm
-                            # tenta: "abril/2026" etc
-                            months = {
-                                "jan": 1,
-                                "janeiro": 1,
-                                "fev": 2,
-                                "fevereiro": 2,
-                                "mar": 3,
-                                "marco": 3,
-                                "março": 3,
-                                "abr": 4,
-                                "abril": 4,
-                                "mai": 5,
-                                "maio": 5,
-                                "jun": 6,
-                                "junho": 6,
-                                "jul": 7,
-                                "julho": 7,
-                                "ago": 8,
-                                "agosto": 8,
-                                "set": 9,
-                                "setembro": 9,
-                                "out": 10,
-                                "outubro": 10,
-                                "nov": 11,
-                                "novembro": 11,
-                                "dez": 12,
-                                "dezembro": 12,
-                            }
-                            yy = None
-                            my = _re.search(r"(?<!\d)(\d{4})(?!\d)", s)
-                            if my:
-                                yy = int(my.group(1))
-                            for k, v in months.items():
-                                if k in s:
-                                    return (yy or today.year), v
-                            return today.year, today.month
 
-                        yy, mm = _parse_month_year((res.meta or {}).get("mes_referencia") if isinstance(res.meta, dict) else None)
-                        d0 = df.copy()
-                        d0 = d0.sort_values("dia").reset_index(drop=True)
-                        fat_s = pd.to_numeric(d0.get("faturamento"), errors="coerce").fillna(0.0)
-                        nf_s = pd.to_numeric(d0.get("nfs_emitidas"), errors="coerce").fillna(0.0)
-                        cli_s = pd.to_numeric(d0.get("clientes_atendidos"), errors="coerce").fillna(0.0)
+                    d0 = df.copy().sort_values("dia").reset_index(drop=True)
+                    fat_s = pd.to_numeric(d0.get("faturamento"), errors="coerce").fillna(0.0)
+                    nf_s = pd.to_numeric(d0.get("nfs_emitidas"), errors="coerce").fillna(0.0)
+                    cli_s = pd.to_numeric(d0.get("clientes_atendidos"), errors="coerce").fillna(0.0)
 
-                        # último dia com movimento (prioriza faturamento; fallback volume)
-                        move = (fat_s > 0) | (nf_s > 0) | (cli_s > 0)
-                        last_move_day = int(d0.loc[move, "dia"].iloc[-1]) if move.any() else int(d0["dia"].max())
+                    move = (fat_s > 0) | (nf_s > 0) | (cli_s > 0)
+                    last_move_day = int(d0.loc[move, "dia"].iloc[-1]) if move.any() else int(d0["dia"].max())
+                    default_day = last_move_day if today.weekday() == 0 else int(d0["dia"].max())
 
-                        # regra prática: segunda-feira sugere o sábado/último movimento automaticamente
-                        today = _dt.date.today()
-                        default_day = last_move_day if today.weekday() == 0 else int(d0["dia"].max())
-
-                        # opções com dia da semana (quando conseguimos inferir mês/ano)
-                        wd_short = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
-                        day_values = [int(x) for x in d0["dia"].tolist()]
-                        labels = []
-                        for dd in day_values:
-                            try:
-                                wd = _dt.date(int(yy), int(mm), int(dd)).weekday()
-                                labels.append(f"Dia {dd:02d} ({wd_short[wd]})")
-                            except Exception:
-                                labels.append(f"Dia {dd:02d}")
-
-                        label_to_day = {labels[i]: day_values[i] for i in range(len(labels))}
-                        default_label = next((lab for lab, dd in label_to_day.items() if dd == default_day), labels[-1] if labels else None)
-
-                        st.markdown("#### Fechamento diário (inclui sábado)")
-                        cL, cR = st.columns([1.35, 1])
-                        with cL:
-                            sel_label = st.selectbox(
-                                "Selecione o dia para análise",
-                                options=labels,
-                                index=(labels.index(default_label) if (default_label in labels) else max(0, len(labels) - 1)),
-                                help="Dica: na segunda-feira o app sugere automaticamente o último dia com movimento (geralmente sábado).",
-                                key="sg_daily_selected_label",
-                            )
-                        with cR:
-                            st.caption(f"**Último dia com movimento**: {last_move_day:02d}")
-
-                        sel_day = int(label_to_day.get(sel_label) or default_day)
-                        row = d0[d0["dia"] == sel_day].head(1)
-                        fat_v = float(pd.to_numeric(row["faturamento"], errors="coerce").fillna(0.0).iloc[0]) if not row.empty else 0.0
-                        nf_v = int(pd.to_numeric(row["nfs_emitidas"], errors="coerce").fillna(0).iloc[0]) if not row.empty else 0
-                        cli_v = int(pd.to_numeric(row["clientes_atendidos"], errors="coerce").fillna(0).iloc[0]) if not row.empty else 0
-
-                        a1, a2, a3, a4 = st.columns(4)
-                        with a1:
-                            _sg_kpi_card("Dia selecionado", f"{sel_day:02d}", icon="🗓️", accent="#93c5fd", delta=None)
-                        with a2:
-                            _sg_kpi_card("Faturamento (dia)", f"R$ {fat_v:,.2f}", icon="💰", accent="#6EE7B7", delta=None)
-                        with a3:
-                            _sg_kpi_card("NFS (dia)", f"{nf_v:d}", icon="📦", accent="#C4B5FD", delta=None)
-                        with a4:
-                            _sg_kpi_card("Atendidos (dia)", f"{cli_v:d}", icon="👥", accent="#FBBF24", delta=None)
-
-                        # destaque explícito para sábado quando houver movimento nele
+                    wd_short = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+                    labels: list[str] = []
+                    for dd in d0["dia"].astype(int).tolist():
                         try:
-                            d0["_weekday"] = d0["dia"].apply(lambda dd: _dt.date(int(yy), int(mm), int(dd)).weekday())
-                            # gráficos não precisam contar sábado (remove sábado da visão dos gráficos/tabela)
-                            df_plot = d0[d0["_weekday"] != 5].drop(columns=["_weekday"], errors="ignore").copy()
-
-                            sat = d0[(d0["_weekday"] == 5) & ((pd.to_numeric(d0["faturamento"], errors="coerce").fillna(0.0) > 0.0) | (pd.to_numeric(d0["nfs_emitidas"], errors="coerce").fillna(0) > 0) | (pd.to_numeric(d0["clientes_atendidos"], errors="coerce").fillna(0) > 0))]
-                            if not sat.empty:
-                                sat_last = sat.sort_values("dia").iloc[-1]
-                                # sexta mais recente antes desse sábado (se existir)
-                                fri = d0[(d0["_weekday"] == 4) & (d0["dia"] < int(sat_last["dia"]))].sort_values("dia")
-                                fri_last = fri.iloc[-1] if not fri.empty else None
-
-                                sat_f = float(pd.to_numeric(sat_last.get("faturamento"), errors="coerce") or 0.0)
-                                sat_nf = int(pd.to_numeric(sat_last.get("nfs_emitidas"), errors="coerce") or 0)
-                                sat_cli = int(pd.to_numeric(sat_last.get("clientes_atendidos"), errors="coerce") or 0)
-
-                                fri_f = float(pd.to_numeric(fri_last.get("faturamento"), errors="coerce") or 0.0) if fri_last is not None else 0.0
-                                fri_nf = int(pd.to_numeric(fri_last.get("nfs_emitidas"), errors="coerce") or 0) if fri_last is not None else 0
-                                fri_cli = int(pd.to_numeric(fri_last.get("clientes_atendidos"), errors="coerce") or 0) if fri_last is not None else 0
-                                fri_day = int(fri_last.get("dia")) if fri_last is not None else None
-
-                                total_f = fri_f + sat_f
-                                total_nf = fri_nf + sat_nf
-                                total_cli = fri_cli + sat_cli
-
-                                st.info(
-                                    (
-                                        f"Existe **movimento no sábado** (dia {int(sat_last['dia']):02d}): "
-                                        f"R$ {sat_f:,.2f} | NFS {sat_nf} | Atendidos {sat_cli}. "
-                                        + (
-                                            f"**Sexta** (dia {fri_day:02d}): R$ {fri_f:,.2f} | NFS {fri_nf} | Atendidos {fri_cli}. "
-                                            if fri_day is not None
-                                            else ""
-                                        )
-                                        + f"**Total Sex+Sáb**: R$ {total_f:,.2f} | NFS {total_nf} | Atendidos {total_cli}."
-                                    )
-                                )
-
-                                # cards adicionais para leitura rápida (faturamento + volumes)
-                                b1, b2, b3 = st.columns(3)
-                                with b1:
-                                    _sg_kpi_card(
-                                        "Sexta (total do dia)",
-                                        (f"R$ {fri_f:,.2f}" if fri_day is not None else "—"),
-                                        icon="📌",
-                                        accent="#93c5fd",
-                                        delta=(f"NFS {fri_nf} | Atendidos {fri_cli}" if fri_day is not None else None),
-                                    )
-                                with b2:
-                                    _sg_kpi_card(
-                                        "Sábado (total do dia)",
-                                        f"R$ {sat_f:,.2f}",
-                                        icon="🧾",
-                                        accent="#6EE7B7",
-                                        delta=f"NFS {sat_nf} | Atendidos {sat_cli}",
-                                    )
-                                with b3:
-                                    _sg_kpi_card(
-                                        "Total Sex+Sáb",
-                                        f"R$ {total_f:,.2f}",
-                                        icon="🧮",
-                                        accent="#FBBF24",
-                                        delta=f"NFS {total_nf} | Atendidos {total_cli}",
-                                    )
+                            wd = _dt.date(int(yy), int(mm), int(dd)).weekday()
+                            labels.append(f"Dia {dd:02d} ({wd_short[wd]})")
                         except Exception:
-                            pass
+                            labels.append(f"Dia {dd:02d}")
+                    label_to_day = {labels[i]: int(d0["dia"].iloc[i]) for i in range(len(labels))}
+
+                    st.markdown("#### Fechamento diário (inclui sábado)")
+                    cL, cR = st.columns([1.35, 1])
+                    with cL:
+                        sel_label = st.selectbox(
+                            "Selecione o dia para análise",
+                            options=labels,
+                            index=max(0, next((i for i, lab in enumerate(labels) if label_to_day.get(lab) == default_day), len(labels) - 1)),
+                            help="Dica: na segunda-feira o app sugere automaticamente o último dia com movimento (geralmente sábado).",
+                            key="sg_daily_selected_label",
+                        )
+                    with cR:
+                        st.caption(f"**Último dia com movimento**: {last_move_day:02d}")
+
+                    sel_day = int(label_to_day.get(sel_label) or default_day)
+                    row = d0[d0["dia"] == sel_day].head(1)
+                    fat_v = float(pd.to_numeric(row.get("faturamento"), errors="coerce").fillna(0.0).iloc[0]) if not row.empty else 0.0
+                    nf_v = int(pd.to_numeric(row.get("nfs_emitidas"), errors="coerce").fillna(0).iloc[0]) if not row.empty else 0
+                    cli_v = int(pd.to_numeric(row.get("clientes_atendidos"), errors="coerce").fillna(0).iloc[0]) if not row.empty else 0
+
+                    a1, a2, a3, a4 = st.columns(4)
+                    with a1:
+                        _sg_kpi_card("Dia selecionado", f"{sel_day:02d}", icon="🗓️", accent="#93c5fd", delta=None)
+                    with a2:
+                        _sg_kpi_card("Faturamento (dia)", f"R$ {fat_v:,.2f}", icon="💰", accent="#6EE7B7", delta=None)
+                    with a3:
+                        _sg_kpi_card("NFS (dia)", f"{nf_v:d}", icon="📦", accent="#C4B5FD", delta=None)
+                    with a4:
+                        _sg_kpi_card("Atendidos (dia)", f"{cli_v:d}", icon="👥", accent="#FBBF24", delta=None)
+
+                    # Remove sábado dos gráficos/tabela (mas mantém análise via seletor)
+                    try:
+                        d0["_weekday"] = d0["dia"].apply(lambda dd: _dt.date(int(yy), int(mm), int(dd)).weekday())
+                        df_plot = d0[d0["_weekday"] != 5].drop(columns=["_weekday"], errors="ignore").copy()
                     except Exception:
-                        pass
+                        df_plot = d0.copy()
+
+                except Exception:
+                    pass
 
                     avg_fat = float(pd.to_numeric(df_plot.get("faturamento"), errors="coerce").fillna(0).mean())
                     avg_nf = float(pd.to_numeric(df_plot.get("nfs_emitidas"), errors="coerce").fillna(0).mean())
@@ -4408,26 +4325,10 @@ def page_sala_gestao(settings, conn) -> None:
 
     with tab_dept:
         st.markdown("### Performance por departamentos")
-        dept_files = st.file_uploader(
-            "Arquivos de departamentos (.xlsx/.xls)",
-            type=["xlsx", "xls"],
-            accept_multiple_files=True,
-            key="dept_upload",
-        )
-        if dept_files and st.button("📥 Importar Departamentos (Excel/HTML)", use_container_width=True):
-            try:
-                res = import_departamentos([(f.name, f.read()) for f in dept_files])
-                st.session_state["dept_payload"] = res.payload
-                st.session_state["dept_meta"] = res.meta
-                if res.warnings:
-                    st.warning("Importado com avisos.")
-                    for w in res.warnings:
-                        st.caption(w)
-                else:
-                    st.success("Departamentos importados.")
-            except Exception as e:
-                st.error("Falha ao importar departamentos.")
-                st.caption(str(e))
+        if st.session_state.get("dept_source_names"):
+            st.caption("Base de departamentos carregada via **Nova análise** (upload único).")
+        else:
+            st.info("Para habilitar esta aba, envie os arquivos de **Departamentos** em **Nova análise**.")
 
         dept_payload = st.session_state.get("dept_payload")
         if isinstance(dept_payload, dict) and isinstance(dept_payload.get("departamentos"), list):
