@@ -2463,17 +2463,10 @@ def page_sala_gestao(settings, conn) -> None:
         c3.metric(
             "% da meta",
             f"{perc_meta:.1f}%" if perc_meta is not None else "—",
-            delta=(f"{(perc_meta - prev_perc_meta):+.1f} pp" if (perc_meta is not None and prev_perc_meta is not None) else None),
         )
         c4.metric(
             "Falta p/ meta",
             f"R$ {falta_meta:,.2f}" if meta_total > 0 else "—",
-            delta=_fmt_delta_with_pct(
-                (falta_meta - prev_falta_meta) if isinstance(prev_falta_meta, (int, float)) else None,
-                prev_falta_meta if isinstance(prev_falta_meta, (int, float)) else None,
-                is_money=True,
-            ),
-            delta_color="inverse",
         )
 
         k0, k1, k2, k3 = st.columns(4)
@@ -2541,16 +2534,60 @@ def page_sala_gestao(settings, conn) -> None:
         except Exception:
             margem_media = None
 
+        # Margem média — comparar com a última análise anterior (penúltimo dia) do histórico de performance
+        prev_margem_media = None
+        try:
+            rows_perf = list_analyses(conn, limit=120, owner_user_id=owner_id, include_all=is_admin)
+            for r in rows_perf:
+                if active_id is not None and int(r.id) == int(active_id):
+                    continue
+                try:
+                    p = json.loads(r.payload_json)
+                except Exception:
+                    continue
+                if not isinstance(p, dict):
+                    continue
+                kind = str(p.get("_kind") or "")
+                if kind.startswith("sala_gestao_"):
+                    continue
+                sellers_p = parse_sellers(p)
+                if not sellers_p:
+                    continue
+                results_p, _ = calcular_time(sellers_p)
+                if not results_p:
+                    continue
+                df_p = pd.DataFrame([x.__dict__ for x in results_p])
+                stats_p = _team_stats(df_p)
+                if stats_p.get("media_margem") is None:
+                    continue
+                prev_margem_media = float(stats_p.get("media_margem"))
+                break
+        except Exception:
+            prev_margem_media = None
+
+        def _fmt_delta_pp_and_pct(cur_pct: float | None, ref_pct: float | None) -> str | None:
+            if cur_pct is None or ref_pct is None:
+                return None
+            try:
+                c = float(cur_pct)
+                r = float(ref_pct)
+            except Exception:
+                return None
+            diff_pp = c - r
+            if abs(r) < 1e-9:
+                return f"{diff_pp:+.1f} pp"
+            rel = (diff_pp / abs(r)) * 100.0
+            return f"{diff_pp:+.1f} pp ({rel:+.1f}%)"
+
         k4, k5, k6, k7 = st.columns(4)
         k4.metric("Acumulado NFs", int(prev0_k.get("nf_acumulado") or 0))
         k5.metric("Acumulado Clientes", int(prev0_k.get("clientes_acumulado") or 0))
-        k6.metric("Margem média (time)", f"{margem_media:.1f}%" if margem_media is not None else "—")
-        # Margem: indicador principal = margem hoje; delta = hoje vs ontem (já existia)
-        k7.metric(
-            "Margem (hoje vs ontem)",
-            (f"{float(marg_hoje_pct or 0.0):.1f}%" if marg_hoje_pct is not None else "—"),
-            delta=(f"{round(float(marg_hoje_pct) - float(marg_ontem_pct), 1):+.1f} pp" if (marg_hoje_pct is not None and marg_ontem_pct is not None) else None),
+        k6.metric(
+            "Margem média (time)",
+            f"{margem_media:.1f}%" if margem_media is not None else "—",
+            delta=_fmt_delta_pp_and_pct(margem_media, prev_margem_media),
         )
+        k7.empty()
 
         # Vendedores (alcance)
         st.markdown("### Vendedores — faixas de % Alcance")
