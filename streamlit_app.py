@@ -1849,70 +1849,107 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
     # Mapa de "temperatura": quantos indicadores cada vendedor entrega
     try:
         if isinstance(df, pd.DataFrame) and (not df.empty):
-            def _to_bool(v: object) -> bool:
-                if v is None:
-                    return False
-                if isinstance(v, bool):
-                    return bool(v)
-                s = str(v).strip().lower()
-                return s in {"true", "1", "sim", "yes", "y"}
+            raw_map = {getattr(s, "nome", None): s for s in (sellers or [])}
 
-            delivered_cols = [
-                ("elegivel_margem", "Margem+Alcance"),
-                ("bateu_prazo", "Prazo"),
-                ("bateu_conversao", "Conversão"),
-                ("bateu_tme", "TME"),
-                ("bateu_interacao", "Interações"),
-            ]
-            present = [(c, label) for (c, label) in delivered_cols if c in df.columns]
-            if present:
-                dfx = df[["nome"] + [c for (c, _) in present]].copy()
-                for c, _ in present:
-                    dfx[c] = dfx[c].apply(_to_bool)
-                dfx["indicadores_entregues"] = dfx[[c for (c, _) in present]].sum(axis=1).astype(int)
-                dfx = dfx.sort_values(["indicadores_entregues", "nome"], ascending=[False, True]).reset_index(drop=True)
-
-                best = dfx.iloc[0]
-                worst = dfx.iloc[-1]
-                st.markdown("#### Temperatura — indicadores entregues (por vendedor)")
-                s1, s2 = st.columns(2)
-                s1.markdown(
-                    f"**Maior entrega**: **{best['nome']}** — **{int(best['indicadores_entregues'])}** indicador(es)"
-                )
-                s2.markdown(
-                    f"**Menor entrega**: **{worst['nome']}** — **{int(worst['indicadores_entregues'])}** indicador(es)"
-                )
-
+            def _num(x: object) -> float | None:
                 try:
-                    import plotly.graph_objects as go
+                    if x is None or (isinstance(x, float) and pd.isna(x)):
+                        return None
+                    v = float(x)
+                    return None if pd.isna(v) else v
+                except Exception:
+                    return None
 
-                    fig_h = go.Figure(
-                        data=go.Heatmap(
-                            z=[dfx["indicadores_entregues"].tolist()],
-                            x=dfx["nome"].tolist(),
-                            y=["Indicadores entregues"],
-                            colorscale=[
-                                [0.0, "rgba(251,113,133,0.35)"],
-                                [0.4, "rgba(251,191,36,0.35)"],
-                                [0.7, "rgba(110,231,183,0.45)"],
-                                [1.0, "rgba(34,197,94,0.55)"],
-                            ],
-                            zmin=0,
-                            zmax=max(1, int(dfx["indicadores_entregues"].max())),
-                            hovertemplate="<b>%{x}</b><br>Indicadores entregues: %{z}<extra></extra>",
-                            showscale=True,
-                            colorbar=dict(title="Qtd", thickness=12),
-                        )
+            def _int(x: object) -> int | None:
+                v = _num(x)
+                return int(v) if v is not None else None
+
+            # Limites (já usados na regra de bônus/ideal):
+            # Margem >= 26 | Conversão >= 12 | Prazo <= 43 | TME <= 5 | Interações >= 200
+            # Meta Faturamento entregue: (Faturamento / Meta) * 100 >= 100
+            # Desconto: menor é melhor — usa referência dinâmica (média do time no período)
+            disc_ref = None
+            try:
+                dp = [float(getattr(x, "desconto_pct", 0.0)) for x in (sellers or []) if getattr(x, "desconto_pct", None) is not None]
+                disc_ref = (sum(dp) / len(dp)) if dp else None
+            except Exception:
+                disc_ref = None
+
+            dfx = df[["nome", "margem_pct", "conversao_pct", "prazo_medio", "tme_minutos", "interacoes"]].copy()
+            dfx["faturamento"] = dfx["nome"].apply(lambda n: _num(getattr(raw_map.get(n), "faturamento", None)))
+            dfx["meta_faturamento"] = dfx["nome"].apply(lambda n: _num(getattr(raw_map.get(n), "meta_faturamento", None)))
+            dfx["desconto_pct"] = dfx["nome"].apply(lambda n: _num(getattr(raw_map.get(n), "desconto_pct", None)))
+
+            fat = pd.to_numeric(dfx["faturamento"], errors="coerce")
+            meta = pd.to_numeric(dfx["meta_faturamento"], errors="coerce")
+            alcance_real = (fat / meta) * 100.0
+
+            dfx["entregue_meta_faturamento"] = (meta.notna()) & (meta > 0) & (fat.notna()) & (alcance_real >= 100.0)
+            dfx["entregue_margem"] = pd.to_numeric(dfx["margem_pct"], errors="coerce") >= 26.0
+            dfx["entregue_conversao"] = pd.to_numeric(dfx["conversao_pct"], errors="coerce") >= 12.0
+            dfx["entregue_prazo"] = pd.to_numeric(dfx["prazo_medio"], errors="coerce") <= 43.0
+            dfx["entregue_tme"] = pd.to_numeric(dfx["tme_minutos"], errors="coerce") <= 5.0
+            dfx["entregue_interacoes"] = pd.to_numeric(dfx["interacoes"], errors="coerce") >= 200.0
+            if disc_ref is not None:
+                dfx["entregue_desconto"] = pd.to_numeric(dfx["desconto_pct"], errors="coerce") <= float(disc_ref)
+            else:
+                dfx["entregue_desconto"] = False
+
+            entregas_cols = [
+                "entregue_meta_faturamento",
+                "entregue_margem",
+                "entregue_conversao",
+                "entregue_prazo",
+                "entregue_tme",
+                "entregue_interacoes",
+                "entregue_desconto",
+            ]
+            dfx["indicadores_entregues"] = dfx[entregas_cols].fillna(False).sum(axis=1).astype(int)
+            dfx = dfx.sort_values(["indicadores_entregues", "nome"], ascending=[False, True]).reset_index(drop=True)
+
+            best = dfx.iloc[0]
+            worst = dfx.iloc[-1]
+            st.markdown("#### Temperatura — indicadores entregues (por vendedor)")
+            s1, s2 = st.columns(2)
+            s1.markdown(
+                f"**Maior entrega**: **{best['nome']}** — **{int(best['indicadores_entregues'])}** indicador(es)"
+            )
+            s2.markdown(
+                f"**Menor entrega**: **{worst['nome']}** — **{int(worst['indicadores_entregues'])}** indicador(es)"
+            )
+
+            try:
+                import plotly.graph_objects as go
+
+                fig_h = go.Figure(
+                    data=go.Heatmap(
+                        z=[dfx["indicadores_entregues"].tolist()],
+                        x=dfx["nome"].tolist(),
+                        y=["Indicadores entregues"],
+                        colorscale=[
+                            [0.0, "rgba(251,113,133,0.35)"],
+                            [0.4, "rgba(251,191,36,0.35)"],
+                            [0.7, "rgba(110,231,183,0.45)"],
+                            [1.0, "rgba(34,197,94,0.55)"],
+                        ],
+                        zmin=0,
+                        zmax=max(1, int(dfx["indicadores_entregues"].max())),
+                        hovertemplate="<b>%{x}</b><br>Indicadores entregues: %{z}<extra></extra>",
+                        showscale=True,
+                        colorbar=dict(title="Qtd", thickness=12),
                     )
-                    fig_h.update_layout(
-                        height=220,
-                        margin=dict(l=10, r=10, t=10, b=10),
-                        xaxis=dict(tickangle=-35),
-                        yaxis=dict(tickfont=dict(size=12)),
-                    )
-                    st.plotly_chart(fig_h, use_container_width=True, key=f"{key_prefix}_heat_indicadores_entregues")
-                except Exception as e:
-                    st.caption(f"Mapa de calor indisponível: {e}")
+                )
+                fig_h.update_layout(
+                    height=220,
+                    margin=dict(l=10, r=10, t=10, b=10),
+                    xaxis=dict(tickangle=-35),
+                    yaxis=dict(tickfont=dict(size=12)),
+                )
+                st.plotly_chart(fig_h, use_container_width=True, key=f"{key_prefix}_heat_indicadores_entregues")
+                if disc_ref is not None:
+                    st.caption(f"Regra do indicador **Desconto**: entregue quando % aplicado ≤ média do time (**{float(disc_ref):.2f}%**).")
+            except Exception as e:
+                st.caption(f"Mapa de calor indisponível: {e}")
     except Exception:
         pass
 
