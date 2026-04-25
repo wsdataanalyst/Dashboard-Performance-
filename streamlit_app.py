@@ -1239,32 +1239,50 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
     meta_total = float(totais.get("meta_total") or 0.0) if totais.get("meta_total") is not None else None
     perc_meta = (fat_total / meta_total * 100.0) if (fat_total is not None and meta_total and meta_total > 0) else None
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Faturamento (time)", f"R$ {fat_total:,.2f}" if fat_total is not None else "—")
-    c2.metric("Meta (time)", f"R$ {meta_total:,.2f}" if meta_total is not None else "—")
-    c3.metric("% da meta", f"{perc_meta:.1f}%" if perc_meta is not None else "—")
-    c4.metric("Margem média", f"{stats['media_margem']:.1f}%")
-    c5.metric("Conversão média", f"{stats['media_conversao']:.1f}%")
-    with c6:
-        d_pct = disc.get("desconto_pct")
-        pct_txt = f"{float(d_pct):.2f}%" if d_pct is not None and not pd.isna(d_pct) else "—"
-        # Card enxuto nesta aba (sem detalhes) para não poluir
+    import html as _html
+
+    def _kpi_card(title: str, value: str, *, icon: str, accent: str) -> None:
         st.markdown(
             f"""
 <div class="dp-card" style="
   padding:12px 12px;
-  border-color: rgba(59,130,246,.22);
-  background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.22), transparent 60%),
-              radial-gradient(900px 220px at 85% 10%, rgba(110,231,183,.16), transparent 55%),
+  border-color: rgba(59,130,246,.18);
+  background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.18), transparent 60%),
+              radial-gradient(900px 220px at 85% 10%, rgba(110,231,183,.12), transparent 55%),
               linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
 ">
-  <div class="dp-kpi-label">Desconto</div>
-  <div class="dp-kpi-value" style="font-size:1.35rem;color:#93c5fd;text-shadow:0 0 24px rgba(59,130,246,.25);">{pct_txt}</div>
-  <div class="dp-kpi-help">%</div>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+    <div class="dp-kpi-label">{_html.escape(title)}</div>
+    <div style="
+      width:28px;height:28px;border-radius:10px;
+      display:flex;align-items:center;justify-content:center;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.10);
+      font-size: 0.95rem;
+      color: {accent};
+    ">{_html.escape(icon)}</div>
+  </div>
+  <div class="dp-kpi-value" style="font-size:1.35rem;color:{accent};text-shadow:0 0 24px rgba(59,130,246,.18);">{_html.escape(value)}</div>
 </div>
 """,
             unsafe_allow_html=True,
         )
+
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    with c1:
+        _kpi_card("Faturamento (time)", (f"R$ {fat_total:,.2f}" if fat_total is not None else "—"), icon="💰", accent="#6EE7B7")
+    with c2:
+        _kpi_card("Meta (time)", (f"R$ {meta_total:,.2f}" if meta_total is not None else "—"), icon="🎯", accent="#93c5fd")
+    with c3:
+        _kpi_card("% da meta", (f"{perc_meta:.1f}%" if perc_meta is not None else "—"), icon="📈", accent="#FBBF24")
+    with c4:
+        _kpi_card("Margem média", f"{stats['media_margem']:.1f}%", icon="📊", accent="#A7F3D0")
+    with c5:
+        _kpi_card("Conversão média", f"{stats['media_conversao']:.1f}%", icon="🔁", accent="#C4B5FD")
+    with c6:
+        d_pct = disc.get("desconto_pct")
+        pct_txt = f"{float(d_pct):.2f}%" if d_pct is not None and not pd.isna(d_pct) else "—"
+        _kpi_card("Desconto", pct_txt, icon="🏷", accent="#93c5fd")
 
     # Evolução de conversão por período (últimas análises salvas)
     st.markdown("### Conversão x Interações (comparativo por análise salva)")
