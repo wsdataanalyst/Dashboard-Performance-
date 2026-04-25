@@ -408,8 +408,9 @@ def _enrich_results_df_for_performance(results_df: pd.DataFrame, sellers: list) 
     df = results_df.copy()
     df["faturamento"] = df["nome"].apply(lambda n: getattr(raw_map.get(n), "faturamento", None))
     df["meta_faturamento"] = df["nome"].apply(lambda n: getattr(raw_map.get(n), "meta_faturamento", None))
-    # Alcance real (faturamento/meta) vem do payload (ou é calculável quando existir)
-    df["alcance_real_pct"] = df["nome"].apply(lambda n: getattr(raw_map.get(n), "alcance_pct", None))
+    # Alcance real: SEMPRE prioriza (Faturamento / Meta) * 100 quando houver ambos
+    # (regra pedida: bater com a planilha "Alcance e Margem")
+    df["alcance_real_pct"] = None
     df["qtd_faturadas"] = df["qtd_faturadas"] if "qtd_faturadas" in df.columns else None
     df["ticket_medio"] = df.apply(
         lambda r: (float(r["faturamento"]) / float(r["qtd_faturadas"]))
@@ -417,14 +418,19 @@ def _enrich_results_df_for_performance(results_df: pd.DataFrame, sellers: list) 
         else None,
         axis=1,
     )
-    # fallback: calcula alcance real se não veio pronto
+    # calcula alcance real quando possível; fallback usa o valor do payload
     try:
-        mask = df["alcance_real_pct"].isna() & df["faturamento"].notna() & df["meta_faturamento"].notna()
-        df.loc[mask, "alcance_real_pct"] = (
-            pd.to_numeric(df.loc[mask, "faturamento"], errors="coerce")
-            / pd.to_numeric(df.loc[mask, "meta_faturamento"], errors="coerce")
-            * 100.0
-        )
+        fat = pd.to_numeric(df.get("faturamento"), errors="coerce")
+        meta = pd.to_numeric(df.get("meta_faturamento"), errors="coerce")
+        mask_ok = fat.notna() & meta.notna() & (meta > 0)
+        df.loc[mask_ok, "alcance_real_pct"] = (fat[mask_ok] / meta[mask_ok]) * 100.0
+
+        # fallback para quem não tem meta/faturamento (mantém o campo vindo do payload)
+        mask_missing = df["alcance_real_pct"].isna()
+        if mask_missing.any():
+            df.loc[mask_missing, "alcance_real_pct"] = df.loc[mask_missing, "nome"].apply(
+                lambda n: getattr(raw_map.get(n), "alcance_pct", None)
+            )
     except Exception:
         pass
     return df
