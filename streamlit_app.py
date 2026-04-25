@@ -249,35 +249,65 @@ def render_bonus_central_panel_html(df: pd.DataFrame, *, periodo: str, total: fl
 
     # Insight curto para o título (ocupa o "vazio" ao lado do período)
     try:
-        # onde mais está travando (contagem de não-bateu)
         def _cnt_false(col: str) -> int:
             if col not in src.columns:
                 return 0
             s = src[col]
             return int((s == False).sum())  # noqa: E712
 
+        # Top bônus
+        top_nome = None
+        top_bonus = None
+        if "bonus_total" in src.columns:
+            b = pd.to_numeric(src["bonus_total"], errors="coerce")
+            if b.notna().any():
+                i = int(b.idxmax())
+                top_nome = str(src.loc[i].get("nome") or "").strip() or None
+                top_bonus = float(b.loc[i]) if pd.notna(b.loc[i]) else None
+
+        # Média e total por vendedor
+        avg_bonus = (float(total) / float(n)) if n else None
+
+        # Quem está "quase lá": faltando 1 indicador para somar bônus (entre prazo/conversao/tme/interacao + margem elegível)
+        near = 0
+        try:
+            if n and all(c in src.columns for c in ["elegivel_margem", "bateu_prazo", "bateu_conversao", "bateu_tme", "bateu_interacao"]):
+                def _ok(v):
+                    return bool(v) is True
+                for _, rr in src.iterrows():
+                    okm = bool(rr.get("elegivel_margem")) is True
+                    okp = _ok(rr.get("bateu_prazo"))
+                    okc = _ok(rr.get("bateu_conversao"))
+                    okt = _ok(rr.get("bateu_tme"))
+                    oki = _ok(rr.get("bateu_interacao"))
+                    oks = [okm, okp, okc, okt, oki]
+                    if sum(1 for x in oks if x) == 4:
+                        near += 1
+        except Exception:
+            near = 0
+
+        # Gargalos (top 2)
         misses = {
-            "margem": int((~src["elegivel_margem"]).sum()) if "elegivel_margem" in src.columns else 0,
+            "margem/alcance": int((~src["elegivel_margem"]).sum()) if "elegivel_margem" in src.columns else 0,
             "prazo": _cnt_false("bateu_prazo"),
-            "conversao": _cnt_false("bateu_conversao"),
-            "tme": _cnt_false("bateu_tme"),
-            "interacao": _cnt_false("bateu_interacao"),
+            "conversão": _cnt_false("bateu_conversao"),
+            "TME": _cnt_false("bateu_tme"),
+            "interações": _cnt_false("bateu_interacao"),
         }
-        worst_key = max(misses, key=lambda k: misses.get(k, 0)) if misses else "margem"
-        worst_label = {
-            "margem": "margem/alcance",
-            "prazo": "prazo",
-            "conversao": "conversão",
-            "tme": "TME",
-            "interacao": "interações",
-        }.get(worst_key, worst_key)
-        worst_n = int(misses.get(worst_key, 0) or 0)
-        insight = (
-            f"Insight: {n_eleg}/{n} elegíveis na margem ({bar_pct:.0f}%). "
-            f"Maior gargalo hoje: {worst_label} ({worst_n} fora)."
-            if n
-            else "Insight: sem dados suficientes."
-        )
+        top2 = sorted(misses.items(), key=lambda kv: kv[1], reverse=True)[:2]
+        garg = " e ".join([f"{k} ({v})" for k, v in top2 if v is not None]) if top2 else "—"
+
+        parts = []
+        parts.append(f"{n_eleg}/{n} elegíveis na margem ({bar_pct:.0f}%)" if n else "sem base")
+        if top_nome and top_bonus is not None:
+            parts.append(f"Top: {top_nome} (R$ {top_bonus:,.0f})")
+        if avg_bonus is not None:
+            parts.append(f"Média: R$ {avg_bonus:,.0f}/vendedor")
+        if near:
+            parts.append(f"Quase lá: {near} a 1 indicador do bônus")
+        parts.append(f"Gargalos: {garg}")
+
+        insight = " • ".join(parts)
     except Exception:
         insight = "Insight: —"
     insight_esc = html.escape(insight)
