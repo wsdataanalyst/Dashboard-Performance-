@@ -2426,23 +2426,52 @@ def page_sala_gestao(settings, conn) -> None:
             (prev_falta_meta / dias_restantes) if (prev_falta_meta is not None and dias_restantes > 0) else None
         )
 
+        def _fmt_delta_with_pct(delta: float | None, prev_val: float | None, is_money: bool) -> str | None:
+            if delta is None or prev_val is None:
+                return None
+            try:
+                d = float(delta)
+                p = float(prev_val)
+            except Exception:
+                return None
+            if abs(p) < 1e-9:
+                return f"R$ {d:,.2f}" if is_money else f"{d:,.0f}"
+            pct = (d / p) * 100.0
+            if is_money:
+                return f"R$ {d:,.2f} ({pct:+.1f}%)"
+            return f"{d:,.0f} ({pct:+.1f}%)"
+
         c1, c2, c3, c4 = st.columns(4)
         c1.metric(
             "Faturamento (até agora)",
             f"R$ {fat_atual:,.2f}",
-            delta=(f"R$ {fat_atual - prev_fat_total:,.2f}" if isinstance(prev_fat_total, (int, float)) else None),
+            delta=_fmt_delta_with_pct(
+                (fat_atual - prev_fat_total) if isinstance(prev_fat_total, (int, float)) else None,
+                prev_fat_total if isinstance(prev_fat_total, (int, float)) else None,
+                is_money=True,
+            ),
         )
         c2.metric("Meta (time)", f"R$ {meta_total:,.2f}" if meta_total > 0 else "—")
         c3.metric(
             "Falta p/ meta",
             f"R$ {falta_meta:,.2f}" if meta_total > 0 else "—",
-            delta=(f"R$ {falta_meta - prev_falta_meta:,.2f}" if isinstance(prev_falta_meta, (int, float)) else None),
+            delta=_fmt_delta_with_pct(
+                (falta_meta - prev_falta_meta) if isinstance(prev_falta_meta, (int, float)) else None,
+                prev_falta_meta if isinstance(prev_falta_meta, (int, float)) else None,
+                is_money=True,
+            ),
             delta_color="inverse",
         )
         c4.metric(
             "Falta por dia útil",
             f"R$ {falta_por_dia:,.2f}" if falta_por_dia is not None else "—",
-            delta=(f"R$ {falta_por_dia - prev_falta_por_dia:,.2f}" if (falta_por_dia is not None and isinstance(prev_falta_por_dia, (int, float))) else None),
+            delta=_fmt_delta_with_pct(
+                (falta_por_dia - prev_falta_por_dia)
+                if (falta_por_dia is not None and isinstance(prev_falta_por_dia, (int, float)))
+                else None,
+                prev_falta_por_dia if isinstance(prev_falta_por_dia, (int, float)) else None,
+                is_money=True,
+            ),
             delta_color="inverse",
         )
 
@@ -2462,17 +2491,29 @@ def page_sala_gestao(settings, conn) -> None:
         k1.metric(
             "Faturamento (dia anterior)",
             (f"R$ {float(fat_dia_ant or 0.0):,.2f}" if fat_dia_ant is not None else "—"),
-            delta=(f"R$ {float(fat_dia_ant) - float(prev_fat_dia_ant):,.2f}" if (fat_dia_ant is not None and prev_fat_dia_ant is not None) else None),
+            delta=_fmt_delta_with_pct(
+                (float(fat_dia_ant) - float(prev_fat_dia_ant)) if (fat_dia_ant is not None and prev_fat_dia_ant is not None) else None,
+                float(prev_fat_dia_ant) if prev_fat_dia_ant is not None else None,
+                is_money=True,
+            ),
         )
         k2.metric(
             "NFs (dia anterior)",
             int(nf_dia_ant or 0),
-            delta=(f"{int(nf_dia_ant) - int(prev_nf_dia_ant)}" if (nf_dia_ant is not None and prev_nf_dia_ant is not None) else None),
+            delta=_fmt_delta_with_pct(
+                (float(int(nf_dia_ant) - int(prev_nf_dia_ant))) if (nf_dia_ant is not None and prev_nf_dia_ant is not None) else None,
+                float(int(prev_nf_dia_ant)) if prev_nf_dia_ant is not None else None,
+                is_money=False,
+            ),
         )
         k3.metric(
             "Clientes (dia anterior)",
             int(cli_dia_ant or 0),
-            delta=(f"{int(cli_dia_ant) - int(prev_cli_dia_ant)}" if (cli_dia_ant is not None and prev_cli_dia_ant is not None) else None),
+            delta=_fmt_delta_with_pct(
+                (float(int(cli_dia_ant) - int(prev_cli_dia_ant))) if (cli_dia_ant is not None and prev_cli_dia_ant is not None) else None,
+                float(int(prev_cli_dia_ant)) if prev_cli_dia_ant is not None else None,
+                is_money=False,
+            ),
         )
         # Margem: indicador principal = margem hoje; delta = hoje vs ontem (já existia)
         k4.metric(
@@ -2487,13 +2528,23 @@ def page_sala_gestao(settings, conn) -> None:
         k7.metric(
             "Meta por dia útil (necessária)",
             f"R$ {falta_por_dia:,.2f}" if falta_por_dia is not None else "—",
-            delta=(f"R$ {falta_por_dia - prev_falta_por_dia:,.2f}" if (falta_por_dia is not None and isinstance(prev_falta_por_dia, (int, float))) else None),
+            delta=_fmt_delta_with_pct(
+                (falta_por_dia - prev_falta_por_dia)
+                if (falta_por_dia is not None and isinstance(prev_falta_por_dia, (int, float)))
+                else None,
+                prev_falta_por_dia if isinstance(prev_falta_por_dia, (int, float)) else None,
+                is_money=True,
+            ),
             delta_color="inverse",
         )
         k8.metric(
             "Falta p/ meta",
             f"R$ {falta_meta:,.2f}" if meta_total > 0 else "—",
-            delta=(f"R$ {falta_meta - prev_falta_meta:,.2f}" if isinstance(prev_falta_meta, (int, float)) else None),
+            delta=_fmt_delta_with_pct(
+                (falta_meta - prev_falta_meta) if isinstance(prev_falta_meta, (int, float)) else None,
+                prev_falta_meta if isinstance(prev_falta_meta, (int, float)) else None,
+                is_money=True,
+            ),
             delta_color="inverse",
         )
 
