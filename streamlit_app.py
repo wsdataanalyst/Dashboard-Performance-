@@ -3368,16 +3368,47 @@ def page_sala_gestao(settings, conn) -> None:
             meta_batida = int((vend_df["faixa_alcance"] == "Meta batida (>=100%)").sum())
             acima_80 = int((vend_df["faixa_alcance"] == "Alcance >= 80%").sum())
             abaixo_80 = int((vend_df["faixa_alcance"] == "Alcance < 80%").sum())
-            st.dataframe(
-                vend_df[["nome", "alcance_real_pct", "alcance_pct", "margem_pct", "conversao_pct", "interacoes", "faixa_alcance"]]
-                .rename(columns={"alcance_real_pct": "% Alcance", "alcance_pct": "% Alcance Projetado"}),
-                use_container_width=True,
-                hide_index=True,
+
+            show = vend_df[
+                ["nome", "alcance_real_pct", "alcance_pct", "margem_pct", "conversao_pct", "interacoes", "faixa_alcance"]
+            ].rename(columns={"alcance_real_pct": "% Alcance", "alcance_pct": "% Alcance Projetado", "nome": "Vendedor"})
+
+            # Formatação e estilo (mais moderno)
+            def _faixa_style(s: pd.Series) -> list[str]:
+                out = []
+                for v in s.astype(str).fillna("").tolist():
+                    if "Meta batida" in v:
+                        out.append("background-color: rgba(34,197,94,.16); color:#bbf7d0; font-weight:800;")
+                    elif ">= 80" in v:
+                        out.append("background-color: rgba(251,191,36,.14); color:#fde68a; font-weight:800;")
+                    elif "< 80" in v:
+                        out.append("background-color: rgba(251,113,133,.14); color:#fecdd3; font-weight:800;")
+                    else:
+                        out.append("color:#94a3b8;")
+                return out
+
+            styled = (
+                show.style.format(
+                    {
+                        "% Alcance": lambda x: f"{float(x):.1f}%" if pd.notna(x) else "—",
+                        "% Alcance Projetado": lambda x: f"{float(x):.1f}%" if pd.notna(x) else "—",
+                        "margem_pct": lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—",
+                        "conversao_pct": lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—",
+                        "interacoes": lambda x: f"{int(float(x))}" if pd.notna(x) else "—",
+                    },
+                    na_rep="—",
+                )
+                .apply(_faixa_style, subset=["faixa_alcance"])
             )
+            st.dataframe(styled, use_container_width=True, hide_index=True)
+
         vc1, vc2, vc3 = st.columns(3)
-        vc1.metric("Meta batida (>=100%)", str(meta_batida))
-        vc2.metric("Alcance >=80%", str(acima_80))
-        vc3.metric("Alcance <80%", str(abaixo_80))
+        with vc1:
+            _sg_kpi_card("Meta batida (>=100%)", str(meta_batida), icon="✅", accent="#6EE7B7", delta=None)
+        with vc2:
+            _sg_kpi_card("Alcance >=80%", str(acima_80), icon="🟡", accent="#FBBF24", delta=None)
+        with vc3:
+            _sg_kpi_card("Alcance <80%", str(abaixo_80), icon="🔴", accent="#fb7185", delta=None)
 
         # Departamentos
         st.markdown("### Departamentos (última base carregada)")
