@@ -1164,6 +1164,8 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
             )
         hdf = pd.DataFrame(hist)
         if not hdf.empty:
+            # Eixo X contínuo (evita "buracos" quando análises são deletadas).
+            hdf["seq"] = list(range(1, len(hdf) + 1))
             last = hdf.iloc[-1]
             prev = hdf.iloc[-2] if len(hdf) >= 2 else None
 
@@ -1210,16 +1212,16 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
 
                 fig = make_subplots(specs=[[{"secondary_y": True}]])
                 fig.add_trace(
-                    go.Bar(x=hdf["id"], y=hdf["interacoes"], name="Interações", marker_color="rgba(59,130,246,0.55)"),
+                    go.Bar(x=hdf["seq"], y=hdf["interacoes"], name="Interações", marker_color="rgba(59,130,246,0.55)"),
                     secondary_y=False,
                 )
                 fig.add_trace(
-                    go.Bar(x=hdf["id"], y=hdf["nfs"], name="NFs", marker_color="rgba(110,231,183,0.75)"),
+                    go.Bar(x=hdf["seq"], y=hdf["nfs"], name="NFs", marker_color="rgba(110,231,183,0.75)"),
                     secondary_y=False,
                 )
                 fig.add_trace(
                     go.Scatter(
-                        x=hdf["id"],
+                        x=hdf["seq"],
                         y=hdf["conversao_total_pct"],
                         name="Conversão (%)",
                         mode="lines+markers",
@@ -1228,9 +1230,10 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
                     secondary_y=True,
                 )
                 if best_idx is not None:
+                    best_seq = hdf.loc[best_idx, "seq"]
                     fig.add_trace(
                         go.Scatter(
-                            x=[hdf.loc[best_idx, "id"]],
+                            x=[best_seq],
                             y=[hdf.loc[best_idx, "conversao_total_pct"]],
                             mode="markers",
                             marker=dict(size=14, color="rgba(251,191,36,1)", symbol="star"),
@@ -1245,7 +1248,12 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
                     margin=dict(l=10, r=10, t=60, b=10),
                 )
-                fig.update_xaxes(title_text="ID da análise")
+                fig.update_xaxes(
+                    title_text="Análises (ordem cronológica)",
+                    tickmode="array",
+                    tickvals=hdf["seq"].tolist(),
+                    ticktext=hdf["periodo"].astype(str).tolist(),
+                )
                 fig.update_yaxes(title_text="Volume", secondary_y=False)
                 fig.update_yaxes(title_text="Conversão (%)", secondary_y=True, rangemode="tozero")
                 st.plotly_chart(fig, use_container_width=True, key=f"{key_prefix}_conv_history_combo")
@@ -1408,6 +1416,24 @@ def page_projection(settings, conn) -> None:
     with col4:
         modo = st.selectbox("Modo", options=["Por vendedor", "Time (somado)"], key="proj_mode")
 
+    def _get_prev_analysis_row(current_id: int):
+        # list_analyses normalmente vem do mais novo -> mais antigo
+        rows = list_analyses(conn, limit=60, owner_user_id=owner_id, include_all=is_admin)
+        for i, rr in enumerate(rows):
+            if int(rr.id) == int(current_id):
+                return rows[i + 1] if (i + 1) < len(rows) else None
+        return None
+
+    def _pct_delta(cur: object, ref: object) -> float | None:
+        try:
+            c = float(cur)  # type: ignore[arg-type]
+            r = float(ref)  # type: ignore[arg-type]
+        except Exception:
+            return None
+        if r == 0 or pd.isna(c) or pd.isna(r):
+            return None
+        return (c - r) / abs(r) * 100.0
+
     if modo == "Por vendedor":
         nome = st.selectbox("Vendedor", options=[s.nome for s in sellers], key="proj_seller")
         s = next(x for x in sellers if x.nome == nome)
@@ -1431,6 +1457,29 @@ def page_projection(settings, conn) -> None:
             ticket_medio_override=float(ticket_override) if ticket_override > 0 else None,
         )
         titulo = f"Projeção — {s.nome}"
+
+        # Comparativo com a análise anterior (mesmo vendedor)
+        prev_row = _get_prev_analysis_row(int(analysis_id))
+        prev_proj = None
+        prev_expect = None
+        if prev_row:
+            try:
+                prev_payload = json.loads(prev_row.payload_json)
+                prev_sellers = parse_sellers(prev_payload)
+                prev_s = next((x for x in prev_sellers if x.nome == nome), None)
+                if prev_s is not None:
+                    prev_meta_auto = float(prev_s.meta_faturamento) if (prev_s.meta_faturamento is not None and prev_s.meta_faturamento > 0) else 0.0
+                    prev_meta_eff = float(meta_faturamento) if meta_faturamento > 0 else (prev_meta_auto if prev_meta_auto > 0 else None)
+                    prev_proj = projetar_resultados(
+                        prev_s,
+                        dias_uteis_total=int(dias_total),
+                        dias_uteis_trabalhados=int(dias_trab),
+                        meta_faturamento=prev_meta_eff,
+                        ticket_medio_override=float(ticket_override) if ticket_override > 0 else None,
+                    )
+                    prev_expect = prev_proj
+            except Exception:
+                prev_proj = None
     else:
         # soma do time (modelo simples: soma dos indicadores atuais e projeta linearmente)
         from src.app.domain import Seller as SellerDC
@@ -1470,26 +1519,76 @@ def page_projection(settings, conn) -> None:
         )
         titulo = "Projeção — Time"
 
+        # Comparativo com a análise anterior (time)
+        prev_row = _get_prev_analysis_row(int(analysis_id))
+        prev_proj = None
+        prev_expect = None
+        if prev_row:
+            try:
+                prev_payload = json.loads(prev_row.payload_json)
+                prev_sellers = parse_sellers(prev_payload)
+                prev_totais = prev_payload.get("totais") if isinstance(prev_payload, dict) else {}
+                if not isinstance(prev_totais, dict):
+                    prev_totais = {}
+                prev_fat_total = prev_totais.get("faturamento_total")
+                prev_meta_total = prev_totais.get("meta_total")
+                prev_soma = SellerDC(
+                    nome="Time",
+                    qtd_faturadas=sum(int(x.qtd_faturadas or 0) for x in prev_sellers),
+                    iniciados=sum(int(x.iniciados or 0) for x in prev_sellers),
+                    recebidos=sum(int(x.recebidos or 0) for x in prev_sellers),
+                    chamadas=sum(int(x.chamadas or 0) for x in prev_sellers),
+                    faturamento=float(prev_fat_total) if isinstance(prev_fat_total, (int, float)) else None,
+                    meta_faturamento=float(prev_meta_total) if isinstance(prev_meta_total, (int, float)) else None,
+                )
+                prev_meta_eff = float(meta_faturamento) if meta_faturamento > 0 else prev_soma.meta_faturamento
+                prev_proj = projetar_resultados(
+                    prev_soma,
+                    dias_uteis_total=int(dias_total),
+                    dias_uteis_trabalhados=int(dias_trab),
+                    meta_faturamento=prev_meta_eff,
+                    ticket_medio_override=float(ticket_override_time) if ticket_override_time > 0 else None,
+                )
+                prev_expect = prev_proj
+            except Exception:
+                prev_proj = None
+
     st.markdown(f"### {titulo}")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Faturadas (atual)", f"{proj.qtd_faturadas_atual}")
-    c2.metric("Interações (atual)", f"{proj.interacoes_atual}")
-    c3.metric("Projeção faturadas", f"{proj.projecao_faturas}")
+    # Delas: comparam com a projeção da análise anterior (expectativa) quando existir
+    d_fat = _pct_delta(proj.qtd_faturadas_atual, prev_expect.projecao_faturas) if prev_expect is not None else None
+    d_int = _pct_delta(proj.interacoes_atual, prev_expect.projecao_interacoes) if prev_expect is not None else None
+    d_proj_fat = _pct_delta(proj.projecao_faturas, prev_proj.projecao_faturas) if prev_proj is not None else None
+    c1.metric("Faturadas (atual)", f"{proj.qtd_faturadas_atual}", delta=round(d_fat, 1) if d_fat is not None else None, help="Delta (%) vs projeção da análise anterior (expectativa).")
+    c2.metric("Interações (atual)", f"{proj.interacoes_atual}", delta=round(d_int, 1) if d_int is not None else None, help="Delta (%) vs projeção da análise anterior (expectativa).")
+    c3.metric("Projeção faturadas", f"{proj.projecao_faturas}", delta=round(d_proj_fat, 1) if d_proj_fat is not None else None, help="Delta (%) vs projeção da análise anterior.")
     c4.metric("Status", proj.status)
 
     st.markdown("### Ritmo diário")
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Média faturas/dia", f"{proj.media_diaria_faturas}")
-    k2.metric("Média interações/dia", f"{proj.media_diaria_interacoes}")
+    d_mfat = _pct_delta(proj.media_diaria_faturas, prev_proj.media_diaria_faturas) if prev_proj is not None else None
+    d_mint = _pct_delta(proj.media_diaria_interacoes, prev_proj.media_diaria_interacoes) if prev_proj is not None else None
+    d_pconv = _pct_delta(proj.projecao_conversao_pct, prev_proj.projecao_conversao_pct) if prev_proj is not None else None
+    k1.metric("Média faturas/dia", f"{proj.media_diaria_faturas}", delta=round(d_mfat, 1) if d_mfat is not None else None, help="Delta (%) vs análise anterior.")
+    k2.metric("Média interações/dia", f"{proj.media_diaria_interacoes}", delta=round(d_mint, 1) if d_mint is not None else None, help="Delta (%) vs análise anterior.")
     k3.metric("Dias restantes", f"{proj.dias_restantes}")
-    k4.metric("Conversão proj.", f"{proj.projecao_conversao_pct:.2f}%" if proj.projecao_conversao_pct is not None else "—")
+    k4.metric(
+        "Conversão proj.",
+        f"{proj.projecao_conversao_pct:.2f}%" if proj.projecao_conversao_pct is not None else "—",
+        delta=round(d_pconv, 1) if d_pconv is not None else None,
+        help="Delta (%) vs análise anterior.",
+    )
 
     st.markdown("### Meta em faturamento (mantendo o ritmo/ticket)")
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Ticket médio", f"R$ {proj.ticket_medio:,.2f}" if proj.ticket_medio is not None else "—")
-    m2.metric("Faturamento atual", f"R$ {proj.faturamento_atual:,.2f}" if proj.faturamento_atual is not None else "—")
-    m3.metric("Faturamento/dia (atual)", f"R$ {proj.faturamento_dia_atual:,.2f}" if proj.faturamento_dia_atual is not None else "—")
-    m4.metric("Projeção faturamento", f"R$ {proj.projecao_faturamento:,.2f}" if proj.projecao_faturamento is not None else "—")
+    d_ticket = _pct_delta(proj.ticket_medio, prev_proj.ticket_medio) if prev_proj is not None else None
+    d_fat_atual = _pct_delta(proj.faturamento_atual, prev_proj.faturamento_atual) if prev_proj is not None else None
+    d_fat_dia = _pct_delta(proj.faturamento_dia_atual, prev_proj.faturamento_dia_atual) if prev_proj is not None else None
+    d_proj_fat_r = _pct_delta(proj.projecao_faturamento, prev_proj.projecao_faturamento) if prev_proj is not None else None
+    m1.metric("Ticket médio", f"R$ {proj.ticket_medio:,.2f}" if proj.ticket_medio is not None else "—", delta=round(d_ticket, 1) if d_ticket is not None else None, help="Delta (%) vs análise anterior.")
+    m2.metric("Faturamento atual", f"R$ {proj.faturamento_atual:,.2f}" if proj.faturamento_atual is not None else "—", delta=round(d_fat_atual, 1) if d_fat_atual is not None else None, help="Delta (%) vs análise anterior.")
+    m3.metric("Faturamento/dia (atual)", f"R$ {proj.faturamento_dia_atual:,.2f}" if proj.faturamento_dia_atual is not None else "—", delta=round(d_fat_dia, 1) if d_fat_dia is not None else None, help="Delta (%) vs análise anterior.")
+    m4.metric("Projeção faturamento", f"R$ {proj.projecao_faturamento:,.2f}" if proj.projecao_faturamento is not None else "—", delta=round(d_proj_fat_r, 1) if d_proj_fat_r is not None else None, help="Delta (%) vs análise anterior.")
 
     if proj.meta_faturamento is not None and proj.meta_faturamento > 0:
         st.markdown("### O que falta para bater a meta")
