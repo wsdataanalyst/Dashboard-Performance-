@@ -1697,14 +1697,43 @@ def page_projection(settings, conn) -> None:
     st.markdown(f"### {titulo}")
     c1, c2, c3, c4 = st.columns(4)
     # Comparativos:
-    # - Atual (faturadas/interações): vs EXPECTATIVA da análise anterior (projeção anterior)
-    #   Ex.: análise anterior projetava 30, e agora fez 28 → seta vermelha.
-    # - Projeções: vs projeção da análise anterior
-    d_fat = _delta_qty_and_pct(proj.qtd_faturadas_atual, prev_proj.projecao_faturas) if prev_proj is not None else None
-    d_int = _delta_qty_and_pct(proj.interacoes_atual, prev_proj.projecao_interacoes) if prev_proj is not None else None
+    # - Atual (faturadas/interações): vs "meta de amanhã" calculada na análise anterior.
+    #   Ex.: ontem tinha 30 faturadas e precisava +8/dia → hoje deveria estar em 38.
+    # - Projeções: vs projeção da análise anterior.
+    prev_nf_esperado_hoje = None
+    prev_inter_esperado_hoje = None
+    if prev_proj is not None:
+        # NFs esperadas hoje: ontem + NFs/dia necessárias (se houver meta), senão ontem + ritmo atual.
+        if prev_proj.nfs_por_dia_necessarias is not None:
+            prev_nf_esperado_hoje = float(prev_proj.qtd_faturadas_atual) + float(prev_proj.nfs_por_dia_necessarias)
+        else:
+            prev_nf_esperado_hoje = float(prev_proj.qtd_faturadas_atual) + float(prev_proj.media_diaria_faturas)
+
+        # Interações esperadas hoje:
+        # - se houver NFs/dia necessárias + conversão atual: deriva interações/dia necessárias
+        # - senão: usa ritmo de interações/dia
+        conv = prev_proj.conversao_atual_pct
+        if prev_proj.nfs_por_dia_necessarias is not None and conv is not None and float(conv) > 0:
+            inter_por_dia_nec = float(prev_proj.nfs_por_dia_necessarias) / (float(conv) / 100.0)
+            prev_inter_esperado_hoje = float(prev_proj.interacoes_atual) + inter_por_dia_nec
+        else:
+            prev_inter_esperado_hoje = float(prev_proj.interacoes_atual) + float(prev_proj.media_diaria_interacoes)
+
+    d_fat = _delta_qty_and_pct(proj.qtd_faturadas_atual, prev_nf_esperado_hoje) if prev_nf_esperado_hoje is not None else None
+    d_int = _delta_qty_and_pct(proj.interacoes_atual, prev_inter_esperado_hoje) if prev_inter_esperado_hoje is not None else None
     d_proj_fat = _delta_float_and_pct(proj.projecao_faturas, prev_proj.projecao_faturas, digits=1) if prev_proj is not None else None
-    c1.metric("Faturadas (atual)", f"{proj.qtd_faturadas_atual}", delta=(d_fat or "→ 0 (0.0%)"), help="Vs projeção da análise anterior (expectativa).")
-    c2.metric("Interações (atual)", f"{proj.interacoes_atual}", delta=(d_int or "→ 0 (0.0%)"), help="Vs projeção da análise anterior (expectativa).")
+    c1.metric(
+        "Faturadas (atual)",
+        f"{proj.qtd_faturadas_atual}",
+        delta=(d_fat or "→ 0 (0.0%)"),
+        help="Vs meta esperada hoje (calculada na análise anterior).",
+    )
+    c2.metric(
+        "Interações (atual)",
+        f"{proj.interacoes_atual}",
+        delta=(d_int or "→ 0 (0.0%)"),
+        help="Vs meta esperada hoje (calculada na análise anterior).",
+    )
     c3.metric("Projeção faturadas", f"{proj.projecao_faturas}", delta=(d_proj_fat or "→ +0.0 (0.0%)"), help="Vs projeção da análise anterior.")
     c4.metric("Status", proj.status)
 
