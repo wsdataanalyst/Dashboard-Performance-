@@ -303,6 +303,15 @@ def inject_styles(profile: str = "desktop") -> None:
     margin-bottom: 8px;
   }
 
+  /* Tabelas: mais legíveis (centraliza e melhora números) */
+  div[data-testid="stDataFrame"] table th,
+  div[data-testid="stDataFrame"] table td{
+    text-align: center !important;
+    vertical-align: middle !important;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
   /* Expander (ex.: calendário na home) — título mais visível */
   .streamlit-expanderHeader {
     font-size: 1.05rem !important;

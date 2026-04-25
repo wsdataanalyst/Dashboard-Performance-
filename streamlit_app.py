@@ -2804,7 +2804,64 @@ def page_sala_gestao(settings, conn) -> None:
                     st.plotly_chart(fig_counts, use_container_width=True, key="sg_evol_counts_line")
 
                     with st.expander("Ver base diária (tabela)"):
-                        st.dataframe(df, use_container_width=True, hide_index=True)
+                        df_show = df.copy()
+                        df_show = df_show.sort_values("dia").reset_index(drop=True)
+
+                        def _delta_str(v: float, is_money: bool) -> str:
+                            if v is None or (isinstance(v, float) and pd.isna(v)):
+                                return "—"
+                            x = float(v)
+                            if abs(x) < 1e-9:
+                                return "→ 0"
+                            arrow = "▲" if x > 0 else "▼"
+                            if is_money:
+                                return f"{arrow} R$ {abs(x):,.2f}"
+                            return f"{arrow} {abs(x):,.0f}"
+
+                        # deltas vs dia anterior (para deixar a tabela mais interativa)
+                        df_show["Δ faturamento"] = pd.to_numeric(df_show["faturamento"], errors="coerce").diff().apply(
+                            lambda x: _delta_str(x, is_money=True)
+                        )
+                        df_show["Δ clientes"] = pd.to_numeric(df_show["clientes_atendidos"], errors="coerce").diff().apply(
+                            lambda x: _delta_str(x, is_money=False)
+                        )
+                        df_show["Δ NFS"] = pd.to_numeric(df_show["nfs_emitidas"], errors="coerce").diff().apply(
+                            lambda x: _delta_str(x, is_money=False)
+                        )
+
+                        def _delta_color(s: pd.Series) -> list[str]:
+                            out = []
+                            for v in s.astype(str).fillna("—").tolist():
+                                if v.startswith("▲"):
+                                    out.append("color:#22c55e; font-weight:700;")
+                                elif v.startswith("▼"):
+                                    out.append("color:#fb7185; font-weight:700;")
+                                elif v.startswith("→"):
+                                    out.append("color:#94a3b8; font-weight:600;")
+                                else:
+                                    out.append("color:#94a3b8;")
+                            return out
+
+                        styled = (
+                            df_show.rename(
+                                columns={
+                                    "dia": "Dia",
+                                    "faturamento": "Faturamento",
+                                    "clientes_atendidos": "Atendidos",
+                                    "nfs_emitidas": "NFS",
+                                }
+                            )
+                            .style.format(
+                                {
+                                    "Faturamento": lambda x: f"R$ {float(x):,.2f}",
+                                    "Atendidos": lambda x: f"{int(x):d}",
+                                    "NFS": lambda x: f"{int(x):d}",
+                                },
+                                na_rep="—",
+                            )
+                            .apply(_delta_color, subset=["Δ faturamento", "Δ clientes", "Δ NFS"])
+                        )
+                        st.dataframe(styled, use_container_width=True, hide_index=True)
             except Exception as e:
                 st.error("Falha ao ler o Excel para evolução diária.")
                 st.caption(str(e))
