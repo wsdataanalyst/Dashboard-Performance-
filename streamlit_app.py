@@ -1148,6 +1148,13 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
                 payload_r = json.loads(r.payload_json)
             except Exception:
                 continue
+            # Evita misturar "Sala de Gestão" (e outras análises não-performance) neste gráfico.
+            if isinstance(payload_r, dict):
+                kind = str(payload_r.get("_kind") or "")
+                if kind.startswith("sala_gestao_"):
+                    continue
+                if not parse_sellers(payload_r):
+                    continue
             base = _extract_perf_summary_from_payload(r.periodo, payload_r)
             inter = float(base.get("tot_interacoes") or 0)
             nfs = float(base.get("tot_nfs") or 0)
@@ -1172,21 +1179,48 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
             def _fmt_conv(v) -> str:
                 return f"{float(v):.1f}%" if v is not None and not pd.isna(v) else "—"
 
+            def _delta_qty_and_pct(cur: object, ref: object) -> str | None:
+                try:
+                    c = float(cur)  # type: ignore[arg-type]
+                    r = float(ref)  # type: ignore[arg-type]
+                except Exception:
+                    return None
+                if pd.isna(c) or pd.isna(r):
+                    return None
+                diff = c - r
+                if r == 0:
+                    # sem base pra percentual
+                    arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "→")
+                    return f"{arrow} {diff:+.0f}"
+                pct = (diff / abs(r)) * 100.0
+                arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "→")
+                return f"{arrow} {diff:+.0f} ({pct:+.1f}%)"
+
+            def _delta_pp_and_pct(cur_pct: object, ref_pct: object) -> str | None:
+                try:
+                    c = float(cur_pct)  # type: ignore[arg-type]
+                    r = float(ref_pct)  # type: ignore[arg-type]
+                except Exception:
+                    return None
+                if pd.isna(c) or pd.isna(r):
+                    return None
+                diff_pp = c - r
+                if r == 0:
+                    arrow = "▲" if diff_pp > 0 else ("▼" if diff_pp < 0 else "→")
+                    return f"{arrow} {diff_pp:+.1f} pp"
+                pct = (diff_pp / abs(r)) * 100.0
+                arrow = "▲" if diff_pp > 0 else ("▼" if diff_pp < 0 else "→")
+                return f"{arrow} {diff_pp:+.1f} pp ({pct:+.1f}%)"
+
             m1, m2, m3 = st.columns(3)
             if prev is not None:
-                m1.metric(
-                    "Interações (time)",
-                    f"{int(last['interacoes'])}",
-                    delta=int(last["interacoes"] - prev["interacoes"]),
-                )
-                m2.metric("NFs (time)", f"{int(last['nfs'])}", delta=int(last["nfs"] - prev["nfs"]))
+                m1.metric("Interações (time)", f"{int(last['interacoes'])}", delta=_delta_qty_and_pct(last["interacoes"], prev["interacoes"]))
+                m2.metric("NFs (time)", f"{int(last['nfs'])}", delta=_delta_qty_and_pct(last["nfs"], prev["nfs"]))
                 if pd.notna(last.get("conversao_total_pct")) and pd.notna(prev.get("conversao_total_pct")):
-                    delta_pp = float(last["conversao_total_pct"]) - float(prev["conversao_total_pct"])
-                    # Streamlit só colore automaticamente (verde/vermelho) quando `delta` é numérico.
                     m3.metric(
                         "Conversão (NFs/Interações)",
                         _fmt_conv(last["conversao_total_pct"]),
-                        delta=round(delta_pp, 1),
+                        delta=_delta_pp_and_pct(last["conversao_total_pct"], prev["conversao_total_pct"]),
                         help="Delta em pontos percentuais (pp) vs análise anterior.",
                     )
                 else:
@@ -1416,13 +1450,56 @@ def page_projection(settings, conn) -> None:
     with col4:
         modo = st.selectbox("Modo", options=["Por vendedor", "Time (somado)"], key="proj_mode")
 
-    def _get_prev_analysis_row(current_id: int):
-        # list_analyses normalmente vem do mais novo -> mais antigo
-        rows = list_analyses(conn, limit=60, owner_user_id=owner_id, include_all=is_admin)
-        for i, rr in enumerate(rows):
-            if int(rr.id) == int(current_id):
-                return rows[i + 1] if (i + 1) < len(rows) else None
-        return None
+    def _parse_dt(s: object):
+        try:
+            from datetime import datetime
+
+            txt = str(s or "")
+            if not txt:
+                return None
+            # ex: 2026-04-24T23:50:00.123Z
+            txt = txt.replace("Z", "+00:00")
+            return datetime.fromisoformat(txt)
+        except Exception:
+            return None
+
+    def _get_prev_analysis_row(current_row):
+        # Pega a análise imediatamente anterior na ordem (por created_at),
+        # mesmo que existam "buracos" por exclusões de IDs.
+        rows = list_analyses(conn, limit=200, owner_user_id=owner_id, include_all=is_admin)
+        if not rows:
+            return None
+
+        cur_id = int(getattr(current_row, "id", 0) or 0)
+        cur_dt = _parse_dt(getattr(current_row, "created_at", None))
+
+        if cur_dt is not None:
+            best = None
+            best_dt = None
+            for rr in rows:
+                rid = int(getattr(rr, "id", 0) or 0)
+                if rid == cur_id:
+                    continue
+                rdt = _parse_dt(getattr(rr, "created_at", None))
+                if rdt is None or rdt >= cur_dt:
+                    continue
+                if best_dt is None or rdt > best_dt:
+                    best = rr
+                    best_dt = rdt
+            if best is not None:
+                return best
+
+        # Fallback: usa maior ID menor que o atual (quando created_at não é confiável)
+        best = None
+        best_id = None
+        for rr in rows:
+            rid = int(getattr(rr, "id", 0) or 0)
+            if rid >= cur_id:
+                continue
+            if best_id is None or rid > best_id:
+                best = rr
+                best_id = rid
+        return best
 
     def _pct_delta(cur: object, ref: object) -> float | None:
         try:
@@ -1433,6 +1510,16 @@ def page_projection(settings, conn) -> None:
         if r == 0 or pd.isna(c) or pd.isna(r):
             return None
         return (c - r) / abs(r) * 100.0
+
+    def _delta_arrow_pct(d: float | None) -> str:
+        if d is None or pd.isna(d):
+            return "→ 0.0%"
+        v = float(d)
+        if abs(v) < 0.05:
+            return "→ 0.0%"
+        if v > 0:
+            return f"▲ +{v:.1f}%"
+        return f"▼ {v:.1f}%"
 
     if modo == "Por vendedor":
         nome = st.selectbox("Vendedor", options=[s.nome for s in sellers], key="proj_seller")
@@ -1459,7 +1546,7 @@ def page_projection(settings, conn) -> None:
         titulo = f"Projeção — {s.nome}"
 
         # Comparativo com a análise anterior (mesmo vendedor)
-        prev_row = _get_prev_analysis_row(int(analysis_id))
+        prev_row = _get_prev_analysis_row(row)
         prev_proj = None
         prev_expect = None
         if prev_row:
@@ -1520,7 +1607,7 @@ def page_projection(settings, conn) -> None:
         titulo = "Projeção — Time"
 
         # Comparativo com a análise anterior (time)
-        prev_row = _get_prev_analysis_row(int(analysis_id))
+        prev_row = _get_prev_analysis_row(row)
         prev_proj = None
         prev_expect = None
         if prev_row:
@@ -1559,9 +1646,9 @@ def page_projection(settings, conn) -> None:
     d_fat = _pct_delta(proj.qtd_faturadas_atual, prev_expect.projecao_faturas) if prev_expect is not None else None
     d_int = _pct_delta(proj.interacoes_atual, prev_expect.projecao_interacoes) if prev_expect is not None else None
     d_proj_fat = _pct_delta(proj.projecao_faturas, prev_proj.projecao_faturas) if prev_proj is not None else None
-    c1.metric("Faturadas (atual)", f"{proj.qtd_faturadas_atual}", delta=round(d_fat, 1) if d_fat is not None else None, help="Delta (%) vs projeção da análise anterior (expectativa).")
-    c2.metric("Interações (atual)", f"{proj.interacoes_atual}", delta=round(d_int, 1) if d_int is not None else None, help="Delta (%) vs projeção da análise anterior (expectativa).")
-    c3.metric("Projeção faturadas", f"{proj.projecao_faturas}", delta=round(d_proj_fat, 1) if d_proj_fat is not None else None, help="Delta (%) vs projeção da análise anterior.")
+    c1.metric("Faturadas (atual)", f"{proj.qtd_faturadas_atual}", delta=_delta_arrow_pct(d_fat), help="Vs projeção da análise anterior (expectativa).")
+    c2.metric("Interações (atual)", f"{proj.interacoes_atual}", delta=_delta_arrow_pct(d_int), help="Vs projeção da análise anterior (expectativa).")
+    c3.metric("Projeção faturadas", f"{proj.projecao_faturas}", delta=_delta_arrow_pct(d_proj_fat), help="Vs projeção da análise anterior.")
     c4.metric("Status", proj.status)
 
     st.markdown("### Ritmo diário")
@@ -1569,14 +1656,14 @@ def page_projection(settings, conn) -> None:
     d_mfat = _pct_delta(proj.media_diaria_faturas, prev_proj.media_diaria_faturas) if prev_proj is not None else None
     d_mint = _pct_delta(proj.media_diaria_interacoes, prev_proj.media_diaria_interacoes) if prev_proj is not None else None
     d_pconv = _pct_delta(proj.projecao_conversao_pct, prev_proj.projecao_conversao_pct) if prev_proj is not None else None
-    k1.metric("Média faturas/dia", f"{proj.media_diaria_faturas}", delta=round(d_mfat, 1) if d_mfat is not None else None, help="Delta (%) vs análise anterior.")
-    k2.metric("Média interações/dia", f"{proj.media_diaria_interacoes}", delta=round(d_mint, 1) if d_mint is not None else None, help="Delta (%) vs análise anterior.")
+    k1.metric("Média faturas/dia", f"{proj.media_diaria_faturas}", delta=_delta_arrow_pct(d_mfat), help="Vs análise anterior.")
+    k2.metric("Média interações/dia", f"{proj.media_diaria_interacoes}", delta=_delta_arrow_pct(d_mint), help="Vs análise anterior.")
     k3.metric("Dias restantes", f"{proj.dias_restantes}")
     k4.metric(
         "Conversão proj.",
         f"{proj.projecao_conversao_pct:.2f}%" if proj.projecao_conversao_pct is not None else "—",
-        delta=round(d_pconv, 1) if d_pconv is not None else None,
-        help="Delta (%) vs análise anterior.",
+        delta=_delta_arrow_pct(d_pconv),
+        help="Vs análise anterior.",
     )
 
     st.markdown("### Meta em faturamento (mantendo o ritmo/ticket)")
@@ -1585,10 +1672,10 @@ def page_projection(settings, conn) -> None:
     d_fat_atual = _pct_delta(proj.faturamento_atual, prev_proj.faturamento_atual) if prev_proj is not None else None
     d_fat_dia = _pct_delta(proj.faturamento_dia_atual, prev_proj.faturamento_dia_atual) if prev_proj is not None else None
     d_proj_fat_r = _pct_delta(proj.projecao_faturamento, prev_proj.projecao_faturamento) if prev_proj is not None else None
-    m1.metric("Ticket médio", f"R$ {proj.ticket_medio:,.2f}" if proj.ticket_medio is not None else "—", delta=round(d_ticket, 1) if d_ticket is not None else None, help="Delta (%) vs análise anterior.")
-    m2.metric("Faturamento atual", f"R$ {proj.faturamento_atual:,.2f}" if proj.faturamento_atual is not None else "—", delta=round(d_fat_atual, 1) if d_fat_atual is not None else None, help="Delta (%) vs análise anterior.")
-    m3.metric("Faturamento/dia (atual)", f"R$ {proj.faturamento_dia_atual:,.2f}" if proj.faturamento_dia_atual is not None else "—", delta=round(d_fat_dia, 1) if d_fat_dia is not None else None, help="Delta (%) vs análise anterior.")
-    m4.metric("Projeção faturamento", f"R$ {proj.projecao_faturamento:,.2f}" if proj.projecao_faturamento is not None else "—", delta=round(d_proj_fat_r, 1) if d_proj_fat_r is not None else None, help="Delta (%) vs análise anterior.")
+    m1.metric("Ticket médio", f"R$ {proj.ticket_medio:,.2f}" if proj.ticket_medio is not None else "—", delta=_delta_arrow_pct(d_ticket), help="Vs análise anterior.")
+    m2.metric("Faturamento atual", f"R$ {proj.faturamento_atual:,.2f}" if proj.faturamento_atual is not None else "—", delta=_delta_arrow_pct(d_fat_atual), help="Vs análise anterior.")
+    m3.metric("Faturamento/dia (atual)", f"R$ {proj.faturamento_dia_atual:,.2f}" if proj.faturamento_dia_atual is not None else "—", delta=_delta_arrow_pct(d_fat_dia), help="Vs análise anterior.")
+    m4.metric("Projeção faturamento", f"R$ {proj.projecao_faturamento:,.2f}" if proj.projecao_faturamento is not None else "—", delta=_delta_arrow_pct(d_proj_fat_r), help="Vs análise anterior.")
 
     if proj.meta_faturamento is not None and proj.meta_faturamento > 0:
         st.markdown("### O que falta para bater a meta")
