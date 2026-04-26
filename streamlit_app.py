@@ -4494,6 +4494,34 @@ def page_sala_gestao(settings, conn) -> None:
                         )
                     with cR:
                         st.caption(f"**Último dia com movimento**: {last_move_day:02d}")
+                        # sinalização rápida de sábado com movimento (fica ao lado/abaixo do indicador)
+                        try:
+                            d0["_weekday"] = d0["dia"].apply(lambda dd: _dt.date(int(yy), int(mm), int(dd)).weekday())
+                            sat = d0[d0["_weekday"] == 5].copy()
+                            if not sat.empty:
+                                sat_move = sat[
+                                    (pd.to_numeric(sat.get("faturamento"), errors="coerce").fillna(0.0) > 0.0)
+                                    | (pd.to_numeric(sat.get("nfs_emitidas"), errors="coerce").fillna(0) > 0)
+                                    | (pd.to_numeric(sat.get("clientes_atendidos"), errors="coerce").fillna(0) > 0)
+                                ]
+                                if not sat_move.empty:
+                                    sat_last = sat_move.sort_values("dia").iloc[-1]
+                                    st.markdown(
+                                        f"""
+<div class="dp-pill" style="
+  margin-top:6px;
+  background:rgba(251,191,36,.12);
+  border-color:rgba(251,191,36,.35);
+  color:#FBBF24;
+  font-weight:850;
+">
+  Sábado com faturamento (dia {int(sat_last["dia"]):02d})
+</div>
+""",
+                                        unsafe_allow_html=True,
+                                    )
+                        except Exception:
+                            pass
 
                     sel_day = int(label_to_day.get(sel_label) or default_day)
                     row = d0[d0["dia"] == sel_day].head(1)
