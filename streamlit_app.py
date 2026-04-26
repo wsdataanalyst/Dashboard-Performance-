@@ -5176,6 +5176,9 @@ def page_sala_gestao(settings, conn) -> None:
 
                         show = pd.DataFrame()
                         show["Departamento"] = merged[key].astype(str)
+                        # limpa linhas inválidas ("nan", vazio)
+                        show["Departamento"] = show["Departamento"].astype(str).str.strip()
+                        show = show[(show["Departamento"] != "") & (show["Departamento"].str.lower() != "nan")].copy()
                         if "faturamento_hoje" in merged.columns:
                             show["Faturamento"] = merged["faturamento_hoje"]
                             show["Δ Faturamento"] = merged["Δ faturamento"].apply(lambda x: _arrow(x, "money"))
@@ -5192,6 +5195,22 @@ def page_sala_gestao(settings, conn) -> None:
                             show["Falta meta"] = merged["falta_meta_hoje"]
                             show["Δ Falta meta"] = merged["Δ falta_meta"].apply(lambda x: _arrow(x, "money"))
 
+                        # reordena colunas (leitura mais moderna: valor → delta)
+                        preferred = [
+                            "Departamento",
+                            "Faturamento",
+                            "Δ Faturamento",
+                            "Falta meta",
+                            "Δ Falta meta",
+                            "Alc. Proj.",
+                            "Δ Alc. Proj.",
+                            "% Part.",
+                            "Δ % Part.",
+                            "% Margem",
+                            "Δ % Margem",
+                        ]
+                        show = show[[c for c in preferred if c in show.columns]].copy()
+
                         def _delta_color_series(s: pd.Series) -> list[str]:
                             out2 = []
                             for v in s.astype(str).fillna("—").tolist():
@@ -5204,6 +5223,22 @@ def page_sala_gestao(settings, conn) -> None:
                                 else:
                                     out2.append("color:#94a3b8;")
                             return out2
+
+                        def _alc_bucket_style(s: pd.Series) -> list[str]:
+                            out3: list[str] = []
+                            for v in s.tolist():
+                                try:
+                                    x = float(v)
+                                except Exception:
+                                    out3.append("color:#94a3b8;")
+                                    continue
+                                if x >= 100:
+                                    out3.append("background-color: rgba(34,197,94,.14); color:#bbf7d0; font-weight:900;")
+                                elif x >= 80:
+                                    out3.append("background-color: rgba(251,191,36,.14); color:#fde68a; font-weight:900;")
+                                else:
+                                    out3.append("background-color: rgba(251,113,133,.14); color:#fecdd3; font-weight:900;")
+                            return out3
 
                         fmt: dict[str, object] = {}
                         if "Faturamento" in show.columns:
@@ -5218,6 +5253,8 @@ def page_sala_gestao(settings, conn) -> None:
                             fmt["Falta meta"] = lambda x: f"R$ {float(x):,.2f}" if pd.notna(x) else "—"
 
                         styled = show.style.format(fmt, na_rep="—")
+                        if "Alc. Proj." in show.columns:
+                            styled = styled.apply(_alc_bucket_style, subset=["Alc. Proj."])
                         for c in [c for c in show.columns if c.startswith("Δ ")]:
                             styled = styled.apply(_delta_color_series, subset=[c])
                         st.dataframe(styled, use_container_width=True, hide_index=True)
