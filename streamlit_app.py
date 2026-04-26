@@ -6434,92 +6434,56 @@ def main() -> None:
                 "revisar dados → salvar → abrir **Dashboard** ou **Histórico**."
             )
 
-    # Calendário (dias úteis automáticos) — mesmo padrão dos cards de dashboard (sem verde)
-    if st.session_state.get("show_calendar") is None:
-        st.session_state["show_calendar"] = False
-    is_cal_open = bool(st.session_state.get("show_calendar"))
-
+    # Zona do topo: cards clicáveis (sem verde)
+    st.markdown("<div class='dp-topzone'>", unsafe_allow_html=True)
     st.markdown(
         """
 <style>
-  /* Card visual (neutro) + botão fantasma (sem verde do tema) */
-  .dp-top-click{ position: relative; margin: 6px 0 10px 0; }
-  .dp-top-card{
-    border-radius: 16px;
-    border: 1px solid rgba(255,255,255,.12);
-    background: rgba(255,255,255,.02);
-    padding: 12px 12px;
-    box-shadow: 0 10px 26px rgba(0,0,0,.18);
-    min-height: 74px;
-    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease;
+  .dp-topzone [data-testid="stButton"] > button{
+    width: 100% !important;
+    text-align: left !important;
+    border-radius: 16px !important;
+    border: 1px solid rgba(255,255,255,.12) !important;
+    background: rgba(255,255,255,.02) !important; /* neutraliza o verde global */
+    box-shadow: 0 10px 26px rgba(0,0,0,.18) !important;
+    padding: 12px 12px !important;
+    min-height: 74px !important;
+    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease !important;
+    white-space: pre-line !important; /* respeita \\n nos labels */
+    color: rgba(229,231,235,.96) !important;
+    font-weight: 850 !important;
   }
-  .dp-top-click:hover .dp-top-card{
-    transform: translateY(-2px);
-    border-color: rgba(59,130,246,.28);
-    box-shadow: 0 18px 40px rgba(0,0,0,.28);
-    background: rgba(255,255,255,.03);
+  .dp-topzone [data-testid="stButton"] > button:hover{
+    transform: translateY(-2px) !important;
+    border-color: rgba(59,130,246,.28) !important;
+    box-shadow: 0 18px 40px rgba(0,0,0,.28) !important;
+    background: rgba(255,255,255,.03) !important;
   }
-  .dp-top-selected .dp-top-card{
-    border-color: rgba(59,130,246,.34);
+  .dp-topzone .dp-top-selected [data-testid="stButton"] > button{
+    border-color: rgba(59,130,246,.34) !important;
     background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.14), transparent 60%),
-                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
+                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
   }
-  .dp-ghost-btn{ position:absolute; inset:0; }
-  .dp-ghost-btn [data-testid="stButton"]{ height:100%; }
-  .dp-ghost-btn [data-testid="stButton"] > button{
-    width:100% !important;
-    height:100% !important;
-    opacity:0 !important;
-    background: transparent !important;
-    border: 0 !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-    color: transparent !important;
-    font-size: 0 !important;
-    line-height: 0 !important;
-    min-height: 0 !important;
-  }
-  .dp-top-title{ margin:0; font-weight:900; color:#E5E7EB; font-size:1.02rem; letter-spacing:.2px; }
-  .dp-top-sub{ margin:6px 0 0 0; color:#94A3B8; font-size:.86rem; line-height:1.35; }
-  .dp-top-hint{ margin:6px 0 0 0; color:#94A3B8; font-size:.82rem; }
 </style>
 """,
         unsafe_allow_html=True,
     )
 
-    st.markdown("<div class='dp-top-click dp-top-selected'>" if is_cal_open else "<div class='dp-top-click'>", unsafe_allow_html=True)
-    st.markdown("<div class='dp-ghost-btn'>", unsafe_allow_html=True)
-    if st.button(" ", use_container_width=True, key="btn_toggle_calendar_card"):
+    # Calendário (dias úteis automáticos) — card clicável (sem barras verdes)
+    if st.session_state.get("show_calendar") is None:
+        st.session_state["show_calendar"] = False
+    is_cal_open = bool(st.session_state.get("show_calendar"))
+
+    st.markdown("<div class='dp-top-selected'>" if is_cal_open else "<div>", unsafe_allow_html=True)
+    if st.button(
+        "🗓  Calendário\nDias úteis automáticos (mês atual)\n" + ("Clique para fechar" if is_cal_open else "Clique para abrir"),
+        use_container_width=True,
+        key="btn_toggle_calendar_card",
+        type="secondary",
+    ):
         st.session_state["show_calendar"] = not is_cal_open
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown(
-        f"""
-<div class="dp-top-card">
-  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-    <div style="display:flex;align-items:center;gap:10px;">
-      <div style="
-        width:34px;height:34px;border-radius:12px;
-        display:flex;align-items:center;justify-content:center;
-        background: rgba(255,255,255,.04);
-        border: 1px solid rgba(255,255,255,.10);
-        font-size: 1.05rem;
-        color: #93c5fd;
-      ">🗓</div>
-      <div>
-        <p class="dp-top-title">Calendário</p>
-        <p class="dp-top-sub">Dias úteis automáticos (mês atual)</p>
-        <p class="dp-top-hint">{'Clique para fechar' if is_cal_open else 'Clique para abrir'}</p>
-      </div>
-    </div>
-    <span class="dp-pill" style="border-color:rgba(255,255,255,.12);">Ajustável</span>
-  </div>
-</div>
-</div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
 
     if bool(st.session_state.get("show_calendar")):
         st.markdown("<div class='dp-card' style='padding:14px 14px;margin: 0 0 10px 0;'>", unsafe_allow_html=True)
@@ -6576,42 +6540,22 @@ def main() -> None:
         )
     with qa2:
         is_open = bool(st.session_state.get("show_upload"))
-        st.markdown("<div class='dp-top-click dp-top-selected'>" if is_open else "<div class='dp-top-click'>", unsafe_allow_html=True)
-        st.markdown("<div class='dp-ghost-btn'>", unsafe_allow_html=True)
-        if st.button(" ", use_container_width=True, key="btn_toggle_upload_top"):
+        st.markdown("<div class='dp-top-selected'>" if is_open else "<div>", unsafe_allow_html=True)
+        if st.button(
+            "⬆️  Nova análise\nUpload e validação\n" + ("Clique para fechar" if is_open else "Clique para abrir"),
+            use_container_width=True,
+            key="btn_toggle_upload_top",
+            type="secondary",
+        ):
             st.session_state["show_upload"] = not is_open
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown(
-            f"""
-<div class="dp-top-card">
-  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-    <div style="display:flex;align-items:center;gap:10px;">
-      <div style="
-        width:34px;height:34px;border-radius:12px;
-        display:flex;align-items:center;justify-content:center;
-        background: rgba(255,255,255,.04);
-        border: 1px solid rgba(255,255,255,.10);
-        font-size: 1.05rem;
-        color: #C4B5FD;
-      ">⬆️</div>
-      <div>
-        <p class="dp-top-title">Nova análise</p>
-        <p class="dp-top-sub">Upload e validação</p>
-        <p class="dp-top-hint">{html.escape('Clique para fechar' if is_open else 'Clique para abrir')}</p>
-      </div>
-    </div>
-    <span class="dp-pill" style="border-color:rgba(255,255,255,.12);">Arquivos</span>
-  </div>
-</div>
-</div>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
 
     if bool(st.session_state.get("show_upload")):
         page_upload(settings, conn, embedded=True)
+
+    # Fecha a zona do topo
+    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("### Selecione o Dashboard:")
     if st.session_state.get("dash_selector") not in {"Dashboard de Bônus", "Dashboard de Performance", "Sala de Gestão"}:
