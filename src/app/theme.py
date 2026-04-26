@@ -430,12 +430,17 @@ def inject_styles(profile: str = "desktop") -> None:
   .stButton > button{
     border-radius: 12px;
     border: 1px solid rgba(255,255,255,.12) !important;
-    background: linear-gradient(135deg, rgba(110,231,183,.95), rgba(34,197,94,.90)) !important;
-    color: #071018 !important;
-    font-weight: 800 !important;
+    /* Botão padrão neutro (evita “barras verdes” em cards clicáveis) */
+    background: rgba(255,255,255,.04) !important;
+    color: rgba(229,231,235,.96) !important;
+    font-weight: 850 !important;
     padding: .65rem 1rem !important;
   }
-  .stButton > button:hover{ filter: brightness(1.03); transform: translateY(-1px); }
+  .stButton > button:hover{
+    background: rgba(255,255,255,.06) !important;
+    border-color: rgba(59,130,246,.22) !important;
+    transform: translateY(-1px);
+  }
 
   /* Tabelas Streamlit: rolagem horizontal (evita cortar números no iPad) */
   div[data-testid="stDataFrame"]{
