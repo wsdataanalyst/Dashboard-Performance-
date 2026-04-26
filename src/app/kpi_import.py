@@ -29,7 +29,11 @@ def _read_faturamento_atendidos_sheet(file_bytes: bytes) -> tuple[pd.DataFrame, 
     - meta (header_row, colunas detectadas, etc.)
     """
     warnings: list[str] = []
-    df0 = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl", sheet_name=0, header=None)
+    # Alguns exports vêm como .xls/HTML (precisa xlrd). Tenta openpyxl e cai para xlrd.
+    try:
+        df0 = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl", sheet_name=0, header=None)
+    except Exception:
+        df0 = pd.read_excel(io.BytesIO(file_bytes), engine="xlrd", sheet_name=0, header=None)
     if df0.empty:
         return pd.DataFrame(), {}, ["Arquivo vazio."], {"header_row": None}
 
@@ -44,7 +48,10 @@ def _read_faturamento_atendidos_sheet(file_bytes: bytes) -> tuple[pd.DataFrame, 
     if header_row is None:
         return pd.DataFrame(), {}, ["Não encontrei cabeçalho (Faturamento/Meta/Clientes/Notas)."], {"header_row": None}
 
-    df = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl", sheet_name=0, header=header_row)
+    try:
+        df = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl", sheet_name=0, header=header_row)
+    except Exception:
+        df = pd.read_excel(io.BytesIO(file_bytes), engine="xlrd", sheet_name=0, header=header_row)
     df = df.rename(columns=lambda c: str(c).strip())
 
     col_mes = next((c for c in df.columns if "mês" in c.lower() or "mes" in c.lower()), None)
