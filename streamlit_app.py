@@ -6460,11 +6460,14 @@ def main() -> None:
     background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.22), transparent 60%),
                 linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
   }
+  /* Wrapper: overlay absoluto (não ocupa espaço) */
+  .dp-topwrap{ position: relative; margin: 6px 0 10px 0; }
+  .dp-topoverlay{ position: absolute; inset: 0; }
   /* Botão overlay invisível (não mostra verde, não cria barra) */
-  .dp-top-overlay .stButton > button,
-  .dp-top-overlay [data-testid="stButton"] > button{
+  .dp-topoverlay .stButton > button,
+  .dp-topoverlay [data-testid="stButton"] > button{
     width: 100% !important;
-    height: 74px !important;
+    height: 100% !important;
     opacity: 0 !important;
     background: transparent !important;
     border: 0 !important;
@@ -6476,7 +6479,6 @@ def main() -> None:
     font-size: 0 !important;
     line-height: 0 !important;
   }
-  .dp-top-overlay{ margin-top: -74px; }
 </style>
 """,
         unsafe_allow_html=True,
@@ -6487,6 +6489,7 @@ def main() -> None:
         st.session_state["show_calendar"] = False
     is_cal_open = bool(st.session_state.get("show_calendar"))
 
+    st.markdown("<div class='dp-topwrap'>", unsafe_allow_html=True)
     st.markdown(
         f"""
 <div class="dp-topcard {'dp-topcard--selected' if is_cal_open else ''}">
@@ -6512,11 +6515,11 @@ def main() -> None:
 """,
         unsafe_allow_html=True,
     )
-    st.markdown("<div class='dp-top-overlay'>", unsafe_allow_html=True)
+    st.markdown("<div class='dp-topoverlay'>", unsafe_allow_html=True)
     if st.button(" ", use_container_width=True, key="btn_toggle_calendar_card"):
         st.session_state["show_calendar"] = not is_cal_open
         st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
     if bool(st.session_state.get("show_calendar")):
         st.markdown("<div class='dp-card' style='padding:14px 14px;margin: 0 0 10px 0;'>", unsafe_allow_html=True)
@@ -6573,6 +6576,7 @@ def main() -> None:
         )
     with qa2:
         is_open = bool(st.session_state.get("show_upload"))
+        st.markdown("<div class='dp-topwrap'>", unsafe_allow_html=True)
         st.markdown(
             f"""
 <div class="dp-topcard {'dp-topcard--selected' if is_open else ''}">
@@ -6598,11 +6602,11 @@ def main() -> None:
 """,
             unsafe_allow_html=True,
         )
-        st.markdown("<div class='dp-top-overlay'>", unsafe_allow_html=True)
+        st.markdown("<div class='dp-topoverlay'>", unsafe_allow_html=True)
         if st.button(" ", use_container_width=True, key="btn_toggle_upload_top"):
             st.session_state["show_upload"] = not is_open
             st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div></div>", unsafe_allow_html=True)
 
     if bool(st.session_state.get("show_upload")):
         page_upload(settings, conn, embedded=True)
