@@ -6434,41 +6434,45 @@ def main() -> None:
                 "revisar dados → salvar → abrir **Dashboard** ou **Histórico**."
             )
 
-    # Zona do topo: cards clicáveis (sem verde)
-    st.markdown("<div class='dp-topzone'>", unsafe_allow_html=True)
+    # Zona do topo: cards clicáveis (sem botões verdes visíveis)
     st.markdown(
         """
 <style>
-  .dp-topzone [data-testid="stButton"] > button{
-    width: 100% !important;
-    text-align: left !important;
-    border-radius: 16px !important;
-    /* Mesma paleta do card Status (padrão) */
-    border: 1px solid rgba(110,231,183,.32) !important;
+  .dp-topcard{
+    border-radius: 16px;
+    border: 1px solid rgba(110,231,183,.32);
     background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.14), transparent 60%),
-                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
-    background-image: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.14), transparent 60%),
-                      linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
-    box-shadow: 0 10px 26px rgba(0,0,0,.18) !important;
-    padding: 12px 12px !important;
-    min-height: 74px !important;
-    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease !important;
-    white-space: pre-line !important; /* respeita \\n nos labels */
-    color: rgba(229,231,235,.96) !important;
-    font-weight: 850 !important;
+                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
+    box-shadow: 0 10px 26px rgba(0,0,0,.18);
+    padding: 12px 12px;
+    min-height: 74px;
+    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease;
   }
-  .dp-topzone [data-testid="stButton"] > button:hover{
-    transform: translateY(-2px) !important;
-    border-color: rgba(110,231,183,.46) !important;
-    box-shadow: 0 18px 40px rgba(0,0,0,.28) !important;
+  .dp-topcard:hover{
+    transform: translateY(-2px);
+    border-color: rgba(110,231,183,.46);
+    box-shadow: 0 18px 40px rgba(0,0,0,.28);
     background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.18), transparent 60%),
-                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
+                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
   }
-  .dp-topzone .dp-top-selected [data-testid="stButton"] > button{
-    border-color: rgba(110,231,183,.55) !important;
+  .dp-topcard--selected{
+    border-color: rgba(110,231,183,.55);
     background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.22), transparent 60%),
-                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
+                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
   }
+  /* Botão overlay invisível (não mostra verde, não cria barra) */
+  .dp-top-overlay [data-testid="stButton"] > button{
+    width: 100% !important;
+    height: 74px !important;
+    opacity: 0 !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    transform: none !important;
+  }
+  .dp-top-overlay{ margin-top: -74px; }
 </style>
 """,
         unsafe_allow_html=True,
@@ -6479,13 +6483,33 @@ def main() -> None:
         st.session_state["show_calendar"] = False
     is_cal_open = bool(st.session_state.get("show_calendar"))
 
-    st.markdown("<div class='dp-top-selected'>" if is_cal_open else "<div>", unsafe_allow_html=True)
-    if st.button(
-        "🗓  Calendário\nDias úteis automáticos (mês atual)\n" + ("Clique para fechar" if is_cal_open else "Clique para abrir"),
-        use_container_width=True,
-        key="btn_toggle_calendar_card",
-        type="secondary",
-    ):
+    st.markdown(
+        f"""
+<div class="dp-topcard {'dp-topcard--selected' if is_cal_open else ''}">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div style="
+        width:34px;height:34px;border-radius:12px;
+        display:flex;align-items:center;justify-content:center;
+        background: rgba(255,255,255,.04);
+        border: 1px solid rgba(255,255,255,.10);
+        font-size: 1.05rem;
+        color: #93c5fd;
+      ">🗓</div>
+      <div>
+        <div style="color:#E5E7EB;font-weight:900;font-size:1.02rem;letter-spacing:.2px;">Calendário</div>
+        <div style="margin-top:3px;color:#94A3B8;font-size:.86rem;line-height:1.35;">Dias úteis automáticos (mês atual)</div>
+        <div style="margin-top:6px;color:#94A3B8;font-size:.82rem;">{'Clique para fechar' if is_cal_open else 'Clique para abrir'}</div>
+      </div>
+    </div>
+    <span class="dp-pill" style="border-color:rgba(255,255,255,.12);">Ajustável</span>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+    st.markdown("<div class='dp-top-overlay'>", unsafe_allow_html=True)
+    if st.button("Calendário", use_container_width=True, key="btn_toggle_calendar_card"):
         st.session_state["show_calendar"] = not is_cal_open
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
@@ -6545,22 +6569,39 @@ def main() -> None:
         )
     with qa2:
         is_open = bool(st.session_state.get("show_upload"))
-        st.markdown("<div class='dp-top-selected'>" if is_open else "<div>", unsafe_allow_html=True)
-        if st.button(
-            "⬆️  Nova análise\nUpload e validação\n" + ("Clique para fechar" if is_open else "Clique para abrir"),
-            use_container_width=True,
-            key="btn_toggle_upload_top",
-            type="secondary",
-        ):
+        st.markdown(
+            f"""
+<div class="dp-topcard {'dp-topcard--selected' if is_open else ''}">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div style="
+        width:34px;height:34px;border-radius:12px;
+        display:flex;align-items:center;justify-content:center;
+        background: rgba(255,255,255,.04);
+        border: 1px solid rgba(255,255,255,.10);
+        font-size: 1.05rem;
+        color: #C4B5FD;
+      ">⬆️</div>
+      <div>
+        <div style="color:#E5E7EB;font-weight:900;font-size:1.02rem;letter-spacing:.2px;">Nova análise</div>
+        <div style="margin-top:3px;color:#94A3B8;font-size:.86rem;line-height:1.35;">Upload e validação</div>
+        <div style="margin-top:6px;color:#94A3B8;font-size:.82rem;">{html.escape('Clique para fechar' if is_open else 'Clique para abrir')}</div>
+      </div>
+    </div>
+    <span class="dp-pill" style="border-color:rgba(255,255,255,.12);">Arquivos</span>
+  </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+        st.markdown("<div class='dp-top-overlay'>", unsafe_allow_html=True)
+        if st.button("Nova análise", use_container_width=True, key="btn_toggle_upload_top"):
             st.session_state["show_upload"] = not is_open
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
     if bool(st.session_state.get("show_upload")):
         page_upload(settings, conn, embedded=True)
-
-    # Fecha a zona do topo
-    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("### Selecione o Dashboard:")
     if st.session_state.get("dash_selector") not in {"Dashboard de Bônus", "Dashboard de Performance", "Sala de Gestão"}:
