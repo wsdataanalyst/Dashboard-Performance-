@@ -4157,6 +4157,11 @@ def page_sala_gestao(settings, conn) -> None:
             s = _dept_norm(name)
             if not s:
                 return False
+            # linhas de metadados exportadas (ex.: "Filtros aplicados: Mês ...")
+            if s.startswith("filtros aplicados") or "filtros aplicados" in s:
+                return False
+            if s == "nan":
+                return False
             if s == "outros":
                 return False
             # Excluir qualquer variação de "Painéis Elétricos" / "Paineis Eletricos"
