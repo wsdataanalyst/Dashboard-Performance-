@@ -6472,13 +6472,8 @@ def main() -> None:
     # Ação rápida: Nova análise (não polui as visões; fica recolhida por padrão)
     if st.session_state.get("show_upload") is None:
         st.session_state["show_upload"] = False
-    qa1, qa2 = st.columns([1.35, 1])
+    qa1, qa2 = st.columns([1, 1.35])
     with qa1:
-        if st.button("➕ Nova análise (upload dos 7 arquivos)", use_container_width=True, key="btn_show_upload_top"):
-            st.session_state["show_upload"] = True
-            st.rerun()
-        st.caption("Fica recolhido por padrão e não interfere nas visões.")
-    with qa2:
         active_id = st.session_state.get("active_analysis_id")
         label = f"Análise ativa: #{int(active_id)}" if active_id is not None else "Nenhuma análise ativa"
         st.markdown(
@@ -6488,10 +6483,16 @@ def main() -> None:
             f"</div>",
             unsafe_allow_html=True,
         )
+    with qa2:
+        is_open = bool(st.session_state.get("show_upload"))
+        btn_label = "▼ Nova análise (upload dos 7 arquivos)" if is_open else "➕ Nova análise (upload dos 7 arquivos)"
+        if st.button(btn_label, use_container_width=True, key="btn_toggle_upload_top"):
+            st.session_state["show_upload"] = not is_open
+            st.rerun()
 
-    with st.expander("➕ Nova análise (upload dos 7 arquivos)", expanded=bool(st.session_state.get("show_upload"))):
-        cclose = st.columns([1, 1, 1])[2]
-        with cclose:
+    if bool(st.session_state.get("show_upload")):
+        top_close = st.columns([1, 1, 1])[2]
+        with top_close:
             if st.button("Fechar", use_container_width=True, key="btn_hide_upload_top"):
                 st.session_state["show_upload"] = False
                 st.rerun()
