@@ -3684,11 +3684,15 @@ def page_highlights(settings, conn) -> None:
         st.info("Não consegui montar o histórico.")
         return
 
-    # “Semanal” = últimas 4 análises, “Mensal” = últimas 12 análises (aproximação por snapshots salvos)
-    last4 = hdf.tail(4)
-    last12 = hdf.tail(12)
+    # “Semanal” = últimas N análises disponíveis (até 4), “Mensal” = até 12
+    n_week = int(min(4, len(hdf)))
+    n_month = int(min(12, len(hdf)))
+    lastw = hdf.tail(n_week)
+    lastm = hdf.tail(n_month)
 
-    tab_w, tab_m, tab_ai = st.tabs(["Highlight semanal (últimas 4)", "Highlight mensal (últimas 12)", "Análise profunda (IA)"])
+    tab_w, tab_m, tab_ai = st.tabs(
+        [f"Highlight semanal (últimas {n_week})", f"Highlight mensal (últimas {n_month})", "Análise profunda (IA)"]
+    )
 
     def _render_trend(sub: pd.DataFrame, title: str) -> None:
         st.markdown(f"### {title}")
@@ -3736,9 +3740,9 @@ def page_highlights(settings, conn) -> None:
         )
 
     with tab_w:
-        _render_trend(last4, "Últimas 4 análises (aprox. semanal)")
+        _render_trend(lastw, f"Últimas {n_week} análises (aprox. semanal)")
     with tab_m:
-        _render_trend(last12, "Últimas 12 análises (aprox. mensal)")
+        _render_trend(lastm, f"Últimas {n_month} análises (aprox. mensal)")
 
     with tab_ai:
         provider: Provider = st.selectbox(
