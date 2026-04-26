@@ -6434,8 +6434,44 @@ def main() -> None:
                 "revisar dados → salvar → abrir **Dashboard** ou **Histórico**."
             )
 
-    # Aba inicial: calendário (dias úteis automáticos)
-    with st.expander("📅 Calendário (dias úteis automáticos)", expanded=True):
+    # Calendário (dias úteis automáticos) — card moderno (toggle)
+    if st.session_state.get("show_calendar") is None:
+        st.session_state["show_calendar"] = False
+
+    cal_left, cal_right = st.columns([1.35, 1])
+    with cal_left:
+        st.markdown(
+            """
+<div class="dp-card" style="padding:12px 14px;margin: 4px 0 10px 0;min-height:64px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div style="
+        width:34px;height:34px;border-radius:12px;
+        display:flex;align-items:center;justify-content:center;
+        background: rgba(255,255,255,.04);
+        border: 1px solid rgba(255,255,255,.10);
+        font-size: 1.05rem;
+        color: #93c5fd;
+      ">🗓</div>
+      <div>
+        <div style="color:#E5E7EB;font-weight:900;font-size:1.02rem;letter-spacing:.2px;">Calendário</div>
+        <div style="margin-top:3px;color:#94A3B8;font-size:.86rem;line-height:1.35;">Dias úteis automáticos (mês atual)</div>
+      </div>
+    </div>
+    <span class="dp-pill" style="border-color:rgba(255,255,255,.12);">Ajustável</span>
+  </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+    with cal_right:
+        is_cal_open = bool(st.session_state.get("show_calendar"))
+        if st.button("Fechar calendário" if is_cal_open else "Abrir calendário", use_container_width=True, key="btn_toggle_calendar"):
+            st.session_state["show_calendar"] = not is_cal_open
+            st.rerun()
+
+    if bool(st.session_state.get("show_calendar")):
+        st.markdown("<div class='dp-card' style='padding:14px 14px;margin: 0 0 10px 0;'>", unsafe_allow_html=True)
         import datetime as _dt
 
         today = _dt.date.today()
@@ -6468,6 +6504,7 @@ def main() -> None:
             "Úteis **restantes** = do dia de hoje até o fim do mês (inclui o próprio dia útil de hoje). "
             "Úteis **trabalhados** = corridos no mês até hoje, inclusive o dia atual quando for útil (base de ritmo / projeção)."
         )
+        st.markdown("</div>", unsafe_allow_html=True)
 
     # Ação rápida: Nova análise (não polui as visões; fica recolhida por padrão)
     if st.session_state.get("show_upload") is None:
