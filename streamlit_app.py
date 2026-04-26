@@ -1262,6 +1262,22 @@ def page_upload(settings, conn) -> None:
             periodo_final = str(payload.get("periodo") or periodo or "Período não informado")
             user = st.session_state.get("user") or {}
             owner_id = int(user.get("id") or 0) or None
+            # Vincular bases auxiliares (Sala de Gestão) à análise salva:
+            # evita ficar dependente do "cache da sessão" ao trocar a análise ativa.
+            payload_to_save = dict(payload)
+            try:
+                daily_df = st.session_state.get("sg_daily_df")
+                daily_meta = st.session_state.get("sg_daily_meta") if isinstance(st.session_state.get("sg_daily_meta"), dict) else None
+                if isinstance(daily_df, pd.DataFrame) and not daily_df.empty:
+                    cols = [c for c in ["dia", "faturamento", "nfs_emitidas", "clientes_atendidos"] if c in daily_df.columns]
+                    rows_daily = daily_df[cols].copy().to_dict(orient="records") if cols else daily_df.to_dict(orient="records")
+                    payload_to_save["_sg_daily"] = {
+                        "rows": rows_daily,
+                        "meta": daily_meta or {},
+                        "source": st.session_state.get("sg_daily_source_name") or st.session_state.get("sg_kpi_source_name"),
+                    }
+            except Exception:
+                pass
             analysis_id = save_analysis(
                 conn,
                 periodo=periodo_final,
@@ -1269,7 +1285,7 @@ def page_upload(settings, conn) -> None:
                 model_used=str(meta.get("model", "unknown")),
                 parent_analysis_id=None,
                 owner_user_id=owner_id,
-                payload=payload,
+                payload=payload_to_save,
                 total_bonus=float(total),
             )
 
@@ -3800,6 +3816,19 @@ def page_sala_gestao(settings, conn) -> None:
                     payload_base = json.loads(r0.payload_json)
                 except Exception:
                     payload_base = None
+
+        # Se a análise ativa tiver base diária salva, usa ela (evita "travamento" ao trocar análise)
+        try:
+            if isinstance(payload_base, dict) and isinstance(payload_base.get("_sg_daily"), dict):
+                sd = payload_base.get("_sg_daily") or {}
+                rows = sd.get("rows")
+                if isinstance(rows, list) and rows:
+                    st.session_state["sg_daily_df"] = pd.DataFrame(rows)
+                    st.session_state["sg_daily_meta"] = sd.get("meta") if isinstance(sd.get("meta"), dict) else {}
+                    if sd.get("source"):
+                        st.session_state["sg_daily_source_name"] = sd.get("source")
+        except Exception:
+            pass
 
         totais = (payload_base or {}).get("totais") if isinstance(payload_base, dict) else {}
         if not isinstance(totais, dict):
