@@ -6541,80 +6541,69 @@ def main() -> None:
         page_upload(settings, conn, embedded=True)
 
     st.markdown("### Selecione o Dashboard:")
-    # Cards clicáveis (mais claro que radio padrão)
     if st.session_state.get("dash_selector") not in {"Dashboard de Bônus", "Dashboard de Performance", "Sala de Gestão"}:
         st.session_state["dash_selector"] = "Sala de Gestão"
 
     st.markdown(
         """
 <style>
-  .dp-dash-cards{ display:flex; gap:10px; flex-wrap:wrap; margin: 6px 0 10px 0; }
-  .dp-dash-card{
-    flex: 1 1 220px;
-    border-radius: 16px;
-    border: 1px solid rgba(255,255,255,.12);
-    background: rgba(255,255,255,.02);
-    padding: 12px 12px;
-    box-shadow: 0 10px 26px rgba(0,0,0,.18);
+  .dp-dash-select{ margin: 6px 0 10px 0; }
+  .dp-dash-select [data-testid="stButton"] > button{
+    width: 100% !important;
+    text-align: left !important;
+    border-radius: 16px !important;
+    border: 1px solid rgba(255,255,255,.12) !important;
+    background: rgba(255,255,255,.02) !important;
+    padding: 12px 12px !important;
+    box-shadow: 0 10px 26px rgba(0,0,0,.18) !important;
+    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease !important;
+    min-height: 74px !important;
   }
-  .dp-dash-card--active{
-    border-color: rgba(110,231,183,.42);
-    background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.18), transparent 60%),
-                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
+  .dp-dash-select [data-testid="stButton"] > button:hover{
+    transform: translateY(-2px) !important;
+    border-color: rgba(59,130,246,.28) !important;
+    box-shadow: 0 18px 40px rgba(0,0,0,.28) !important;
+    background: rgba(255,255,255,.03) !important;
+  }
+  .dp-dash-select [data-testid="stButton"] > button:focus{
+    outline: none !important;
+    box-shadow: 0 0 0 3px rgba(59,130,246,.22), 0 18px 40px rgba(0,0,0,.28) !important;
+  }
+  /* Selecionado */
+  .dp-dash-select .dp-dash-selected [data-testid="stButton"] > button{
+    border-color: rgba(110,231,183,.42) !important;
+    background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.14), transparent 60%),
+                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
   }
   .dp-dash-title{ margin:0; font-weight:900; color:#E5E7EB; font-size:1.02rem; letter-spacing:.2px; }
   .dp-dash-sub{ margin:6px 0 0 0; color:#94A3B8; font-size:.86rem; line-height:1.35; }
-  /* Botão dentro do card */
-  .dp-dash-btn .stButton>button{
-    width:100%;
-    border-radius: 14px !important;
-    border: 1px solid rgba(255,255,255,.12) !important;
-    background: rgba(255,255,255,.04) !important;
-    padding: 0.55rem 0.8rem !important;
-  }
 </style>
 """,
         unsafe_allow_html=True,
     )
 
     dash = str(st.session_state.get("dash_selector"))
+    st.markdown("<div class='dp-dash-select'>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
     with c1:
-        active = dash == "Dashboard de Bônus"
-        st.markdown(
-            f"<div class='dp-dash-card {'dp-dash-card--active' if active else ''}'>"
-            f"<p class='dp-dash-title'>Dashboard de Bônus</p>"
-            f"<p class='dp-dash-sub'>Bônus, evolução e insights</p>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-        if st.button("Abrir", use_container_width=True, key="dash_btn_bonus"):
+        st.markdown("<div class='dp-dash-selected'>" if dash == "Dashboard de Bônus" else "<div>", unsafe_allow_html=True)
+        if st.button("Dashboard de Bônus", use_container_width=True, key="dash_pick_bonus"):
             st.session_state["dash_selector"] = "Dashboard de Bônus"
             st.rerun()
+        st.markdown("<p class='dp-dash-sub'>Bônus, evolução e insights</p></div>", unsafe_allow_html=True)
     with c2:
-        active = dash == "Dashboard de Performance"
-        st.markdown(
-            f"<div class='dp-dash-card {'dp-dash-card--active' if active else ''}'>"
-            f"<p class='dp-dash-title'>Dashboard de Performance</p>"
-            f"<p class='dp-dash-sub'>Indicadores, projeção e ranking</p>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-        if st.button("Abrir", use_container_width=True, key="dash_btn_perf"):
+        st.markdown("<div class='dp-dash-selected'>" if dash == "Dashboard de Performance" else "<div>", unsafe_allow_html=True)
+        if st.button("Dashboard de Performance", use_container_width=True, key="dash_pick_perf"):
             st.session_state["dash_selector"] = "Dashboard de Performance"
             st.rerun()
+        st.markdown("<p class='dp-dash-sub'>Indicadores, projeção e ranking</p></div>", unsafe_allow_html=True)
     with c3:
-        active = dash == "Sala de Gestão"
-        st.markdown(
-            f"<div class='dp-dash-card {'dp-dash-card--active' if active else ''}'>"
-            f"<p class='dp-dash-title'>Sala de Gestão</p>"
-            f"<p class='dp-dash-sub'>Reunião diária: consolidado e deptos</p>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-        if st.button("Abrir", use_container_width=True, key="dash_btn_sg"):
+        st.markdown("<div class='dp-dash-selected'>" if dash == "Sala de Gestão" else "<div>", unsafe_allow_html=True)
+        if st.button("Sala de Gestão", use_container_width=True, key="dash_pick_sg"):
             st.session_state["dash_selector"] = "Sala de Gestão"
             st.rerun()
+        st.markdown("<p class='dp-dash-sub'>Reunião diária: consolidado e deptos</p></div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
     dash = str(st.session_state.get("dash_selector"))
 
