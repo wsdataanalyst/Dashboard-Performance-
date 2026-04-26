@@ -5464,10 +5464,68 @@ def page_sala_gestao(settings, conn) -> None:
                             up = int((d > 0).sum())
                             down = int((d < 0).sum())
                             zero = int((d == 0).sum())
-                            s1, s2, s3 = st.columns(3)
-                            s1.metric("↑ Deptos com evolução (Fat.)", str(up))
-                            s2.metric("↓ Deptos com queda (Fat.)", str(down))
-                            s3.metric("→ Sem mudança (Fat.)", str(zero))
+                            try:
+                                import html as _html
+
+                                def _mini_card(title: str, value: str, subtitle: str, *, icon: str, accent: str) -> None:
+                                    st.markdown(
+                                        f"""
+<div class="dp-card" style="
+  padding:12px 12px;
+  min-height: 156px;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+  border-color: rgba(59,130,246,.18);
+  background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.18), transparent 60%),
+              radial-gradient(900px 220px at 85% 10%, rgba(110,231,183,.12), transparent 55%),
+              linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
+">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+    <div class="dp-kpi-label">{_html.escape(title)}</div>
+    <div style="
+      width:28px;height:28px;border-radius:10px;
+      display:flex;align-items:center;justify-content:center;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.10);
+      font-size: 0.95rem;
+      color: {accent};
+    ">{_html.escape(icon)}</div>
+  </div>
+  <div class="dp-kpi-value" style="font-size:1.35rem;color:{accent};text-shadow:0 0 24px rgba(59,130,246,.18);">{_html.escape(value)}</div>
+  <div style="margin-top:8px;color:#CBD5E1;font-size:0.84rem;line-height:1.35;white-space:normal;">
+    {_html.escape(subtitle) if subtitle else ""}
+  </div>
+</div>
+""",
+                                        unsafe_allow_html=True,
+                                    )
+
+                                depts = merged[key].astype(str).fillna("").tolist()
+                                up_names = [depts[i] for i, v in enumerate(d.tolist()) if pd.notna(v) and float(v) > 0 and str(depts[i]).strip().lower() not in {"", "nan"}]
+                                down_names = [depts[i] for i, v in enumerate(d.tolist()) if pd.notna(v) and float(v) < 0 and str(depts[i]).strip().lower() not in {"", "nan"}]
+                                zero_names = [depts[i] for i, v in enumerate(d.tolist()) if pd.notna(v) and float(v) == 0 and str(depts[i]).strip().lower() not in {"", "nan"}]
+
+                                def _join_names(xs: list[str], max_n: int = 4) -> str:
+                                    xs2 = [str(x).strip() for x in xs if str(x).strip()]
+                                    if not xs2:
+                                        return "—"
+                                    head = xs2[:max_n]
+                                    tail = len(xs2) - len(head)
+                                    return ", ".join(head) + (f" (+{tail})" if tail > 0 else "")
+
+                                s1, s2, s3 = st.columns(3)
+                                with s1:
+                                    _mini_card("↑ Evolução (Fat.)", str(up), _join_names(up_names), icon="📈", accent="#6EE7B7")
+                                with s2:
+                                    _mini_card("↓ Queda (Fat.)", str(down), _join_names(down_names), icon="📉", accent="#fb7185")
+                                with s3:
+                                    _mini_card("→ Sem mudança (Fat.)", str(zero), _join_names(zero_names), icon="➖", accent="#94a3b8")
+                            except Exception:
+                                s1, s2, s3 = st.columns(3)
+                                s1.metric("↑ Deptos com evolução (Fat.)", str(up))
+                                s2.metric("↓ Deptos com queda (Fat.)", str(down))
+                                s3.metric("→ Sem mudança (Fat.)", str(zero))
 
                         def _arrow(v: object, kind: str) -> str:
                             if v is None or (isinstance(v, float) and pd.isna(v)):
