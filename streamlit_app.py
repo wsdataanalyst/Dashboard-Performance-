@@ -6442,24 +6442,33 @@ def main() -> None:
     st.markdown(
         """
 <style>
-  .dp-cal-card .stButton > button{
-    width: 100% !important;
-    text-align: left !important;
-    border-radius: 16px !important;
-    border: 1px solid rgba(255,255,255,.12) !important;
-    background: rgba(255,255,255,.02) !important;
-    padding: 12px 14px !important;
-    min-height: 64px !important;
-    box-shadow: 0 10px 26px rgba(0,0,0,.18) !important;
-    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease !important;
+  /* Click-card: HTML é o visual; botão fica invisível por cima */
+  .dp-click-wrap{ position: relative; }
+  .dp-click-wrap .stButton{ position:absolute; inset:0; margin:0 !important; }
+  .dp-click-wrap .stButton > button{
+    width:100% !important;
+    height:100% !important;
+    opacity:0 !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
   }
-  .dp-cal-card .stButton > button:hover{
-    transform: translateY(-1px) !important;
-    border-color: rgba(59,130,246,.22) !important;
-    box-shadow: 0 18px 40px rgba(0,0,0,.24) !important;
-    background: rgba(255,255,255,.03) !important;
+  .dp-click-card{
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,.12);
+    background: rgba(255,255,255,.02);
+    padding: 12px 14px;
+    min-height: 64px;
+    box-shadow: 0 10px 26px rgba(0,0,0,.18);
+    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease;
   }
-  .dp-cal-card .stButton > button:focus{ outline:none !important; box-shadow: 0 0 0 3px rgba(59,130,246,.20), 0 18px 40px rgba(0,0,0,.24) !important; }
+  .dp-click-wrap:hover .dp-click-card{
+    transform: translateY(-1px);
+    border-color: rgba(59,130,246,.22);
+    box-shadow: 0 18px 40px rgba(0,0,0,.24);
+    background: rgba(255,255,255,.03);
+  }
   .dp-cal-title{ color:#E5E7EB; font-weight:900; font-size:1.02rem; letter-spacing:.2px; }
   .dp-cal-sub{ margin-top:3px;color:#94A3B8;font-size:.86rem;line-height:1.35; }
   .dp-cal-hint{ margin-top:6px;color:#94A3B8;font-size:.82rem; }
@@ -6468,14 +6477,13 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    st.markdown("<div class='dp-cal-card'>", unsafe_allow_html=True)
-    # Botão invisível (estilizado como card); texto real vem por overlay (pointer-events:none)
-    if st.button(" ", use_container_width=True, key="btn_toggle_calendar_card"):
+    st.markdown("<div class='dp-click-wrap'>", unsafe_allow_html=True)
+    if st.button("Calendário", use_container_width=True, key="btn_toggle_calendar_card"):
         st.session_state["show_calendar"] = not is_cal_open
         st.rerun()
     st.markdown(
         f"""
-<div style="margin-top:-56px; pointer-events:none;">
+<div class="dp-click-card">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
     <div style="display:flex;align-items:center;gap:10px;">
       <div style="
@@ -6585,16 +6593,19 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
-        st.markdown("<div class='dp-upload-card'>", unsafe_allow_html=True)
-        if st.button(" ", use_container_width=True, key="btn_toggle_upload_top"):
+        st.markdown("<div class='dp-click-wrap'>", unsafe_allow_html=True)
+        if st.button("Nova análise", use_container_width=True, key="btn_toggle_upload_top"):
             st.session_state["show_upload"] = not is_open
             st.rerun()
         st.markdown(
-            "<div style='margin-top:-54px; pointer-events:none;'>"
-            "<div class='dp-up-label'>Upload</div>"
-            "<div class='dp-up-title'>Nova análise</div>"
-            f"<div class='dp-up-sub'>{html.escape('Clique para fechar' if is_open else 'Clique para abrir')}</div>"
-            "</div></div>",
+            f"""
+<div class="dp-click-card">
+  <div class='dp-up-label'>Upload</div>
+  <div class='dp-up-title'>Nova análise</div>
+  <div class='dp-up-sub'>{html.escape('Clique para fechar' if is_open else 'Clique para abrir')}</div>
+</div>
+</div>
+""",
             unsafe_allow_html=True,
         )
 
