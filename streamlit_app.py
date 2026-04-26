@@ -6443,8 +6443,12 @@ def main() -> None:
     width: 100% !important;
     text-align: left !important;
     border-radius: 16px !important;
-    border: 1px solid rgba(255,255,255,.12) !important;
-    background: rgba(255,255,255,.02) !important; /* neutraliza o verde global */
+    /* Mesma paleta do card Status (padrão) */
+    border: 1px solid rgba(110,231,183,.32) !important;
+    background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.14), transparent 60%),
+                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
+    background-image: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.14), transparent 60%),
+                      linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
     box-shadow: 0 10px 26px rgba(0,0,0,.18) !important;
     padding: 12px 12px !important;
     min-height: 74px !important;
@@ -6455,13 +6459,14 @@ def main() -> None:
   }
   .dp-topzone [data-testid="stButton"] > button:hover{
     transform: translateY(-2px) !important;
-    border-color: rgba(59,130,246,.28) !important;
+    border-color: rgba(110,231,183,.46) !important;
     box-shadow: 0 18px 40px rgba(0,0,0,.28) !important;
-    background: rgba(255,255,255,.03) !important;
+    background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.18), transparent 60%),
+                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
   }
   .dp-topzone .dp-top-selected [data-testid="stButton"] > button{
-    border-color: rgba(59,130,246,.34) !important;
-    background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.14), transparent 60%),
+    border-color: rgba(110,231,183,.55) !important;
+    background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.22), transparent 60%),
                 linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
   }
 </style>
@@ -6524,7 +6529,7 @@ def main() -> None:
     # Ação rápida: Nova análise (card clicável igual aos dashboards; sem verde)
     if st.session_state.get("show_upload") is None:
         st.session_state["show_upload"] = False
-    qa1, qa2 = st.columns([1, 1.35])
+    qa1, qa2 = st.columns([1, 1])
     with qa1:
         active_id = st.session_state.get("active_analysis_id")
         label = f"Análise ativa: #{int(active_id)}" if active_id is not None else "Nenhuma análise ativa"
