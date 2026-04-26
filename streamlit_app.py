@@ -6461,6 +6461,7 @@ def main() -> None:
                 linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
   }
   /* Botão overlay invisível (não mostra verde, não cria barra) */
+  .dp-top-overlay .stButton > button,
   .dp-top-overlay [data-testid="stButton"] > button{
     width: 100% !important;
     height: 74px !important;
@@ -6471,6 +6472,9 @@ def main() -> None:
     padding: 0 !important;
     margin: 0 !important;
     transform: none !important;
+    color: transparent !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
   }
   .dp-top-overlay{ margin-top: -74px; }
 </style>
@@ -6509,7 +6513,7 @@ def main() -> None:
         unsafe_allow_html=True,
     )
     st.markdown("<div class='dp-top-overlay'>", unsafe_allow_html=True)
-    if st.button("Calendário", use_container_width=True, key="btn_toggle_calendar_card"):
+    if st.button(" ", use_container_width=True, key="btn_toggle_calendar_card"):
         st.session_state["show_calendar"] = not is_cal_open
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
@@ -6595,7 +6599,7 @@ def main() -> None:
             unsafe_allow_html=True,
         )
         st.markdown("<div class='dp-top-overlay'>", unsafe_allow_html=True)
-        if st.button("Nova análise", use_container_width=True, key="btn_toggle_upload_top"):
+        if st.button(" ", use_container_width=True, key="btn_toggle_upload_top"):
             st.session_state["show_upload"] = not is_open
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
