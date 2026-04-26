@@ -812,12 +812,22 @@ def _uploads_dir(settings) -> Path:
     return p
 
 
-def page_upload(settings, conn) -> None:
-    render_header(
-        "Upload e extração",
-        "Envie prints (ou Excel) → extrai JSON → você revisa → salva no histórico.",
-        right="Fallback Gemini ↔ OpenAI",
-    )
+def page_upload(settings, conn, *, embedded: bool = False) -> None:
+    if not embedded:
+        render_header(
+            "Upload e extração",
+            "Envie prints (ou Excel) → extrai JSON → você revisa → salva no histórico.",
+            right="Fallback Gemini ↔ OpenAI",
+        )
+    else:
+        st.markdown(
+            "<div class='dp-card' style='padding:12px 14px;margin: 6px 0 10px 0;'>"
+            "<div style='display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;'>"
+            "<div style='color:#E5E7EB;font-weight:900'>+ Nova análise</div>"
+            "<div style='color:#94A3B8;font-size:.86rem'>Upload dos 7 arquivos → validar → salvar no histórico</div>"
+            "</div></div>",
+            unsafe_allow_html=True,
+        )
 
     def default_provider_index() -> int:
         # Preferir Auto quando as 2 chaves existem; senão, cair para a que existir.
@@ -1320,6 +1330,9 @@ def page_upload(settings, conn) -> None:
 
             st.success(f"Análise salva com ID **{analysis_id}**.")
             st.session_state["active_analysis_id"] = analysis_id
+            # Se o upload estiver embutido no topo, fecha o expander para voltar à visão
+            st.session_state["show_upload"] = False
+            st.rerun()
 
 
 def page_dashboard(settings, conn) -> None:
@@ -6455,6 +6468,45 @@ def main() -> None:
             "Úteis **trabalhados** = corridos no mês até hoje, inclusive o dia atual quando for útil (base de ritmo / projeção)."
         )
 
+    # Ação rápida: Nova análise (não polui as visões; fica recolhida por padrão)
+    if st.session_state.get("show_upload") is None:
+        st.session_state["show_upload"] = False
+    qa1, qa2 = st.columns([1, 1])
+    with qa1:
+        st.markdown(
+            "<div class='dp-card' style='padding:12px 14px;margin: 6px 0 10px 0;'>"
+            "<div style='display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;'>"
+            "<div style='color:#E5E7EB;font-weight:900'>Ações rápidas</div>"
+            "<span class='dp-pill'>Upload fica recolhido</span>"
+            "</div>"
+            "<div style='margin-top:8px;color:#94A3B8;font-size:.88rem;line-height:1.35'>"
+            "Use <b>+ Nova análise</b> para enviar os 7 arquivos e salvar no histórico — sem atrapalhar as visões."
+            "</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    with qa2:
+        active_id = st.session_state.get("active_analysis_id")
+        label = f"Análise ativa: #{int(active_id)}" if active_id is not None else "Nenhuma análise ativa"
+        st.markdown(
+            f"<div class='dp-card' style='padding:12px 14px;margin: 6px 0 10px 0;'>"
+            f"<div style='color:#94A3B8;font-size:.78rem;font-weight:850'>Status</div>"
+            f"<div style='color:#E5E7EB;font-weight:900;font-size:1.05rem;margin-top:4px'>{html.escape(label)}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("+ Nova análise", use_container_width=True, key="btn_show_upload_top"):
+            st.session_state["show_upload"] = True
+            st.rerun()
+
+    with st.expander("➕ Nova análise (upload dos 7 arquivos)", expanded=bool(st.session_state.get("show_upload"))):
+        cclose = st.columns([1, 1, 1])[2]
+        with cclose:
+            if st.button("Fechar", use_container_width=True, key="btn_hide_upload_top"):
+                st.session_state["show_upload"] = False
+                st.rerun()
+        page_upload(settings, conn, embedded=True)
+
     st.markdown("### Selecione o Dashboard:")
     # Cards clicáveis (mais claro que radio padrão)
     if st.session_state.get("dash_selector") not in {"Dashboard de Bônus", "Dashboard de Performance", "Sala de Gestão"}:
@@ -6536,20 +6588,18 @@ def main() -> None:
     if dash == "Dashboard de Bônus":
         bonus_tab = st.radio(
             "",
-            options=["1. Nova Análise", "2. Dashboard", "3. Evolução", "4. Edição Manual", "5. Análise com IA", "6. Histórico"],
+            options=["Dashboard", "Evolução", "Edição Manual", "Análise com IA", "Histórico"],
             horizontal=True,
             label_visibility="collapsed",
             key="bonus_tab",
         )
-        if bonus_tab == "1. Nova Análise":
-            page_upload(settings, conn)
-        elif bonus_tab == "2. Dashboard":
+        if bonus_tab == "Dashboard":
             page_dashboard(settings, conn)
-        elif bonus_tab == "3. Evolução":
+        elif bonus_tab == "Evolução":
             page_evolution(settings, conn)
-        elif bonus_tab == "4. Edição Manual":
+        elif bonus_tab == "Edição Manual":
             page_edit(settings, conn)
-        elif bonus_tab == "5. Análise com IA":
+        elif bonus_tab == "Análise com IA":
             page_insights(settings, conn)
         else:
             page_history(settings, conn)
