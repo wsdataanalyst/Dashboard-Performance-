@@ -6434,7 +6434,7 @@ def main() -> None:
                 "revisar dados → salvar → abrir **Dashboard** ou **Histórico**."
             )
 
-    # Calendário (dias úteis automáticos) — card clicável (sem botões verdes)
+    # Calendário (dias úteis automáticos) — mesmo padrão dos cards de dashboard (sem verde)
     if st.session_state.get("show_calendar") is None:
         st.session_state["show_calendar"] = False
     is_cal_open = bool(st.session_state.get("show_calendar"))
@@ -6442,53 +6442,45 @@ def main() -> None:
     st.markdown(
         """
 <style>
-  /* Click-card: HTML é o visual; botão fica invisível por cima */
-  .dp-click-wrap{ position: relative; }
-  .dp-click-wrap .stButton{ position:absolute; inset:0; margin:0 !important; }
-  .dp-click-wrap .stButton > button,
-  .dp-click-wrap [data-testid="stButton"] > button{
-    width:100% !important;
-    height:100% !important;
-    opacity:0 !important;
-    background: transparent !important;
-    border: 0 !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-    color: transparent !important;
-    font-size: 0 !important;
-    line-height: 0 !important;
-    min-height: 0 !important;
+  .dp-top-cards{ margin: 6px 0 10px 0; }
+  .dp-top-cards [data-testid="stButton"] > button{
+    width: 100% !important;
+    text-align: left !important;
+    border-radius: 16px !important;
+    border: 1px solid rgba(255,255,255,.12) !important;
+    background: rgba(255,255,255,.02) !important;
+    padding: 12px 12px !important;
+    box-shadow: 0 10px 26px rgba(0,0,0,.18) !important;
+    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease !important;
+    min-height: 74px !important;
   }
-  .dp-click-card{
-    border-radius: 16px;
-    border: 1px solid rgba(255,255,255,.12);
-    background: rgba(255,255,255,.02);
-    padding: 12px 14px;
-    min-height: 64px;
-    box-shadow: 0 10px 26px rgba(0,0,0,.18);
-    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease;
+  .dp-top-cards [data-testid="stButton"] > button:hover{
+    transform: translateY(-2px) !important;
+    border-color: rgba(59,130,246,.28) !important;
+    box-shadow: 0 18px 40px rgba(0,0,0,.28) !important;
+    background: rgba(255,255,255,.03) !important;
   }
-  .dp-click-wrap:hover .dp-click-card{
-    transform: translateY(-1px);
-    border-color: rgba(59,130,246,.22);
-    box-shadow: 0 18px 40px rgba(0,0,0,.24);
-    background: rgba(255,255,255,.03);
+  .dp-top-cards .dp-top-selected [data-testid="stButton"] > button{
+    border-color: rgba(59,130,246,.34) !important;
+    background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.14), transparent 60%),
+                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
   }
-  .dp-cal-title{ color:#E5E7EB; font-weight:900; font-size:1.02rem; letter-spacing:.2px; }
-  .dp-cal-sub{ margin-top:3px;color:#94A3B8;font-size:.86rem;line-height:1.35; }
-  .dp-cal-hint{ margin-top:6px;color:#94A3B8;font-size:.82rem; }
+  .dp-top-title{ margin:0; font-weight:900; color:#E5E7EB; font-size:1.02rem; letter-spacing:.2px; }
+  .dp-top-sub{ margin:6px 0 0 0; color:#94A3B8; font-size:.86rem; line-height:1.35; }
+  .dp-top-hint{ margin:6px 0 0 0; color:#94A3B8; font-size:.82rem; }
 </style>
 """,
         unsafe_allow_html=True,
     )
 
-    st.markdown("<div class='dp-click-wrap'>", unsafe_allow_html=True)
-    if st.button("Calendário", use_container_width=True, key="btn_toggle_calendar_card"):
+    st.markdown("<div class='dp-top-cards'>", unsafe_allow_html=True)
+    st.markdown("<div class='dp-top-selected'>" if is_cal_open else "<div>", unsafe_allow_html=True)
+    if st.button("Calendário", use_container_width=True, key="btn_toggle_calendar_card", type="secondary"):
         st.session_state["show_calendar"] = not is_cal_open
         st.rerun()
     st.markdown(
         f"""
-<div class="dp-click-card">
+<div style="margin-top:-56px; pointer-events:none;">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
     <div style="display:flex;align-items:center;gap:10px;">
       <div style="
@@ -6500,15 +6492,15 @@ def main() -> None:
         color: #93c5fd;
       ">🗓</div>
       <div>
-        <div class="dp-cal-title">Calendário</div>
-        <div class="dp-cal-sub">Dias úteis automáticos (mês atual)</div>
-        <div class="dp-cal-hint">{'Clique para fechar' if is_cal_open else 'Clique para abrir'}</div>
+        <p class="dp-top-title">Calendário</p>
+        <p class="dp-top-sub">Dias úteis automáticos (mês atual)</p>
+        <p class="dp-top-hint">{'Clique para fechar' if is_cal_open else 'Clique para abrir'}</p>
       </div>
     </div>
     <span class="dp-pill" style="border-color:rgba(255,255,255,.12);">Ajustável</span>
   </div>
 </div>
-</div>
+</div></div>
 """,
         unsafe_allow_html=True,
     )
@@ -6549,7 +6541,7 @@ def main() -> None:
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Ação rápida: Nova análise (não polui as visões; fica recolhida por padrão)
+    # Ação rápida: Nova análise (card clicável igual aos dashboards; sem verde)
     if st.session_state.get("show_upload") is None:
         st.session_state["show_upload"] = False
     qa1, qa2 = st.columns([1, 1.35])
@@ -6568,48 +6560,34 @@ def main() -> None:
         )
     with qa2:
         is_open = bool(st.session_state.get("show_upload"))
-        # Card clicável "Nova análise" (sem botão verde; igual ao Status no design)
-        st.markdown(
-            """
-<style>
-  .dp-upload-card .stButton > button{
-    width: 100% !important;
-    text-align: left !important;
-    border-radius: 16px !important;
-    border: 1px solid rgba(255,255,255,.12) !important;
-    background: rgba(255,255,255,.02) !important;
-    padding: 10px 12px !important;
-    min-height: 64px !important;
-    box-shadow: 0 10px 26px rgba(0,0,0,.18) !important;
-    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease !important;
-  }
-  .dp-upload-card .stButton > button:hover{
-    transform: translateY(-1px) !important;
-    border-color: rgba(59,130,246,.22) !important;
-    box-shadow: 0 18px 40px rgba(0,0,0,.24) !important;
-    background: rgba(255,255,255,.03) !important;
-  }
-  .dp-upload-card .stButton > button:focus{ outline:none !important; box-shadow: 0 0 0 3px rgba(59,130,246,.20), 0 18px 40px rgba(0,0,0,.24) !important; }
-  .dp-upload-card .dp-up-label{ color:#94A3B8; font-size:.78rem; font-weight:850; }
-  .dp-upload-card .dp-up-title{ color:#E5E7EB; font-weight:900; font-size:1.02rem; margin-top:4px; }
-  .dp-upload-card .dp-up-sub{ color:#94A3B8; font-size:.84rem; margin-top:6px; }
-</style>
-""",
-            unsafe_allow_html=True,
-        )
-
-        st.markdown("<div class='dp-click-wrap'>", unsafe_allow_html=True)
-        if st.button("Nova análise", use_container_width=True, key="btn_toggle_upload_top"):
+        st.markdown("<div class='dp-top-cards'>", unsafe_allow_html=True)
+        st.markdown("<div class='dp-top-selected'>" if is_open else "<div>", unsafe_allow_html=True)
+        if st.button("Nova análise", use_container_width=True, key="btn_toggle_upload_top", type="secondary"):
             st.session_state["show_upload"] = not is_open
             st.rerun()
         st.markdown(
             f"""
-<div class="dp-click-card">
-  <div class='dp-up-label'>Upload</div>
-  <div class='dp-up-title'>Nova análise</div>
-  <div class='dp-up-sub'>{html.escape('Clique para fechar' if is_open else 'Clique para abrir')}</div>
+<div style="margin-top:-56px; pointer-events:none;">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div style="
+        width:34px;height:34px;border-radius:12px;
+        display:flex;align-items:center;justify-content:center;
+        background: rgba(255,255,255,.04);
+        border: 1px solid rgba(255,255,255,.10);
+        font-size: 1.05rem;
+        color: #C4B5FD;
+      ">⬆️</div>
+      <div>
+        <p class="dp-top-title">Nova análise</p>
+        <p class="dp-top-sub">Upload e validação</p>
+        <p class="dp-top-hint">{html.escape('Clique para fechar' if is_open else 'Clique para abrir')}</p>
+      </div>
+    </div>
+    <span class="dp-pill" style="border-color:rgba(255,255,255,.12);">Arquivos</span>
+  </div>
 </div>
-</div>
+</div></div>
 """,
             unsafe_allow_html=True,
         )
