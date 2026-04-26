@@ -6471,33 +6471,22 @@ def main() -> None:
     # Ação rápida: Nova análise (não polui as visões; fica recolhida por padrão)
     if st.session_state.get("show_upload") is None:
         st.session_state["show_upload"] = False
-    qa1, qa2 = st.columns([1, 1])
+    qa1, qa2 = st.columns([1.35, 1])
     with qa1:
-        st.markdown(
-            "<div class='dp-card' style='padding:12px 14px;margin: 6px 0 10px 0;'>"
-            "<div style='display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;'>"
-            "<div style='color:#E5E7EB;font-weight:900'>Ações rápidas</div>"
-            "<span class='dp-pill'>Upload fica recolhido</span>"
-            "</div>"
-            "<div style='margin-top:8px;color:#94A3B8;font-size:.88rem;line-height:1.35'>"
-            "Use <b>+ Nova análise</b> para enviar os 7 arquivos e salvar no histórico — sem atrapalhar as visões."
-            "</div>"
-            "</div>",
-            unsafe_allow_html=True,
-        )
+        if st.button("➕ Nova análise (upload dos 7 arquivos)", use_container_width=True, key="btn_show_upload_top"):
+            st.session_state["show_upload"] = True
+            st.rerun()
+        st.caption("Fica recolhido por padrão e não interfere nas visões.")
     with qa2:
         active_id = st.session_state.get("active_analysis_id")
         label = f"Análise ativa: #{int(active_id)}" if active_id is not None else "Nenhuma análise ativa"
         st.markdown(
-            f"<div class='dp-card' style='padding:12px 14px;margin: 6px 0 10px 0;'>"
+            f"<div class='dp-card' style='padding:10px 12px;margin: 6px 0 10px 0;'>"
             f"<div style='color:#94A3B8;font-size:.78rem;font-weight:850'>Status</div>"
-            f"<div style='color:#E5E7EB;font-weight:900;font-size:1.05rem;margin-top:4px'>{html.escape(label)}</div>"
+            f"<div style='color:#E5E7EB;font-weight:900;font-size:1.02rem;margin-top:4px'>{html.escape(label)}</div>"
             f"</div>",
             unsafe_allow_html=True,
         )
-        if st.button("+ Nova análise", use_container_width=True, key="btn_show_upload_top"):
-            st.session_state["show_upload"] = True
-            st.rerun()
 
     with st.expander("➕ Nova análise (upload dos 7 arquivos)", expanded=bool(st.session_state.get("show_upload"))):
         cclose = st.columns([1, 1, 1])[2]
