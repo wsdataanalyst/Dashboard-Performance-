@@ -6444,7 +6444,9 @@ def main() -> None:
     text-align: left !important;
     border-radius: 16px !important;
     border: 1px solid rgba(255,255,255,.12) !important;
-    background: rgba(255,255,255,.02) !important;
+    /* Destaque sutil (topo) */
+    background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.10), transparent 60%),
+                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
     padding: 12px 12px !important;
     box-shadow: 0 10px 26px rgba(0,0,0,.18) !important;
     transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease !important;
@@ -6457,11 +6459,12 @@ def main() -> None:
     transform: translateY(-2px) !important;
     border-color: rgba(59,130,246,.28) !important;
     box-shadow: 0 18px 40px rgba(0,0,0,.28) !important;
-    background: rgba(255,255,255,.03) !important;
+    background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.14), transparent 60%),
+                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
   }
   .dp-action-select .dp-action-selected [data-testid="stButton"] > button{
     border-color: rgba(110,231,183,.42) !important;
-    background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.14), transparent 60%),
+    background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.16), transparent 60%),
                 linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
   }
 </style>
@@ -6523,18 +6526,8 @@ def main() -> None:
         st.session_state["show_upload"] = False
     qa1, qa2 = st.columns([1, 1])
     with qa1:
-        active_id = st.session_state.get("active_analysis_id")
-        label = f"Análise ativa: #{int(active_id)}" if active_id is not None else "Nenhuma análise ativa"
-        st.markdown(
-            f"<div class='dp-card' style='padding:12px 12px;margin: 6px 0 10px 0;min-height:74px;"
-            f"border-color: rgba(110,231,183,.32);"
-            f"background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.14), transparent 60%),"
-            f"linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));'>"
-            f"<div style='color:#94A3B8;font-size:.78rem;font-weight:850'>Status</div>"
-            f"<div style='color:#E5E7EB;font-weight:900;font-size:1.02rem;margin-top:4px'>{html.escape(label)}</div>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+        # Espaço reservado (status da análise ativa já existe no menu lateral)
+        st.empty()
     with qa2:
         is_open = bool(st.session_state.get("show_upload"))
         st.markdown("<div class='dp-action-select'>", unsafe_allow_html=True)
@@ -6579,9 +6572,11 @@ def main() -> None:
   }
   /* Selecionado */
   .dp-dash-select .dp-dash-selected [data-testid="stButton"] > button{
-    border-color: rgba(110,231,183,.42) !important;
-    background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.14), transparent 60%),
-                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
+    border-color: rgba(110,231,183,.55) !important;
+    background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.20), transparent 60%),
+                radial-gradient(900px 220px at 88% 12%, rgba(59,130,246,.12), transparent 55%),
+                linear-gradient(180deg, rgba(17,26,46,.94), rgba(11,18,32,.96)) !important;
+    box-shadow: 0 22px 46px rgba(0,0,0,.34) !important;
   }
   .dp-dash-title{ margin:0; font-weight:900; color:#E5E7EB; font-size:1.02rem; letter-spacing:.2px; }
   .dp-dash-sub{ margin:6px 0 0 0; color:#94A3B8; font-size:.86rem; line-height:1.35; }
