@@ -3812,10 +3812,10 @@ def page_sala_gestao(settings, conn) -> None:
         # O Excel "Faturamento e Atendidos" serve para KPIs diários (dia anterior), não para meta geral.
         fat_atual = float(totais.get("faturamento_total") or 0.0)
         meta_total = float(totais.get("meta_total") or 0.0)
-        # Importante: esta visão NÃO deve ser impactada por sábado.
-        # Se a base diária existir, recalcula "até agora" considerando só dias úteis (seg–sex),
-        # e mostra o sábado separadamente (quando houver movimento).
+        # Regra: acumulado considera TODOS os dias com resultado (inclui sábado, se existir).
+        # Já os indicadores de "dia anterior" devem sempre referenciar o último DIA ÚTIL (sexta quando houver sábado).
         sat_note = None
+        daily_roll = None  # {"acc_fat","acc_nf","acc_cli","last_bus":{"dia","fat","nf","cli"}}
         try:
             daily = st.session_state.get("sg_daily_df")
             meta_d = st.session_state.get("sg_daily_meta") if isinstance(st.session_state.get("sg_daily_meta"), dict) else {}
@@ -3845,6 +3845,11 @@ def page_sala_gestao(settings, conn) -> None:
                 d0["dia"] = d0["dia"].astype(int)
                 d0["_weekday"] = d0["dia"].apply(lambda dd: _dt.date(int(yy), int(mm), int(dd)).weekday())
 
+                # acumulados do mês (inclui sábado)
+                acc_fat = float(pd.to_numeric(d0.get("faturamento"), errors="coerce").fillna(0.0).sum())
+                acc_nf = int(pd.to_numeric(d0.get("nfs_emitidas"), errors="coerce").fillna(0).sum())
+                acc_cli = int(pd.to_numeric(d0.get("clientes_atendidos"), errors="coerce").fillna(0).sum())
+
                 # sábado com movimento (se existir)
                 sat = d0[d0["_weekday"] == 5].copy()
                 if not sat.empty:
@@ -3862,15 +3867,27 @@ def page_sala_gestao(settings, conn) -> None:
                             "cli": int(pd.to_numeric(sat_last.get("clientes_atendidos"), errors="coerce") or 0),
                         }
 
-                # corta acumulado até a última sexta do mês carregado
-                fri_days = d0[d0["_weekday"] == 4]["dia"]
-                if fri_days.notna().any():
-                    last_fri = int(fri_days.max())
-                    fat_upto_fri = float(
-                        pd.to_numeric(d0.loc[d0["dia"] <= last_fri, "faturamento"], errors="coerce").fillna(0.0).sum()
-                    )
-                    # substitui "até agora" por sexta (não inclui sábado)
-                    fat_atual = fat_upto_fri
+                # último dia útil com movimento (referência para "dia anterior")
+                bus = d0[d0["_weekday"] < 5].copy()
+                if not bus.empty:
+                    bus_move = bus[
+                        (pd.to_numeric(bus.get("faturamento"), errors="coerce").fillna(0.0) > 0.0)
+                        | (pd.to_numeric(bus.get("nfs_emitidas"), errors="coerce").fillna(0) > 0)
+                        | (pd.to_numeric(bus.get("clientes_atendidos"), errors="coerce").fillna(0) > 0)
+                    ]
+                    if not bus_move.empty:
+                        bb = bus_move.sort_values("dia").iloc[-1]
+                        daily_roll = {
+                            "acc_fat": acc_fat,
+                            "acc_nf": acc_nf,
+                            "acc_cli": acc_cli,
+                            "last_bus": {
+                                "dia": int(bb.get("dia") or 0),
+                                "fat": float(pd.to_numeric(bb.get("faturamento"), errors="coerce") or 0.0),
+                                "nf": int(pd.to_numeric(bb.get("nfs_emitidas"), errors="coerce") or 0),
+                                "cli": int(pd.to_numeric(bb.get("clientes_atendidos"), errors="coerce") or 0),
+                            },
+                        }
         except Exception:
             sat_note = sat_note
 
@@ -4025,6 +4042,12 @@ def page_sala_gestao(settings, conn) -> None:
         fat_dia_ant = prev0_k.get("faturamento_dia_anterior")
         nf_dia_ant = prev0_k.get("nf_dia_anterior")
         cli_dia_ant = prev0_k.get("clientes_dia_anterior")
+        if isinstance(daily_roll, dict) and isinstance(daily_roll.get("last_bus"), dict):
+            last_bus = daily_roll["last_bus"]
+            fat_dia_ant = float(last_bus.get("fat") or 0.0)
+            nf_dia_ant = int(last_bus.get("nf") or 0)
+            cli_dia_ant = int(last_bus.get("cli") or 0)
+            st.caption(f"Dia anterior (referência dia útil): **dia {int(last_bus.get('dia') or 0):02d}**.")
         marg_hoje_pct = prev0_k.get("margem_hoje_pct")
         marg_ontem_pct = prev0_k.get("margem_dia_anterior_pct")
 
@@ -4130,9 +4153,15 @@ def page_sala_gestao(settings, conn) -> None:
 
         k4, k5, k6, k7 = st.columns(4)
         with k4:
-            _sg_kpi_card("Acumulado NFs", str(int(prev0_k.get("nf_acumulado") or 0)), icon="📦", accent="#93c5fd", delta=None)
+            nf_acc = int(prev0_k.get("nf_acumulado") or 0)
+            if isinstance(daily_roll, dict) and daily_roll.get("acc_nf") is not None:
+                nf_acc = int(daily_roll.get("acc_nf") or 0)
+            _sg_kpi_card("Acumulado NFs", str(int(nf_acc)), icon="📦", accent="#93c5fd", delta=None)
         with k5:
-            _sg_kpi_card("Acumulado Clientes", str(int(prev0_k.get("clientes_acumulado") or 0)), icon="👥", accent="#C4B5FD", delta=None)
+            cli_acc = int(prev0_k.get("clientes_acumulado") or 0)
+            if isinstance(daily_roll, dict) and daily_roll.get("acc_cli") is not None:
+                cli_acc = int(daily_roll.get("acc_cli") or 0)
+            _sg_kpi_card("Acumulado Clientes", str(int(cli_acc)), icon="👥", accent="#C4B5FD", delta=None)
         with k6:
             _sg_kpi_card(
                 "Margem média (time)",
