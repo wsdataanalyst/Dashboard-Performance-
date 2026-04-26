@@ -6435,91 +6435,17 @@ def main() -> None:
             )
 
     # Zona do topo: cards clicáveis (sem botões verdes visíveis)
-    st.markdown(
-        """
-<style>
-  .dp-topcard{
-    border-radius: 16px;
-    border: 1px solid rgba(110,231,183,.32);
-    background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.14), transparent 60%),
-                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
-    box-shadow: 0 10px 26px rgba(0,0,0,.18);
-    padding: 12px 12px;
-    min-height: 74px;
-    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease;
-  }
-  .dp-topcard:hover{
-    transform: translateY(-2px);
-    border-color: rgba(110,231,183,.46);
-    box-shadow: 0 18px 40px rgba(0,0,0,.28);
-    background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.18), transparent 60%),
-                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
-  }
-  .dp-topcard--selected{
-    border-color: rgba(110,231,183,.55);
-    background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.22), transparent 60%),
-                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
-  }
-  /* Wrapper: overlay absoluto (não ocupa espaço) */
-  .dp-topwrap{ position: relative; margin: 6px 0 10px 0; }
-  .dp-topoverlay{ position: absolute; inset: 0; }
-  /* Botão overlay invisível (não mostra verde, não cria barra) */
-  .dp-topoverlay .stButton > button,
-  .dp-topoverlay [data-testid="stButton"] > button{
-    width: 100% !important;
-    height: 100% !important;
-    opacity: 0 !important;
-    background: transparent !important;
-    border: 0 !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    transform: none !important;
-    color: transparent !important;
-    font-size: 0 !important;
-    line-height: 0 !important;
-  }
-</style>
-""",
-        unsafe_allow_html=True,
-    )
+    # Botões diretos (solução simples): clicar abre/fecha calendário e nova análise
 
     # Calendário (dias úteis automáticos) — card clicável (sem barras verdes)
     if st.session_state.get("show_calendar") is None:
         st.session_state["show_calendar"] = False
     is_cal_open = bool(st.session_state.get("show_calendar"))
 
-    st.markdown("<div class='dp-topwrap'>", unsafe_allow_html=True)
-    st.markdown(
-        f"""
-<div class="dp-topcard {'dp-topcard--selected' if is_cal_open else ''}">
-  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-    <div style="display:flex;align-items:center;gap:10px;">
-      <div style="
-        width:34px;height:34px;border-radius:12px;
-        display:flex;align-items:center;justify-content:center;
-        background: rgba(255,255,255,.04);
-        border: 1px solid rgba(255,255,255,.10);
-        font-size: 1.05rem;
-        color: #93c5fd;
-      ">🗓</div>
-      <div>
-        <div style="color:#E5E7EB;font-weight:900;font-size:1.02rem;letter-spacing:.2px;">Calendário</div>
-        <div style="margin-top:3px;color:#94A3B8;font-size:.86rem;line-height:1.35;">Dias úteis automáticos (mês atual)</div>
-        <div style="margin-top:6px;color:#94A3B8;font-size:.82rem;">{'Clique para fechar' if is_cal_open else 'Clique para abrir'}</div>
-      </div>
-    </div>
-    <span class="dp-pill" style="border-color:rgba(255,255,255,.12);">Ajustável</span>
-  </div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-    st.markdown("<div class='dp-topoverlay'>", unsafe_allow_html=True)
-    if st.button(" ", use_container_width=True, key="btn_toggle_calendar_card"):
+    cal_btn_label = "🗓 Calendário (fechar)" if is_cal_open else "🗓 Calendário (abrir)"
+    if st.button(cal_btn_label, use_container_width=True, key="btn_toggle_calendar_card"):
         st.session_state["show_calendar"] = not is_cal_open
         st.rerun()
-    st.markdown("</div></div>", unsafe_allow_html=True)
 
     if bool(st.session_state.get("show_calendar")):
         st.markdown("<div class='dp-card' style='padding:14px 14px;margin: 0 0 10px 0;'>", unsafe_allow_html=True)
@@ -6576,37 +6502,10 @@ def main() -> None:
         )
     with qa2:
         is_open = bool(st.session_state.get("show_upload"))
-        st.markdown("<div class='dp-topwrap'>", unsafe_allow_html=True)
-        st.markdown(
-            f"""
-<div class="dp-topcard {'dp-topcard--selected' if is_open else ''}">
-  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-    <div style="display:flex;align-items:center;gap:10px;">
-      <div style="
-        width:34px;height:34px;border-radius:12px;
-        display:flex;align-items:center;justify-content:center;
-        background: rgba(255,255,255,.04);
-        border: 1px solid rgba(255,255,255,.10);
-        font-size: 1.05rem;
-        color: #C4B5FD;
-      ">⬆️</div>
-      <div>
-        <div style="color:#E5E7EB;font-weight:900;font-size:1.02rem;letter-spacing:.2px;">Nova análise</div>
-        <div style="margin-top:3px;color:#94A3B8;font-size:.86rem;line-height:1.35;">Upload e validação</div>
-        <div style="margin-top:6px;color:#94A3B8;font-size:.82rem;">{html.escape('Clique para fechar' if is_open else 'Clique para abrir')}</div>
-      </div>
-    </div>
-    <span class="dp-pill" style="border-color:rgba(255,255,255,.12);">Arquivos</span>
-  </div>
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-        st.markdown("<div class='dp-topoverlay'>", unsafe_allow_html=True)
-        if st.button(" ", use_container_width=True, key="btn_toggle_upload_top"):
+        upload_btn_label = "⬆️ Nova análise (fechar)" if is_open else "⬆️ Nova análise (abrir)"
+        if st.button(upload_btn_label, use_container_width=True, key="btn_toggle_upload_top"):
             st.session_state["show_upload"] = not is_open
             st.rerun()
-        st.markdown("</div></div>", unsafe_allow_html=True)
 
     if bool(st.session_state.get("show_upload")):
         page_upload(settings, conn, embedded=True)
