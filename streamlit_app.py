@@ -4072,7 +4072,11 @@ def page_sala_gestao(settings, conn) -> None:
             return ("color:#22c55e;font-weight:800;" if good else "color:#fb7185;font-weight:800;")
 
         def _sg_kpi_card(title: str, value: str, *, icon: str, accent: str, delta: str | None = None, inverse: bool = False) -> None:
-            d = delta or "—"
+            # Se delta=None, não renderiza a linha (evita "—" desnecessário nos acumulados)
+            delta_html = ""
+            if delta is not None:
+                d = str(delta or "—")
+                delta_html = f'<div style="margin-top:8px;font-size:0.84rem;{_sg_delta_style(d, inverse=inverse)}">{_html.escape(d)}</div>'
             st.markdown(
                 f"""
 <div class="dp-card" style="
@@ -4094,7 +4098,7 @@ def page_sala_gestao(settings, conn) -> None:
     ">{_html.escape(icon)}</div>
   </div>
   <div class="dp-kpi-value" style="font-size:1.35rem;color:{accent};text-shadow:0 0 24px rgba(59,130,246,.18);">{_html.escape(value)}</div>
-  <div style="margin-top:8px;font-size:0.84rem;{_sg_delta_style(d, inverse=inverse)}">{_html.escape(d)}</div>
+  {delta_html}
 </div>
 """,
                 unsafe_allow_html=True,
