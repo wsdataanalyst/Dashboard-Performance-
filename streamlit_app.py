@@ -6445,7 +6445,8 @@ def main() -> None:
   /* Click-card: HTML é o visual; botão fica invisível por cima */
   .dp-click-wrap{ position: relative; }
   .dp-click-wrap .stButton{ position:absolute; inset:0; margin:0 !important; }
-  .dp-click-wrap .stButton > button{
+  .dp-click-wrap .stButton > button,
+  .dp-click-wrap [data-testid="stButton"] > button{
     width:100% !important;
     height:100% !important;
     opacity:0 !important;
@@ -6453,6 +6454,10 @@ def main() -> None:
     border: 0 !important;
     box-shadow: none !important;
     padding: 0 !important;
+    color: transparent !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
+    min-height: 0 !important;
   }
   .dp-click-card{
     border-radius: 16px;
