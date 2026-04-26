@@ -6477,7 +6477,10 @@ def main() -> None:
         active_id = st.session_state.get("active_analysis_id")
         label = f"Análise ativa: #{int(active_id)}" if active_id is not None else "Nenhuma análise ativa"
         st.markdown(
-            f"<div class='dp-card' style='padding:10px 12px;margin: 6px 0 10px 0;'>"
+            f"<div class='dp-card' style='padding:10px 12px;margin: 6px 0 10px 0;min-height:64px;"
+            f"border-color: rgba(110,231,183,.32);"
+            f"background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.14), transparent 60%),"
+            f"linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));'>"
             f"<div style='color:#94A3B8;font-size:.78rem;font-weight:850'>Status</div>"
             f"<div style='color:#E5E7EB;font-weight:900;font-size:1.02rem;margin-top:4px'>{html.escape(label)}</div>"
             f"</div>",
@@ -6485,17 +6488,19 @@ def main() -> None:
         )
     with qa2:
         is_open = bool(st.session_state.get("show_upload"))
-        btn_label = "▼ Nova análise (upload dos 7 arquivos)" if is_open else "➕ Nova análise (upload dos 7 arquivos)"
+        st.markdown(
+            "<div class='dp-card' style='padding:10px 12px;margin: 6px 0 10px 0;min-height:64px;'>"
+            "<div style='color:#94A3B8;font-size:.78rem;font-weight:850'>Upload</div>"
+            "<div style='color:#E5E7EB;font-weight:900;font-size:1.02rem;margin-top:4px'>Nova análise</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        btn_label = "Fechar upload" if is_open else "➕ Nova análise (7 arquivos)"
         if st.button(btn_label, use_container_width=True, key="btn_toggle_upload_top"):
             st.session_state["show_upload"] = not is_open
             st.rerun()
 
     if bool(st.session_state.get("show_upload")):
-        top_close = st.columns([1, 1, 1])[2]
-        with top_close:
-            if st.button("Fechar", use_container_width=True, key="btn_hide_upload_top"):
-                st.session_state["show_upload"] = False
-                st.rerun()
         page_upload(settings, conn, embedded=True)
 
     st.markdown("### Selecione o Dashboard:")
