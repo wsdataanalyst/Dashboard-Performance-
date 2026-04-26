@@ -6434,6 +6434,42 @@ def main() -> None:
                 "revisar dados → salvar → abrir **Dashboard** ou **Histórico**."
             )
 
+    # Título do painel (topo)
+    st.markdown(
+        """
+<div class="dp-card" style="
+  padding:18px 18px;
+  margin: 8px 0 10px 0;
+  border-color: rgba(110,231,183,.22);
+  background: radial-gradient(1200px 500px at 20% 0%, rgba(110,231,183,.16), transparent 45%),
+              radial-gradient(900px 420px at 80% 20%, rgba(59,130,246,.12), transparent 55%),
+              linear-gradient(180deg, rgba(17,26,46,.96), rgba(11,18,32,.94));
+">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <div style="
+        width:40px;height:40px;border-radius:14px;
+        display:flex;align-items:center;justify-content:center;
+        background: rgba(255,255,255,.04);
+        border: 1px solid rgba(255,255,255,.10);
+        font-size: 1.15rem;
+        color: #6EE7B7;
+      ">🏛️</div>
+      <div>
+        <div style="color:#E5E7EB;font-weight:950;font-size:1.35rem;letter-spacing:.2px;line-height:1.1;">
+          Central de Vendas Resultado &amp; Performance
+        </div>
+        <div style="margin-top:6px;color:#94A3B8;font-size:.92rem;line-height:1.45;">
+          Visão única para acompanhar resultado, performance, projeção e evolução — com histórico e upload centralizado.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
     # Zona do topo: ações rápidas (padrão de cards clicáveis)
     st.markdown(
         """
@@ -6474,18 +6510,33 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    # Calendário (dias úteis automáticos) — card clicável (sem barras verdes)
+    # Linha: Calendário (esq) + Nova análise (dir)
     if st.session_state.get("show_calendar") is None:
         st.session_state["show_calendar"] = False
-    is_cal_open = bool(st.session_state.get("show_calendar"))
+    if st.session_state.get("show_upload") is None:
+        st.session_state["show_upload"] = False
 
-    st.markdown("<div class='dp-action-select'>", unsafe_allow_html=True)
-    st.markdown("<div class='dp-action-selected'>" if is_cal_open else "<div>", unsafe_allow_html=True)
-    cal_btn_label = "🗓  Calendário\nDias úteis automáticos (mês atual)\n" + ("Clique para fechar" if is_cal_open else "Clique para abrir")
-    if st.button(cal_btn_label, use_container_width=True, key="btn_toggle_calendar_card"):
-        st.session_state["show_calendar"] = not is_cal_open
-        st.rerun()
-    st.markdown("</div></div>", unsafe_allow_html=True)
+    is_cal_open = bool(st.session_state.get("show_calendar"))
+    is_open = bool(st.session_state.get("show_upload"))
+
+    top1, top2 = st.columns([1, 1])
+    with top1:
+        st.markdown("<div class='dp-action-select'>", unsafe_allow_html=True)
+        st.markdown("<div class='dp-action-selected'>" if is_cal_open else "<div>", unsafe_allow_html=True)
+        cal_btn_label = "🗓  Calendário\nDias úteis automáticos (mês atual)\n" + ("Clique para fechar" if is_cal_open else "Clique para abrir")
+        if st.button(cal_btn_label, use_container_width=True, key="btn_toggle_calendar_card"):
+            st.session_state["show_calendar"] = not is_cal_open
+            st.rerun()
+        st.markdown("</div></div>", unsafe_allow_html=True)
+
+    with top2:
+        st.markdown("<div class='dp-action-select'>", unsafe_allow_html=True)
+        st.markdown("<div class='dp-action-selected'>" if is_open else "<div>", unsafe_allow_html=True)
+        upload_btn_label = "⬆️  Nova análise\nUpload e validação\n" + ("Clique para fechar" if is_open else "Clique para abrir")
+        if st.button(upload_btn_label, use_container_width=True, key="btn_toggle_upload_top"):
+            st.session_state["show_upload"] = not is_open
+            st.rerun()
+        st.markdown("</div></div>", unsafe_allow_html=True)
 
     if bool(st.session_state.get("show_calendar")):
         st.markdown("<div class='dp-card' style='padding:14px 14px;margin: 0 0 10px 0;'>", unsafe_allow_html=True)
@@ -6522,23 +6573,6 @@ def main() -> None:
             "Úteis **trabalhados** = corridos no mês até hoje, inclusive o dia atual quando for útil (base de ritmo / projeção)."
         )
         st.markdown("</div>", unsafe_allow_html=True)
-
-    # Ação rápida: Nova análise (card clicável igual aos dashboards; sem verde)
-    if st.session_state.get("show_upload") is None:
-        st.session_state["show_upload"] = False
-    qa1, qa2 = st.columns([1, 1])
-    with qa1:
-        # Espaço reservado (status da análise ativa já existe no menu lateral)
-        st.empty()
-    with qa2:
-        is_open = bool(st.session_state.get("show_upload"))
-        st.markdown("<div class='dp-action-select'>", unsafe_allow_html=True)
-        st.markdown("<div class='dp-action-selected'>" if is_open else "<div>", unsafe_allow_html=True)
-        upload_btn_label = "⬆️  Nova análise\nUpload e validação\n" + ("Clique para fechar" if is_open else "Clique para abrir")
-        if st.button(upload_btn_label, use_container_width=True, key="btn_toggle_upload_top"):
-            st.session_state["show_upload"] = not is_open
-            st.rerun()
-        st.markdown("</div></div>", unsafe_allow_html=True)
 
     if bool(st.session_state.get("show_upload")):
         page_upload(settings, conn, embedded=True)
