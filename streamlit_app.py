@@ -3815,7 +3815,7 @@ def page_sala_gestao(settings, conn) -> None:
         # Regra: acumulado considera TODOS os dias com resultado (inclui sábado, se existir).
         # Já os indicadores de "dia anterior" devem sempre referenciar o último DIA ÚTIL (sexta quando houver sábado).
         sat_note = None
-        daily_roll = None  # {"acc_fat","acc_nf","acc_cli","last_bus":{"dia","fat","nf","cli"}}
+        daily_roll = None  # {"acc_fat","acc_nf","acc_cli","last_bus":{...},"prev_bus":{...},"sat":{...}}
         try:
             daily = st.session_state.get("sg_daily_df")
             meta_d = st.session_state.get("sg_daily_meta") if isinstance(st.session_state.get("sg_daily_meta"), dict) else {}
@@ -3889,6 +3889,9 @@ def page_sala_gestao(settings, conn) -> None:
                         ]
                         if not bus_move.empty:
                             bb = bus_move.sort_values("dia").iloc[-1]
+                            # dia útil anterior ao último (para delta)
+                            prevb = bus_move[bus_move["dia"] < int(bb.get("dia") or 0)].sort_values("dia")
+                            pb = prevb.iloc[-1] if not prevb.empty else None
                             daily_roll = {
                                 "acc_fat": acc_fat,
                                 "acc_nf": acc_nf,
@@ -3899,7 +3902,19 @@ def page_sala_gestao(settings, conn) -> None:
                                     "nf": int(pd.to_numeric(bb.get("nfs_emitidas"), errors="coerce") or 0),
                                     "cli": int(pd.to_numeric(bb.get("clientes_atendidos"), errors="coerce") or 0),
                                 },
+                                "prev_bus": (
+                                    {
+                                        "dia": int(pb.get("dia") or 0),
+                                        "fat": float(pd.to_numeric(pb.get("faturamento"), errors="coerce") or 0.0),
+                                        "nf": int(pd.to_numeric(pb.get("nfs_emitidas"), errors="coerce") or 0),
+                                        "cli": int(pd.to_numeric(pb.get("clientes_atendidos"), errors="coerce") or 0),
+                                    }
+                                    if pb is not None
+                                    else None
+                                ),
                             }
+                            if sat_note:
+                                daily_roll["sat"] = dict(sat_note)
         except Exception:
             sat_note = sat_note
 
@@ -3919,6 +3934,47 @@ def page_sala_gestao(settings, conn) -> None:
 """,
                 unsafe_allow_html=True,
             )
+            # pills com valores do sábado + setas vs última sexta (dia útil)
+            try:
+                if isinstance(daily_roll, dict) and isinstance(daily_roll.get("last_bus"), dict):
+                    lb = daily_roll["last_bus"]
+                    sat_f = float(sat_note.get("fat") or 0.0)
+                    sat_nf = int(sat_note.get("nf") or 0)
+                    sat_cli = int(sat_note.get("cli") or 0)
+                    fri_f = float(lb.get("fat") or 0.0)
+                    fri_nf = int(lb.get("nf") or 0)
+                    fri_cli = int(lb.get("cli") or 0)
+
+                    def _arrow_delta(cur: float, ref: float, *, kind: str) -> str:
+                        diff = float(cur) - float(ref)
+                        if abs(diff) < 1e-9:
+                            return "→ 0"
+                        arrow = "▲" if diff > 0 else "▼"
+                        if kind == "money":
+                            return f"{arrow} R$ {abs(diff):,.2f}"
+                        return f"{arrow} {abs(diff):,.0f}"
+
+                    d_f = _arrow_delta(sat_f, fri_f, kind="money")
+                    d_nf = _arrow_delta(float(sat_nf), float(fri_nf), kind="int")
+                    d_cli = _arrow_delta(float(sat_cli), float(fri_cli), kind="int")
+                    st.markdown(
+                        f"""
+<div style="margin-top:-2px;margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap;">
+  <span class="dp-pill" style="background:rgba(255,255,255,.02);border-color:rgba(255,255,255,.10);color:#E5E7EB;">
+    Sáb: <b>R$ {sat_f:,.2f}</b> <span style="color:#94a3b8;font-weight:700">({d_f})</span>
+  </span>
+  <span class="dp-pill" style="background:rgba(255,255,255,.02);border-color:rgba(255,255,255,.10);color:#E5E7EB;">
+    NFS <b>{sat_nf}</b> <span style="color:#94a3b8;font-weight:700">({d_nf})</span>
+  </span>
+  <span class="dp-pill" style="background:rgba(255,255,255,.02);border-color:rgba(255,255,255,.10);color:#E5E7EB;">
+    Atend. <b>{sat_cli}</b> <span style="color:#94a3b8;font-weight:700">({d_cli})</span>
+  </span>
+</div>
+""",
+                        unsafe_allow_html=True,
+                    )
+            except Exception:
+                pass
 
         falta_meta = max(0.0, meta_total - fat_atual) if meta_total > 0 else 0.0
         falta_por_dia = (falta_meta / dias_restantes) if dias_restantes > 0 else None
@@ -4067,6 +4123,11 @@ def page_sala_gestao(settings, conn) -> None:
         prev_fat_dia_ant = prev1_k.get("faturamento_dia_anterior")
         prev_nf_dia_ant = prev1_k.get("nf_dia_anterior")
         prev_cli_dia_ant = prev1_k.get("clientes_dia_anterior")
+        if isinstance(daily_roll, dict) and isinstance(daily_roll.get("prev_bus"), dict):
+            pb = daily_roll["prev_bus"]
+            prev_fat_dia_ant = float(pb.get("fat") or 0.0)
+            prev_nf_dia_ant = int(pb.get("nf") or 0)
+            prev_cli_dia_ant = int(pb.get("cli") or 0)
         prev_marg_hoje_pct = prev1_k.get("margem_hoje_pct")
 
         with k1:
