@@ -4081,6 +4081,10 @@ def page_sala_gestao(settings, conn) -> None:
                 f"""
 <div class="dp-card" style="
   padding:12px 12px;
+  min-height: 156px;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
   border-color: rgba(59,130,246,.18);
   background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.18), transparent 60%),
               radial-gradient(900px 220px at 85% 10%, rgba(110,231,183,.12), transparent 55%),
