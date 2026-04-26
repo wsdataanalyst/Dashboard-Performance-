@@ -6444,9 +6444,11 @@ def main() -> None:
     text-align: left !important;
     border-radius: 16px !important;
     border: 1px solid rgba(255,255,255,.12) !important;
-    /* Destaque sutil (topo) */
-    background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.10), transparent 60%),
-                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
+    /* Destaque sutil (topo) — sempre visível */
+    border-color: rgba(59,130,246,.22) !important;
+    background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.14), transparent 62%),
+                radial-gradient(900px 220px at 88% 12%, rgba(110,231,183,.08), transparent 55%),
+                linear-gradient(180deg, rgba(17,26,46,.94), rgba(11,18,32,.96)) !important;
     padding: 12px 12px !important;
     box-shadow: 0 10px 26px rgba(0,0,0,.18) !important;
     transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease !important;
@@ -6457,15 +6459,17 @@ def main() -> None:
   }
   .dp-action-select [data-testid="stButton"] > button:hover{
     transform: translateY(-2px) !important;
-    border-color: rgba(59,130,246,.28) !important;
+    border-color: rgba(59,130,246,.34) !important;
     box-shadow: 0 18px 40px rgba(0,0,0,.28) !important;
     background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.14), transparent 60%),
                 linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
   }
   .dp-action-select .dp-action-selected [data-testid="stButton"] > button{
     border-color: rgba(110,231,183,.42) !important;
-    background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.16), transparent 60%),
-                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
+    background: radial-gradient(900px 240px at 15% 0%, rgba(110,231,183,.24), transparent 62%),
+                radial-gradient(900px 240px at 88% 12%, rgba(59,130,246,.16), transparent 58%),
+                linear-gradient(180deg, rgba(17,26,46,.94), rgba(11,18,32,.96)) !important;
+    box-shadow: 0 22px 46px rgba(0,0,0,.34) !important;
   }
 </style>
 """,
@@ -6553,8 +6557,8 @@ def main() -> None:
     width: 100% !important;
     text-align: left !important;
     border-radius: 16px !important;
-    border: 1px solid rgba(255,255,255,.12) !important;
-    background: rgba(255,255,255,.02) !important;
+    border: 1px solid rgba(255,255,255,.10) !important;
+    background: linear-gradient(180deg, rgba(17,26,46,.90), rgba(11,18,32,.92)) !important;
     padding: 12px 12px !important;
     box-shadow: 0 10px 26px rgba(0,0,0,.18) !important;
     transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease !important;
@@ -6562,7 +6566,7 @@ def main() -> None:
   }
   .dp-dash-select [data-testid="stButton"] > button:hover{
     transform: translateY(-2px) !important;
-    border-color: rgba(59,130,246,.28) !important;
+    border-color: rgba(59,130,246,.32) !important;
     box-shadow: 0 18px 40px rgba(0,0,0,.28) !important;
     background: rgba(255,255,255,.03) !important;
   }
@@ -6572,11 +6576,13 @@ def main() -> None:
   }
   /* Selecionado */
   .dp-dash-select .dp-dash-selected [data-testid="stButton"] > button{
-    border-color: rgba(110,231,183,.55) !important;
-    background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.20), transparent 60%),
-                radial-gradient(900px 220px at 88% 12%, rgba(59,130,246,.12), transparent 55%),
-                linear-gradient(180deg, rgba(17,26,46,.94), rgba(11,18,32,.96)) !important;
-    box-shadow: 0 22px 46px rgba(0,0,0,.34) !important;
+    border-color: rgba(110,231,183,.65) !important;
+    background: radial-gradient(900px 260px at 15% 0%, rgba(110,231,183,.28), transparent 62%),
+                radial-gradient(900px 260px at 88% 12%, rgba(59,130,246,.18), transparent 58%),
+                linear-gradient(180deg, rgba(17,26,46,.96), rgba(11,18,32,.98)) !important;
+    box-shadow: 0 26px 56px rgba(0,0,0,.40) !important;
+    /* “borda” interna pra ficar gritante */
+    box-shadow: inset 0 0 0 1px rgba(110,231,183,.32), 0 26px 56px rgba(0,0,0,.40) !important;
   }
   .dp-dash-title{ margin:0; font-weight:900; color:#E5E7EB; font-size:1.02rem; letter-spacing:.2px; }
   .dp-dash-sub{ margin:6px 0 0 0; color:#94A3B8; font-size:.86rem; line-height:1.35; }
