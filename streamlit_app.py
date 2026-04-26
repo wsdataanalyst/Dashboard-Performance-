@@ -5435,14 +5435,31 @@ def page_sala_gestao(settings, conn) -> None:
                                 return out
                             return df_in
 
+                        def _add_alcance_real(df_in: pd.DataFrame) -> pd.DataFrame:
+                            """% Alcançado Real = (Faturamento / Meta) * 100."""
+                            if df_in is None or df_in.empty:
+                                return df_in
+                            if "meta_faturamento" not in df_in.columns or "faturamento" not in df_in.columns:
+                                return df_in
+                            mm = pd.to_numeric(df_in.get("meta_faturamento"), errors="coerce")
+                            ff = pd.to_numeric(df_in.get("faturamento"), errors="coerce")
+                            out = df_in.copy()
+                            out["alcance_real_pct"] = None
+                            mask = mm.notna() & (mm > 0) & ff.notna()
+                            out.loc[mask, "alcance_real_pct"] = (ff[mask] / mm[mask]) * 100.0
+                            return out
+
                         df_today = _add_falta_meta(df_today)
                         df_yday = _add_falta_meta(df_yday)
+                        df_today = _add_alcance_real(df_today)
+                        df_yday = _add_alcance_real(df_yday)
 
                         key = "departamento"
                         keep_cols = [
                             "faturamento",
                             "participacao_pct",
                             "margem_pct",
+                            "alcance_real_pct",
                             "alcance_projetado_pct",
                             "falta_meta",
                         ]
@@ -5557,6 +5574,9 @@ def page_sala_gestao(settings, conn) -> None:
                         if "alcance_projetado_pct_hoje" in merged.columns:
                             show["Alc. Proj."] = merged["alcance_projetado_pct_hoje"]
                             show["Δ Alc. Proj."] = merged["Δ alcance_projetado_pct"].apply(lambda x: _arrow(x, "pct"))
+                        if "alcance_real_pct_hoje" in merged.columns:
+                            show["Alc. Real"] = merged["alcance_real_pct_hoje"]
+                            show["Δ Alc. Real"] = merged["Δ alcance_real_pct"].apply(lambda x: _arrow(x, "pct"))
                         if "falta_meta_hoje" in merged.columns:
                             show["Falta meta"] = merged["falta_meta_hoje"]
                             show["Δ Falta meta"] = merged["Δ falta_meta"].apply(lambda x: _arrow(x, "money"))
@@ -5568,6 +5588,8 @@ def page_sala_gestao(settings, conn) -> None:
                             "Δ Faturamento",
                             "Falta meta",
                             "Δ Falta meta",
+                            "Alc. Real",
+                            "Δ Alc. Real",
                             "Alc. Proj.",
                             "Δ Alc. Proj.",
                             "% Part.",
@@ -5615,12 +5637,16 @@ def page_sala_gestao(settings, conn) -> None:
                             fmt["% Margem"] = lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—"
                         if "Alc. Proj." in show.columns:
                             fmt["Alc. Proj."] = lambda x: f"{float(x):.1f}%" if pd.notna(x) else "—"
+                        if "Alc. Real" in show.columns:
+                            fmt["Alc. Real"] = lambda x: f"{float(x):.1f}%" if pd.notna(x) else "—"
                         if "Falta meta" in show.columns:
                             fmt["Falta meta"] = lambda x: f"R$ {float(x):,.2f}" if pd.notna(x) else "—"
 
                         styled = show.style.format(fmt, na_rep="—")
                         if "Alc. Proj." in show.columns:
                             styled = styled.apply(_alc_bucket_style, subset=["Alc. Proj."])
+                        if "Alc. Real" in show.columns:
+                            styled = styled.apply(_alc_bucket_style, subset=["Alc. Real"])
                         for c in [c for c in show.columns if c.startswith("Δ ")]:
                             styled = styled.apply(_delta_color_series, subset=[c])
                         st.dataframe(styled, use_container_width=True, hide_index=True)
