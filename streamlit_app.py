@@ -53,6 +53,62 @@ from src.app.projection import projetar_resultados
 from src.app.calendar_utils import compute_calendar_info
 
 
+def _pdf_safe_text(s: object) -> str:
+    """
+    FPDF (Helvetica) não suporta unicode completo. Normaliza para ASCII/latin-1 seguro.
+    Também evita caracteres que quebram layout.
+    """
+    if s is None:
+        return ""
+    out = str(s)
+    out = out.replace("—", "-").replace("•", "-")
+    out = out.replace("▲", "^").replace("▼", "v").replace("→", ">")
+    out = out.replace("\u00A0", " ")
+    try:
+        out = out.encode("latin-1", errors="ignore").decode("latin-1")
+    except Exception:
+        pass
+    return out
+
+
+def _break_long_words(s: str, max_len: int = 60) -> str:
+    """Evita erro do FPDF quando existe 'palavra' maior que a largura útil."""
+    import re
+
+    def _chunk(m: re.Match) -> str:
+        w = m.group(0)
+        return " ".join(w[i : i + max_len] for i in range(0, len(w), max_len))
+
+    return re.sub(r"\S{" + str(max_len + 1) + r",}", _chunk, s)
+
+
+def _build_text_pdf_bytes(*, title: str, text: str) -> bytes:
+    """PDF simples só com texto (para análises de IA)."""
+    from fpdf import FPDF
+
+    pdf = FPDF(format="A4")
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.add_page()
+    pdf.set_font("Helvetica", size=12)
+    epw = float(pdf.w - pdf.l_margin - pdf.r_margin)
+
+    # Título
+    pdf.set_x(pdf.l_margin)
+    pdf.set_font("Helvetica", style="B", size=13)
+    pdf.multi_cell(epw, 7, _break_long_words(_pdf_safe_text(title)))
+    pdf.ln(1)
+
+    pdf.set_font("Helvetica", size=11)
+    for line in (text or "").splitlines():
+        if not line.strip():
+            pdf.ln(2)
+            continue
+        safe = _break_long_words(_pdf_safe_text(line))
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(epw, 6, safe)
+
+    return bytes(pdf.output(dest="S"))  # type: ignore[arg-type]
+
 PROMPT_EXTRACAO = """
 Você é um especialista em análise de dados de vendas. Analise as imagens fornecidas que são prints de painéis de gestão de uma central de vendas.
 
@@ -3426,6 +3482,24 @@ def page_insights(settings, conn) -> None:
                     .set_properties(subset=["Vendedor"], **{"font-weight": "800", "color": "#E5E7EB"})
                 )
                 st.dataframe(styled, use_container_width=True, hide_index=True)
+
+            # PDF (IA)
+            try:
+                txt = json.dumps(ins.get("data") or {}, ensure_ascii=False, indent=2)
+                pdf_bytes = _build_text_pdf_bytes(
+                    title=f"Análise com IA — {row.periodo}",
+                    text=txt,
+                )
+                st.download_button(
+                    "⬇️ Baixar análise (PDF)",
+                    data=pdf_bytes,
+                    file_name="analise_ia_insights.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    key="insights_pdf_btn",
+                )
+            except Exception as e:
+                st.caption(f"PDF indisponível: {e}")
         else:
             st.info("Clique em **Gerar insights**.")
 
@@ -3649,6 +3723,21 @@ def page_highlights(settings, conn) -> None:
         if isinstance(t, dict) and t.get("t"):
             st.caption(f"Gerado por **{t.get('p')}** (`{t.get('m')}`).")
             st.text_area("Highlight (texto)", value=str(t.get("t")), height=360)
+            try:
+                pdf_bytes = _build_text_pdf_bytes(
+                    title=f"Análise profunda (IA) — {str(base.get('periodo') or row.periodo)}",
+                    text=str(t.get("t") or ""),
+                )
+                st.download_button(
+                    "⬇️ Baixar análise (PDF)",
+                    data=pdf_bytes,
+                    file_name="analise_ia_highlight.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    key="hl_ai_pdf_btn",
+                )
+            except Exception as e:
+                st.caption(f"PDF indisponível: {e}")
         else:
             st.info("Clique em **Gerar análise profunda**.")
 
@@ -4196,6 +4285,21 @@ def page_sala_gestao(settings, conn) -> None:
         if isinstance(t, dict) and t.get("t"):
             st.caption(f"Gerado por **{t.get('p')}** (`{t.get('m')}`).")
             st.text_area("Insights — Sala de Gestão", value=str(t.get("t")), height=300)
+            try:
+                pdf_bytes = _build_text_pdf_bytes(
+                    title=f"Insights (IA) — Sala de Gestão — {str((payload_base or {}).get('periodo') or '—')}",
+                    text=str(t.get("t") or ""),
+                )
+                st.download_button(
+                    "⬇️ Baixar insights (PDF)",
+                    data=pdf_bytes,
+                    file_name="insights_ia_sala_gestao.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
+                    key="sg_insights_pdf_btn",
+                )
+            except Exception as e:
+                st.caption(f"PDF indisponível: {e}")
 
     with tab_kpis:
         st.markdown("### Projeção de faturamento / alcance")
