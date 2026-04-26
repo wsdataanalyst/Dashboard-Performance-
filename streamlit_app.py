@@ -6434,18 +6434,53 @@ def main() -> None:
                 "revisar dados → salvar → abrir **Dashboard** ou **Histórico**."
             )
 
-    # Zona do topo: cards clicáveis (sem botões verdes visíveis)
-    # Botões diretos (solução simples): clicar abre/fecha calendário e nova análise
+    # Zona do topo: ações rápidas (padrão de cards clicáveis)
+    st.markdown(
+        """
+<style>
+  .dp-action-select{ margin: 6px 0 10px 0; }
+  .dp-action-select [data-testid="stButton"] > button{
+    width: 100% !important;
+    text-align: left !important;
+    border-radius: 16px !important;
+    border: 1px solid rgba(255,255,255,.12) !important;
+    background: rgba(255,255,255,.02) !important;
+    padding: 12px 12px !important;
+    box-shadow: 0 10px 26px rgba(0,0,0,.18) !important;
+    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease !important;
+    min-height: 74px !important;
+    white-space: pre-line !important;
+    color: rgba(229,231,235,.96) !important;
+    font-weight: 850 !important;
+  }
+  .dp-action-select [data-testid="stButton"] > button:hover{
+    transform: translateY(-2px) !important;
+    border-color: rgba(59,130,246,.28) !important;
+    box-shadow: 0 18px 40px rgba(0,0,0,.28) !important;
+    background: rgba(255,255,255,.03) !important;
+  }
+  .dp-action-select .dp-action-selected [data-testid="stButton"] > button{
+    border-color: rgba(110,231,183,.42) !important;
+    background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.14), transparent 60%),
+                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
+  }
+</style>
+""",
+        unsafe_allow_html=True,
+    )
 
     # Calendário (dias úteis automáticos) — card clicável (sem barras verdes)
     if st.session_state.get("show_calendar") is None:
         st.session_state["show_calendar"] = False
     is_cal_open = bool(st.session_state.get("show_calendar"))
 
-    cal_btn_label = "🗓 Calendário (fechar)" if is_cal_open else "🗓 Calendário (abrir)"
+    st.markdown("<div class='dp-action-select'>", unsafe_allow_html=True)
+    st.markdown("<div class='dp-action-selected'>" if is_cal_open else "<div>", unsafe_allow_html=True)
+    cal_btn_label = "🗓  Calendário\nDias úteis automáticos (mês atual)\n" + ("Clique para fechar" if is_cal_open else "Clique para abrir")
     if st.button(cal_btn_label, use_container_width=True, key="btn_toggle_calendar_card"):
         st.session_state["show_calendar"] = not is_cal_open
         st.rerun()
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
     if bool(st.session_state.get("show_calendar")):
         st.markdown("<div class='dp-card' style='padding:14px 14px;margin: 0 0 10px 0;'>", unsafe_allow_html=True)
@@ -6491,7 +6526,7 @@ def main() -> None:
         active_id = st.session_state.get("active_analysis_id")
         label = f"Análise ativa: #{int(active_id)}" if active_id is not None else "Nenhuma análise ativa"
         st.markdown(
-            f"<div class='dp-card' style='padding:10px 12px;margin: 6px 0 10px 0;min-height:64px;"
+            f"<div class='dp-card' style='padding:12px 12px;margin: 6px 0 10px 0;min-height:74px;"
             f"border-color: rgba(110,231,183,.32);"
             f"background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.14), transparent 60%),"
             f"linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));'>"
@@ -6502,10 +6537,13 @@ def main() -> None:
         )
     with qa2:
         is_open = bool(st.session_state.get("show_upload"))
-        upload_btn_label = "⬆️ Nova análise (fechar)" if is_open else "⬆️ Nova análise (abrir)"
+        st.markdown("<div class='dp-action-select'>", unsafe_allow_html=True)
+        st.markdown("<div class='dp-action-selected'>" if is_open else "<div>", unsafe_allow_html=True)
+        upload_btn_label = "⬆️  Nova análise\nUpload e validação\n" + ("Clique para fechar" if is_open else "Clique para abrir")
         if st.button(upload_btn_label, use_container_width=True, key="btn_toggle_upload_top"):
             st.session_state["show_upload"] = not is_open
             st.rerun()
+        st.markdown("</div></div>", unsafe_allow_html=True)
 
     if bool(st.session_state.get("show_upload")):
         page_upload(settings, conn, embedded=True)
