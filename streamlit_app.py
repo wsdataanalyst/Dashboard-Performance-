@@ -3812,6 +3812,85 @@ def page_sala_gestao(settings, conn) -> None:
         # O Excel "Faturamento e Atendidos" serve para KPIs diários (dia anterior), não para meta geral.
         fat_atual = float(totais.get("faturamento_total") or 0.0)
         meta_total = float(totais.get("meta_total") or 0.0)
+        # Importante: esta visão NÃO deve ser impactada por sábado.
+        # Se a base diária existir, recalcula "até agora" considerando só dias úteis (seg–sex),
+        # e mostra o sábado separadamente (quando houver movimento).
+        sat_note = None
+        try:
+            daily = st.session_state.get("sg_daily_df")
+            meta_d = st.session_state.get("sg_daily_meta") if isinstance(st.session_state.get("sg_daily_meta"), dict) else {}
+            if isinstance(daily, pd.DataFrame) and not daily.empty and "dia" in daily.columns:
+                import datetime as _dt
+                import re as _re
+
+                # tenta inferir ano/mês para calcular dia da semana
+                mes_ref = str(meta_d.get("mes_referencia") or "").strip().lower()
+                today = _dt.date.today()
+                yy, mm = today.year, today.month
+                m = _re.search(r"(?<!\\d)(\\d{1,2})\\s*[/\\-]\\s*(\\d{2,4})(?!\\d)", mes_ref)
+                if m:
+                    mm = int(m.group(1))
+                    yy = int(m.group(2))
+                    if yy < 100:
+                        yy += 2000
+                else:
+                    m2 = _re.search(r"(?<!\\d)(\\d{4})\\s*[/\\-]\\s*(\\d{1,2})(?!\\d)", mes_ref)
+                    if m2:
+                        yy = int(m2.group(1))
+                        mm = int(m2.group(2))
+
+                d0 = daily.copy().sort_values("dia").reset_index(drop=True)
+                d0["dia"] = pd.to_numeric(d0["dia"], errors="coerce")
+                d0 = d0[d0["dia"].notna()].copy()
+                d0["dia"] = d0["dia"].astype(int)
+                d0["_weekday"] = d0["dia"].apply(lambda dd: _dt.date(int(yy), int(mm), int(dd)).weekday())
+
+                # sábado com movimento (se existir)
+                sat = d0[d0["_weekday"] == 5].copy()
+                if not sat.empty:
+                    sat_move = sat[
+                        (pd.to_numeric(sat.get("faturamento"), errors="coerce").fillna(0.0) > 0.0)
+                        | (pd.to_numeric(sat.get("nfs_emitidas"), errors="coerce").fillna(0) > 0)
+                        | (pd.to_numeric(sat.get("clientes_atendidos"), errors="coerce").fillna(0) > 0)
+                    ]
+                    if not sat_move.empty:
+                        sat_last = sat_move.sort_values("dia").iloc[-1]
+                        sat_note = {
+                            "dia": int(sat_last.get("dia") or 0),
+                            "fat": float(pd.to_numeric(sat_last.get("faturamento"), errors="coerce") or 0.0),
+                            "nf": int(pd.to_numeric(sat_last.get("nfs_emitidas"), errors="coerce") or 0),
+                            "cli": int(pd.to_numeric(sat_last.get("clientes_atendidos"), errors="coerce") or 0),
+                        }
+
+                # corta acumulado até a última sexta do mês carregado
+                fri_days = d0[d0["_weekday"] == 4]["dia"]
+                if fri_days.notna().any():
+                    last_fri = int(fri_days.max())
+                    fat_upto_fri = float(
+                        pd.to_numeric(d0.loc[d0["dia"] <= last_fri, "faturamento"], errors="coerce").fillna(0.0).sum()
+                    )
+                    # substitui "até agora" por sexta (não inclui sábado)
+                    fat_atual = fat_upto_fri
+        except Exception:
+            sat_note = sat_note
+
+        if sat_note:
+            st.markdown(
+                f"""
+<div class="dp-pill" style="
+  background:rgba(251,191,36,.12);
+  border-color:rgba(251,191,36,.35);
+  color:#FBBF24;
+  font-weight:850;
+  margin-top:6px;
+  margin-bottom:8px;
+">
+  Houve resultado no <b>sábado (dia {int(sat_note['dia']):02d})</b>: <b>R$ {float(sat_note['fat']):,.2f}</b> • NFS <b>{int(sat_note['nf'])}</b> • Atendidos <b>{int(sat_note['cli'])}</b>.
+</div>
+""",
+                unsafe_allow_html=True,
+            )
+
         falta_meta = max(0.0, meta_total - fat_atual) if meta_total > 0 else 0.0
         falta_por_dia = (falta_meta / dias_restantes) if dias_restantes > 0 else None
         perc_meta = (fat_atual / meta_total * 100.0) if meta_total > 0 else None
