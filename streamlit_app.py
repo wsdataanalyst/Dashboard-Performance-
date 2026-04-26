@@ -6461,35 +6461,48 @@ def main() -> None:
         options=["Dashboard de Bônus", "Dashboard de Performance", "Sala de Gestão"],
         horizontal=True,
         label_visibility="collapsed",
+        key="dash_selector",
     )
 
     if dash == "Dashboard de Bônus":
-        tabs = st.tabs(["1. Nova Análise", "2. Dashboard", "3. Evolução", "4. Edição Manual", "5. Análise com IA", "6. Histórico"])
-        with tabs[0]:
+        bonus_tab = st.radio(
+            "",
+            options=["1. Nova Análise", "2. Dashboard", "3. Evolução", "4. Edição Manual", "5. Análise com IA", "6. Histórico"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="bonus_tab",
+        )
+        if bonus_tab == "1. Nova Análise":
             page_upload(settings, conn)
-        with tabs[1]:
+        elif bonus_tab == "2. Dashboard":
             page_dashboard(settings, conn)
-        with tabs[2]:
+        elif bonus_tab == "3. Evolução":
             page_evolution(settings, conn)
-        with tabs[3]:
+        elif bonus_tab == "4. Edição Manual":
             page_edit(settings, conn)
-        with tabs[4]:
+        elif bonus_tab == "5. Análise com IA":
             page_insights(settings, conn)
-        with tabs[5]:
+        else:
             page_history(settings, conn)
     elif dash == "Dashboard de Performance":
-        tabs = st.tabs(["Visão Geral", "Highlights (Semanal/Mensal)", "Simulação/Projeção", "Feedback STAR", "Análise com IA", "Histórico"])
-        with tabs[0]:
+        perf_tab = st.radio(
+            "",
+            options=["Visão Geral", "Highlights (Semanal/Mensal)", "Simulação/Projeção", "Feedback STAR", "Análise com IA", "Histórico"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key="perf_tab",
+        )
+        if perf_tab == "Visão Geral":
             page_performance(settings, conn, key_prefix="perf_overview")
-        with tabs[1]:
+        elif perf_tab == "Highlights (Semanal/Mensal)":
             page_highlights(settings, conn)
-        with tabs[2]:
+        elif perf_tab == "Simulação/Projeção":
             page_projection(settings, conn)
-        with tabs[3]:
+        elif perf_tab == "Feedback STAR":
             page_star(settings, conn)
-        with tabs[4]:
+        elif perf_tab == "Análise com IA":
             page_insights(settings, conn)
-        with tabs[5]:
+        else:
             page_history(settings, conn)
     else:
         page_sala_gestao(settings, conn)
