@@ -4528,6 +4528,7 @@ def page_sala_gestao(settings, conn) -> None:
                     "faturamento",
                     "participacao_pct",
                     "margem_pct",
+                    "meta_margem_pct",
                     "alcance_real_pct",
                     "alcance_projetado_pct",
                     "falta_meta",
@@ -4686,6 +4687,9 @@ def page_sala_gestao(settings, conn) -> None:
                 if "margem_pct_hoje" in merged.columns:
                     show["% Margem"] = merged["margem_pct_hoje"]
                     show["Δ % Margem"] = merged["Δ margem_pct"].apply(lambda x: _arrow(x, "pct"))
+                if "meta_margem_pct_hoje" in merged.columns:
+                    show["Meta Margem"] = merged["meta_margem_pct_hoje"]
+                    show["Δ Meta Margem"] = merged["Δ meta_margem_pct"].apply(lambda x: _arrow(x, "pct"))
 
                 preferred = [
                     "Departamento",
@@ -4701,6 +4705,8 @@ def page_sala_gestao(settings, conn) -> None:
                     "Δ % Part.",
                     "% Margem",
                     "Δ % Margem",
+                    "Meta Margem",
+                    "Δ Meta Margem",
                 ]
                 show = show[[c for c in preferred if c in show.columns]].copy()
 
@@ -4740,6 +4746,8 @@ def page_sala_gestao(settings, conn) -> None:
                     fmt["% Part."] = lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—"
                 if "% Margem" in show.columns:
                     fmt["% Margem"] = lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—"
+                if "Meta Margem" in show.columns:
+                    fmt["Meta Margem"] = lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—"
                 if "Alc. Proj." in show.columns:
                     fmt["Alc. Proj."] = lambda x: f"{float(x):.1f}%" if pd.notna(x) else "—"
                 if "Alc. Real" in show.columns:
