@@ -81,6 +81,23 @@ def _find_meta_faturamento_col(df: pd.DataFrame) -> str | None:
     return exact or fallback
 
 
+def _find_meta_margem_col(df: pd.DataFrame) -> str | None:
+    """Meta de margem (%) por departamento (não confundir com meta de faturamento)."""
+    cols = _col_lookup(df)
+    best: str | None = None
+    for k, orig in cols.items():
+        if "margem" not in k:
+            continue
+        if "meta" not in k:
+            continue
+        # Preferir colunas que explicitam "% meta margem"
+        if "% meta" in k or k.startswith("% meta"):
+            return orig
+        if best is None:
+            best = orig
+    return best
+
+
 def _find_faturamento_projetado_acumulado_col(df: pd.DataFrame) -> str | None:
     """Colunas tipo 'Fat. Projetado Acumulado' (não confundir só com 'Faturamento')."""
     return _find_col(
@@ -175,6 +192,7 @@ def import_departamentos(files: list[tuple[str, bytes]]) -> DeptImportResult:
             c_fat_proj = _find_faturamento_projetado_acumulado_col(df)
             c_fat = _find_faturamento_real_col(df, skip=c_fat_proj)
             c_meta = _find_meta_faturamento_col(df) or _find_col(df, "meta")
+            c_meta_marg = _find_meta_margem_col(df) or _find_col(df, "meta margem", "% meta margem", "margem meta")
             c_part = _find_col(df, "particip", "% particip")
             c_alc = _find_col(df, "alcance", "alcance projet")
             c_marg = _find_col(df, "margem", "% margem")
@@ -199,6 +217,10 @@ def import_departamentos(files: list[tuple[str, bytes]]) -> DeptImportResult:
                     v = _to_float(r.get(c_meta))
                     if v is not None:
                         rec["meta_faturamento"] = v
+                if c_meta_marg and c_meta_marg != c_meta:
+                    v = normalize_small_excel_percent(r.get(c_meta_marg))
+                    if v is not None:
+                        rec["meta_margem_pct"] = v
                 if c_part:
                     v = normalize_small_excel_percent(r.get(c_part))
                     if v is not None:

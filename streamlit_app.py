@@ -4608,14 +4608,18 @@ def page_sala_gestao(settings, conn) -> None:
                         tail = max(0, int(len(df_in)) - len(rows2))
                         return ", ".join(rows2) + (f" (+{tail})" if tail > 0 else "")
 
-                    # Margem entregue: usa o mesmo "ideal" de performance (26%)
-                    MARGEM_OK = 26.0
-                    m_ok = part_df[part_df["margem_pct"].notna() & (part_df["margem_pct"] >= MARGEM_OK) & (part_df[key].str.strip() != "")]
-                    m_bad = part_df[part_df["margem_pct"].notna() & (part_df["margem_pct"] < MARGEM_OK) & (part_df[key].str.strip() != "")]
+                    # Margem entregue: comparar com a meta individual do depto (meta_margem_pct), se existir.
+                    part_df["meta_margem_pct"] = pd.to_numeric(part_df.get("meta_margem_pct"), errors="coerce")
+                    has_meta = part_df["meta_margem_pct"].notna() & (part_df[key].str.strip() != "")
+                    m_ok = part_df[has_meta & part_df["margem_pct"].notna() & (part_df["margem_pct"] >= part_df["meta_margem_pct"])]
+                    m_bad = part_df[has_meta & part_df["margem_pct"].notna() & (part_df["margem_pct"] < part_df["meta_margem_pct"])]
+                    m_na = part_df[(~has_meta) & part_df["margem_pct"].notna() & (part_df[key].str.strip() != "")]
                     n_ok = int(len(m_ok))
                     n_bad = int(len(m_bad))
+                    n_na = int(len(m_na))
                     ok_names = [str(x).strip() for x in m_ok[key].astype(str).tolist() if str(x).strip() and str(x).strip().lower() != "nan"]
                     bad_names = [str(x).strip() for x in m_bad[key].astype(str).tolist() if str(x).strip() and str(x).strip().lower() != "nan"]
+                    na_names = [str(x).strip() for x in m_na[key].astype(str).tolist() if str(x).strip() and str(x).strip().lower() != "nan"]
 
                     def _join_names2(xs: list[str], max_n: int = 6) -> str:
                         xs2 = [str(x).strip() for x in xs if str(x).strip() and str(x).strip().lower() != "nan"]
@@ -4637,8 +4641,10 @@ def page_sala_gestao(settings, conn) -> None:
                     with p2:
                         _mini_card(
                             "Margem — entregue vs abaixo",
-                            f"{n_ok} ok | {n_bad} abaixo",
-                            f"OK (≥{MARGEM_OK:.0f}%): { _join_names2(ok_names, max_n=4) } • Abaixo: { _join_names2(bad_names, max_n=4) }",
+                            f"{n_ok} ok | {n_bad} abaixo | {n_na} s/ meta",
+                            f"OK (meta depto): { _join_names2(ok_names, max_n=4) } • "
+                            f"Abaixo (meta depto): { _join_names2(bad_names, max_n=4) } • "
+                            f"Sem meta: { _join_names2(na_names, max_n=4) }",
                             icon="📊",
                             accent="#A7F3D0" if n_bad == 0 else "#93c5fd",
                         )
