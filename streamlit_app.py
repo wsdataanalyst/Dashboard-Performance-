@@ -5314,23 +5314,34 @@ def page_sala_gestao(settings, conn) -> None:
             ddf = _ensure_participacao_pct(ddf)
             if not ddf.empty:
                 # Cards (fora de tabela)
-                alc = pd.to_numeric(ddf.get("alcance_projetado_pct"), errors="coerce") if "alcance_projetado_pct" in ddf.columns else pd.Series([], dtype="float64")
+                alc_proj = pd.to_numeric(ddf.get("alcance_projetado_pct"), errors="coerce") if "alcance_projetado_pct" in ddf.columns else pd.Series([], dtype="float64")
                 marg = pd.to_numeric(ddf.get("margem_pct"), errors="coerce") if "margem_pct" in ddf.columns else pd.Series([], dtype="float64")
                 fat = pd.to_numeric(ddf.get("faturamento"), errors="coerce") if "faturamento" in ddf.columns else pd.Series([], dtype="float64")
                 meta = pd.to_numeric(ddf.get("meta_faturamento"), errors="coerce") if "meta_faturamento" in ddf.columns else pd.Series([], dtype="float64")
 
                 ddf2 = ddf.copy()
                 if "meta_faturamento" in ddf2.columns and "faturamento" in ddf2.columns:
+                    # Falta p/ meta: soma só o que falta (não deixa negativo "puxar" o total)
                     ddf2["falta_meta"] = (meta - fat)
+                    ddf2["falta_meta"] = pd.to_numeric(ddf2["falta_meta"], errors="coerce").clip(lower=0)
+                    # Alcance Real (%): Faturamento/Meta*100
+                    mm = pd.to_numeric(ddf2.get("meta_faturamento"), errors="coerce")
+                    ff = pd.to_numeric(ddf2.get("faturamento"), errors="coerce")
+                    ddf2["alcance_real_pct"] = None
+                    mask = mm.notna() & (mm > 0) & ff.notna()
+                    ddf2.loc[mask, "alcance_real_pct"] = (ff[mask] / mm[mask]) * 100.0
 
-                n100 = int((alc >= 100).sum()) if len(alc) else 0
-                n80_90 = int(((alc >= 80) & (alc < 90)).sum()) if len(alc) else 0
-                nlt = int((alc < 80).sum()) if len(alc) else 0
+                alc_real = pd.to_numeric(ddf2.get("alcance_real_pct"), errors="coerce") if "alcance_real_pct" in ddf2.columns else pd.Series([], dtype="float64")
+
+                # Contagem baseada no ALCANÇADO REAL (não projetado)
+                n100 = int((alc_real >= 100).sum()) if len(alc_real) else 0
+                n80_90 = int(((alc_real >= 80) & (alc_real < 100)).sum()) if len(alc_real) else 0
+                nlt = int((alc_real < 80).sum()) if len(alc_real) else 0
 
                 c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Deptos Alcance Proj. >= 100%", str(n100))
-                c2.metric("Deptos Alcance Proj. 80% a 90%", str(n80_90))
-                c3.metric("Deptos Alcance Proj. < 80%", str(nlt))
+                c1.metric("Deptos Alcance Real >= 100%", str(n100))
+                c2.metric("Deptos Alcance Real 80% a 99,9%", str(n80_90))
+                c3.metric("Deptos Alcance Real < 80%", str(nlt))
                 if "falta_meta" in ddf2.columns:
                     low = pd.to_numeric(ddf2["falta_meta"], errors="coerce")
                     c4.metric("Falta meta total (Deptos)", f"R$ {float(low.dropna().sum()):,.2f}" if low.notna().any() else "—")
