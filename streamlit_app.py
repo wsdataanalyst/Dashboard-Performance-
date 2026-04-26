@@ -6525,17 +6525,49 @@ def main() -> None:
         )
     with qa2:
         is_open = bool(st.session_state.get("show_upload"))
+        # Card clicável (substitui o botão verde separado)
         st.markdown(
-            "<div class='dp-card' style='padding:10px 12px;margin: 6px 0 10px 0;min-height:64px;'>"
-            "<div style='color:#94A3B8;font-size:.78rem;font-weight:850'>Upload</div>"
-            "<div style='color:#E5E7EB;font-weight:900;font-size:1.02rem;margin-top:4px'>Nova análise</div>"
-            "</div>",
+            """
+<style>
+  /* Card-botão: usa o visual dp-card */
+  .dp-upload-card [data-testid="stButton"] > button{
+    width: 100% !important;
+    text-align: left !important;
+    border-radius: 16px !important;
+    border: 1px solid rgba(255,255,255,.12) !important;
+    background: rgba(255,255,255,.02) !important;
+    padding: 10px 12px !important;
+    min-height: 64px !important;
+    box-shadow: 0 10px 26px rgba(0,0,0,.18) !important;
+    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease !important;
+  }
+  .dp-upload-card [data-testid="stButton"] > button:hover{
+    transform: translateY(-1px) !important;
+    border-color: rgba(59,130,246,.22) !important;
+    box-shadow: 0 18px 40px rgba(0,0,0,.24) !important;
+    background: rgba(255,255,255,.03) !important;
+  }
+  .dp-upload-card .dp-up-label{ color:#94A3B8; font-size:.78rem; font-weight:850; }
+  .dp-upload-card .dp-up-title{ color:#E5E7EB; font-weight:900; font-size:1.02rem; margin-top:4px; }
+  .dp-upload-card .dp-up-sub{ color:#94A3B8; font-size:.84rem; margin-top:6px; }
+</style>
+""",
             unsafe_allow_html=True,
         )
-        btn_label = "Fechar upload" if is_open else "➕ Nova análise (7 arquivos)"
-        if st.button(btn_label, use_container_width=True, key="btn_toggle_upload_top"):
+
+        card_label = "Fechar upload (7 arquivos)" if is_open else "Abrir upload (7 arquivos)"
+        st.markdown("<div class='dp-upload-card'>", unsafe_allow_html=True)
+        if st.button(card_label, use_container_width=True, key="btn_toggle_upload_top"):
             st.session_state["show_upload"] = not is_open
             st.rerun()
+        st.markdown(
+            "<div style='margin-top:-54px; pointer-events:none;'>"
+            "<div class='dp-up-label'>Upload</div>"
+            "<div class='dp-up-title'>Nova análise</div>"
+            f"<div class='dp-up-sub'>{html.escape(card_label)}</div>"
+            "</div></div>",
+            unsafe_allow_html=True,
+        )
 
     if bool(st.session_state.get("show_upload")):
         page_upload(settings, conn, embedded=True)
