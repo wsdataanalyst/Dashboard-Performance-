@@ -98,6 +98,36 @@ def _find_meta_margem_col(df: pd.DataFrame) -> str | None:
     return best
 
 
+def _col_by_excel_pos(df: pd.DataFrame, excel_col_letter: str) -> str | None:
+    """
+    Fallback por posição do Excel (A=0, B=1, ...).
+    Útil quando o export vem com cabeçalho não reconhecível.
+    """
+    if df is None or df.empty:
+        return None
+    letter = str(excel_col_letter or "").strip().upper()
+    if not letter or len(letter) != 1 or not ("A" <= letter <= "Z"):
+        return None
+    idx = ord(letter) - ord("A")
+    if idx < 0 or idx >= len(df.columns):
+        return None
+    return str(df.columns[idx])
+
+
+def _looks_like_percent_series(s: pd.Series) -> bool:
+    try:
+        v = pd.to_numeric(s, errors="coerce")
+        v = v.dropna()
+        if v.empty:
+            return False
+        # Normalmente meta/resultado de margem ficam entre 0 e 100 (ou 0-1 no Excel).
+        # Se a mediana for absurda (ex.: milhares), não é campo de %.
+        med = float(v.median())
+        return abs(med) <= 120.0 or abs(med) <= 2.5
+    except Exception:
+        return False
+
+
 def _find_faturamento_projetado_acumulado_col(df: pd.DataFrame) -> str | None:
     """Colunas tipo 'Fat. Projetado Acumulado' (não confundir só com 'Faturamento')."""
     return _find_col(
@@ -196,6 +226,20 @@ def import_departamentos(files: list[tuple[str, bytes]]) -> DeptImportResult:
             c_part = _find_col(df, "particip", "% particip")
             c_alc = _find_col(df, "alcance", "alcance projet")
             c_marg = _find_col(df, "margem", "% margem")
+
+            # Fallback pedido: na base "Faturamento por departamento", col G = % Meta Margem, col H = % Margem (resultado)
+            # Só aplica quando ainda não identificou as colunas por nome.
+            try:
+                if c_meta_marg is None:
+                    cand_g = _col_by_excel_pos(df, "G")
+                    if cand_g and _looks_like_percent_series(df[cand_g]):
+                        c_meta_marg = cand_g
+                if c_marg is None:
+                    cand_h = _col_by_excel_pos(df, "H")
+                    if cand_h and _looks_like_percent_series(df[cand_h]):
+                        c_marg = cand_h
+            except Exception:
+                pass
 
             if not c_dept or not (c_fat or c_fat_proj or c_meta or c_part or c_alc or c_marg):
                 continue
