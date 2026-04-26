@@ -4585,6 +4585,19 @@ def page_sala_gestao(settings, conn) -> None:
                                 ]
                                 if not sat_move.empty:
                                     sat_last = sat_move.sort_values("dia").iloc[-1]
+                                    # sexta imediatamente anterior (se existir) para comparar com setas
+                                    fri = d0[(d0["_weekday"] == 4) & (d0["dia"] < int(sat_last["dia"]))].sort_values("dia")
+                                    fri_last = fri.iloc[-1] if not fri.empty else None
+
+                                    def _arrow_delta(cur: float, ref: float, *, kind: str) -> str:
+                                        diff = float(cur) - float(ref)
+                                        if abs(diff) < 1e-9:
+                                            return "→ 0"
+                                        arrow = "▲" if diff > 0 else "▼"
+                                        if kind == "money":
+                                            return f"{arrow} R$ {abs(diff):,.2f}"
+                                        return f"{arrow} {abs(diff):,.0f}"
+
                                     st.markdown(
                                         f"""
 <div class="dp-pill" style="
@@ -4599,6 +4612,38 @@ def page_sala_gestao(settings, conn) -> None:
 """,
                                         unsafe_allow_html=True,
                                     )
+
+                                    # detalhe compacto com valores + setas vs sexta
+                                    try:
+                                        sat_f = float(pd.to_numeric(sat_last.get("faturamento"), errors="coerce") or 0.0)
+                                        sat_nf = int(pd.to_numeric(sat_last.get("nfs_emitidas"), errors="coerce") or 0)
+                                        sat_cli = int(pd.to_numeric(sat_last.get("clientes_atendidos"), errors="coerce") or 0)
+                                        fri_f = float(pd.to_numeric(fri_last.get("faturamento"), errors="coerce") or 0.0) if fri_last is not None else 0.0
+                                        fri_nf = int(pd.to_numeric(fri_last.get("nfs_emitidas"), errors="coerce") or 0) if fri_last is not None else 0
+                                        fri_cli = int(pd.to_numeric(fri_last.get("clientes_atendidos"), errors="coerce") or 0) if fri_last is not None else 0
+
+                                        d_f = _arrow_delta(sat_f, fri_f, kind="money") if fri_last is not None else "—"
+                                        d_nf = _arrow_delta(float(sat_nf), float(fri_nf), kind="int") if fri_last is not None else "—"
+                                        d_cli = _arrow_delta(float(sat_cli), float(fri_cli), kind="int") if fri_last is not None else "—"
+
+                                        st.markdown(
+                                            f"""
+<div style="margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;">
+  <span class="dp-pill" style="background:rgba(255,255,255,.02);border-color:rgba(255,255,255,.10);color:#E5E7EB;">
+    Sáb: <b>R$ {sat_f:,.2f}</b> <span style="color:#94a3b8;font-weight:700">({d_f})</span>
+  </span>
+  <span class="dp-pill" style="background:rgba(255,255,255,.02);border-color:rgba(255,255,255,.10);color:#E5E7EB;">
+    NFS <b>{sat_nf}</b> <span style="color:#94a3b8;font-weight:700">({d_nf})</span>
+  </span>
+  <span class="dp-pill" style="background:rgba(255,255,255,.02);border-color:rgba(255,255,255,.10);color:#E5E7EB;">
+    Atend. <b>{sat_cli}</b> <span style="color:#94a3b8;font-weight:700">({d_cli})</span>
+  </span>
+</div>
+""",
+                                            unsafe_allow_html=True,
+                                        )
+                                    except Exception:
+                                        pass
                         except Exception:
                             pass
 
