@@ -365,6 +365,50 @@ def inject_styles(profile: str = "desktop") -> None:
   }
   .dot{ width:8px; height:8px; border-radius:50%; background:var(--brand); display:inline-block; }
 
+  /* Seletor de Dashboard (topo) em formato de cards */
+  /* Alvo: primeiro radiogroup horizontal do main */
+  section.main div[role="radiogroup"]{
+    gap: 10px !important;
+    flex-wrap: wrap !important;
+    margin: 6px 0 6px 0 !important;
+  }
+  section.main div[role="radiogroup"] > label{
+    flex: 1 1 260px !important;
+    min-width: 220px !important;
+    padding: 14px 14px !important;
+    border-radius: 16px !important;
+    border: 1px solid rgba(255,255,255,.12) !important;
+    background:
+      radial-gradient(900px 220px at 12% 0%, rgba(59,130,246,.16), transparent 60%),
+      radial-gradient(900px 220px at 88% 12%, rgba(110,231,183,.10), transparent 55%),
+      linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
+    box-shadow: 0 10px 26px rgba(0,0,0,.22);
+    transition: transform .12s ease, border-color .12s ease, background .12s ease;
+  }
+  section.main div[role="radiogroup"] > label:hover{
+    transform: translateY(-1px);
+    border-color: rgba(59,130,246,.26) !important;
+  }
+  /* Texto dentro do card */
+  section.main div[role="radiogroup"] > label *{
+    color: rgba(229,231,235,.96) !important;
+    font-weight: 850 !important;
+    font-size: 1.02rem !important;
+    letter-spacing: .2px;
+  }
+  /* Selecionado */
+  section.main div[role="radiogroup"] > label:has(input:checked){
+    border-color: rgba(110,231,183,.38) !important;
+    background:
+      radial-gradient(900px 240px at 14% 0%, rgba(110,231,183,.22), transparent 62%),
+      radial-gradient(900px 240px at 88% 12%, rgba(59,130,246,.16), transparent 58%),
+      linear-gradient(180deg, rgba(17,26,46,.94), rgba(11,18,32,.96)) !important;
+    box-shadow: 0 18px 42px rgba(0,0,0,.28);
+  }
+  section.main div[role="radiogroup"] > label:has(input:checked) *{
+    color: rgba(229,231,235,.99) !important;
+  }
+
   /* Cards */
   .dp-card{
     background: linear-gradient(180deg, rgba(17,26,46,.9), rgba(15,23,42,.9));
