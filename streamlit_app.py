@@ -4544,31 +4544,29 @@ def page_sala_gestao(settings, conn) -> None:
                 for c in keep_cols:
                     merged[f"Δ {c}"] = merged[f"{c}_hoje"] - merged[f"{c}_ontem"]
 
-                if "Δ faturamento" in merged.columns:
-                    d = pd.to_numeric(merged["Δ faturamento"], errors="coerce")
-                    up = int((d > 0).sum())
-                    down = int((d < 0).sum())
-                    zero = int((d == 0).sum())
+                # Cards por faixas de Alcance Real
+                try:
+                    ar = pd.to_numeric(df_today2.get("alcance_real_pct"), errors="coerce")
+                    dept_names = df_today2.get(key).astype(str).fillna("").tolist()
 
-                    depts = merged[key].astype(str).fillna("").tolist()
-                    up_names = [
-                        depts[i]
-                        for i, v in enumerate(d.tolist())
-                        if pd.notna(v) and float(v) > 0 and str(depts[i]).strip().lower() not in {"", "nan"}
+                    ge100 = [
+                        dept_names[i]
+                        for i, v in enumerate(ar.tolist())
+                        if pd.notna(v) and float(v) >= 100.0 and str(dept_names[i]).strip().lower() not in {"", "nan"}
                     ]
-                    down_names = [
-                        depts[i]
-                        for i, v in enumerate(d.tolist())
-                        if pd.notna(v) and float(v) < 0 and str(depts[i]).strip().lower() not in {"", "nan"}
+                    ge80 = [
+                        dept_names[i]
+                        for i, v in enumerate(ar.tolist())
+                        if pd.notna(v) and 80.0 <= float(v) < 100.0 and str(dept_names[i]).strip().lower() not in {"", "nan"}
                     ]
-                    zero_names = [
-                        depts[i]
-                        for i, v in enumerate(d.tolist())
-                        if pd.notna(v) and float(v) == 0 and str(depts[i]).strip().lower() not in {"", "nan"}
+                    lt80 = [
+                        dept_names[i]
+                        for i, v in enumerate(ar.tolist())
+                        if pd.notna(v) and float(v) < 80.0 and str(dept_names[i]).strip().lower() not in {"", "nan"}
                     ]
 
-                    def _join_names(xs: list[str], max_n: int = 4) -> str:
-                        xs2 = [str(x).strip() for x in xs if str(x).strip()]
+                    def _join_names(xs: list[str], max_n: int = 6) -> str:
+                        xs2 = [str(x).strip() for x in xs if str(x).strip() and str(x).strip().lower() != "nan"]
                         if not xs2:
                             return "—"
                         head = xs2[:max_n]
@@ -4577,11 +4575,13 @@ def page_sala_gestao(settings, conn) -> None:
 
                     s1, s2, s3 = st.columns(3)
                     with s1:
-                        _mini_card("↑ Evolução (Fat.)", str(up), _join_names(up_names), icon="📈", accent="#6EE7B7")
+                        _mini_card("Alcance Real ≥ 100%", str(len(ge100)), _join_names(ge100), icon="✅", accent="#6EE7B7")
                     with s2:
-                        _mini_card("↓ Queda (Fat.)", str(down), _join_names(down_names), icon="📉", accent="#fb7185")
+                        _mini_card("Alcance Real ≥ 80%", str(len(ge80)), _join_names(ge80), icon="🟡", accent="#FBBF24")
                     with s3:
-                        _mini_card("→ Sem mudança (Fat.)", str(zero), _join_names(zero_names), icon="➖", accent="#94a3b8")
+                        _mini_card("Alcance Real < 80%", str(len(lt80)), _join_names(lt80), icon="🔴", accent="#fb7185")
+                except Exception:
+                    pass
 
                 # Participação + Margem (entregue vs não entregue)
                 try:
