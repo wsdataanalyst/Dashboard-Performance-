@@ -6456,13 +6456,82 @@ def main() -> None:
         )
 
     st.markdown("### Selecione o Dashboard:")
-    dash = st.radio(
-        "",
-        options=["Dashboard de Bônus", "Dashboard de Performance", "Sala de Gestão"],
-        horizontal=True,
-        label_visibility="collapsed",
-        key="dash_selector",
+    # Cards clicáveis (mais claro que radio padrão)
+    if st.session_state.get("dash_selector") not in {"Dashboard de Bônus", "Dashboard de Performance", "Sala de Gestão"}:
+        st.session_state["dash_selector"] = "Sala de Gestão"
+
+    st.markdown(
+        """
+<style>
+  .dp-dash-cards{ display:flex; gap:10px; flex-wrap:wrap; margin: 6px 0 10px 0; }
+  .dp-dash-card{
+    flex: 1 1 220px;
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,.12);
+    background: rgba(255,255,255,.02);
+    padding: 12px 12px;
+    box-shadow: 0 10px 26px rgba(0,0,0,.18);
+  }
+  .dp-dash-card--active{
+    border-color: rgba(110,231,183,.42);
+    background: radial-gradient(900px 220px at 15% 0%, rgba(110,231,183,.18), transparent 60%),
+                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
+  }
+  .dp-dash-title{ margin:0; font-weight:900; color:#E5E7EB; font-size:1.02rem; letter-spacing:.2px; }
+  .dp-dash-sub{ margin:6px 0 0 0; color:#94A3B8; font-size:.86rem; line-height:1.35; }
+  /* Botão dentro do card */
+  .dp-dash-btn .stButton>button{
+    width:100%;
+    border-radius: 14px !important;
+    border: 1px solid rgba(255,255,255,.12) !important;
+    background: rgba(255,255,255,.04) !important;
+    padding: 0.55rem 0.8rem !important;
+  }
+</style>
+""",
+        unsafe_allow_html=True,
     )
+
+    dash = str(st.session_state.get("dash_selector"))
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        active = dash == "Dashboard de Bônus"
+        st.markdown(
+            f"<div class='dp-dash-card {'dp-dash-card--active' if active else ''}'>"
+            f"<p class='dp-dash-title'>Dashboard de Bônus</p>"
+            f"<p class='dp-dash-sub'>Bônus, evolução e insights</p>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("Abrir", use_container_width=True, key="dash_btn_bonus"):
+            st.session_state["dash_selector"] = "Dashboard de Bônus"
+            st.rerun()
+    with c2:
+        active = dash == "Dashboard de Performance"
+        st.markdown(
+            f"<div class='dp-dash-card {'dp-dash-card--active' if active else ''}'>"
+            f"<p class='dp-dash-title'>Dashboard de Performance</p>"
+            f"<p class='dp-dash-sub'>Indicadores, projeção e ranking</p>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("Abrir", use_container_width=True, key="dash_btn_perf"):
+            st.session_state["dash_selector"] = "Dashboard de Performance"
+            st.rerun()
+    with c3:
+        active = dash == "Sala de Gestão"
+        st.markdown(
+            f"<div class='dp-dash-card {'dp-dash-card--active' if active else ''}'>"
+            f"<p class='dp-dash-title'>Sala de Gestão</p>"
+            f"<p class='dp-dash-sub'>Reunião diária: consolidado e deptos</p>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("Abrir", use_container_width=True, key="dash_btn_sg"):
+            st.session_state["dash_selector"] = "Sala de Gestão"
+            st.rerun()
+
+    dash = str(st.session_state.get("dash_selector"))
 
     if dash == "Dashboard de Bônus":
         bonus_tab = st.radio(
