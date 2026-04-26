@@ -962,6 +962,12 @@ def page_upload(settings, conn) -> None:
                                 st.session_state["dept_warnings"] = dpt.warnings
                         except Exception:
                             pass
+                    else:
+                        # diagnóstico: nenhum arquivo foi classificado como "Departamentos"
+                        st.session_state["dept_warnings"] = [
+                            "Não reconheci nenhum arquivo como base de Departamentos neste lote. "
+                            "Confirme se o export contém colunas como Departamento/Categoria/Grupo + Meta/Faturamento/Participação/Alcance/Margem."
+                        ]
 
                     st.session_state["upload_files_cache"] = {n: b for (n, b) in files_bytes}
                 if periodo and isinstance(res.payload, dict):
@@ -5003,6 +5009,16 @@ def page_sala_gestao(settings, conn) -> None:
             st.caption("Base de departamentos carregada via **Nova análise** (upload único).")
         else:
             st.info("Para habilitar esta aba, envie os arquivos de **Departamentos** em **Nova análise**.")
+            dw = st.session_state.get("dept_warnings")
+            if isinstance(dw, list) and dw:
+                with st.expander("Ver diagnóstico do import (Departamentos)", expanded=False):
+                    for w in dw:
+                        st.caption(str(w))
+            cache_names = st.session_state.get("upload_files_cache")
+            if isinstance(cache_names, dict) and cache_names:
+                with st.expander("Arquivos recebidos no upload único", expanded=False):
+                    for n in sorted(cache_names.keys()):
+                        st.caption(str(n))
 
         dept_payload = st.session_state.get("dept_payload")
         if isinstance(dept_payload, dict) and isinstance(dept_payload.get("departamentos"), list):
