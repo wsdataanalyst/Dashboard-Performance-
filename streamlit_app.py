@@ -6442,28 +6442,42 @@ def main() -> None:
     st.markdown(
         """
 <style>
-  .dp-top-cards{ margin: 6px 0 10px 0; }
-  .dp-top-cards [data-testid="stButton"] > button{
-    width: 100% !important;
-    text-align: left !important;
-    border-radius: 16px !important;
-    border: 1px solid rgba(255,255,255,.12) !important;
-    background: rgba(255,255,255,.02) !important;
-    padding: 12px 12px !important;
-    box-shadow: 0 10px 26px rgba(0,0,0,.18) !important;
-    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease !important;
-    min-height: 74px !important;
+  /* Card visual (neutro) + botão fantasma (sem verde do tema) */
+  .dp-top-click{ position: relative; margin: 6px 0 10px 0; }
+  .dp-top-card{
+    border-radius: 16px;
+    border: 1px solid rgba(255,255,255,.12);
+    background: rgba(255,255,255,.02);
+    padding: 12px 12px;
+    box-shadow: 0 10px 26px rgba(0,0,0,.18);
+    min-height: 74px;
+    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease;
   }
-  .dp-top-cards [data-testid="stButton"] > button:hover{
-    transform: translateY(-2px) !important;
-    border-color: rgba(59,130,246,.28) !important;
-    box-shadow: 0 18px 40px rgba(0,0,0,.28) !important;
-    background: rgba(255,255,255,.03) !important;
+  .dp-top-click:hover .dp-top-card{
+    transform: translateY(-2px);
+    border-color: rgba(59,130,246,.28);
+    box-shadow: 0 18px 40px rgba(0,0,0,.28);
+    background: rgba(255,255,255,.03);
   }
-  .dp-top-cards .dp-top-selected [data-testid="stButton"] > button{
-    border-color: rgba(59,130,246,.34) !important;
+  .dp-top-selected .dp-top-card{
+    border-color: rgba(59,130,246,.34);
     background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.14), transparent 60%),
-                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94)) !important;
+                linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
+  }
+  .dp-ghost-btn{ position:absolute; inset:0; }
+  .dp-ghost-btn [data-testid="stButton"]{ height:100%; }
+  .dp-ghost-btn [data-testid="stButton"] > button{
+    width:100% !important;
+    height:100% !important;
+    opacity:0 !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    color: transparent !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
+    min-height: 0 !important;
   }
   .dp-top-title{ margin:0; font-weight:900; color:#E5E7EB; font-size:1.02rem; letter-spacing:.2px; }
   .dp-top-sub{ margin:6px 0 0 0; color:#94A3B8; font-size:.86rem; line-height:1.35; }
@@ -6473,14 +6487,15 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    st.markdown("<div class='dp-top-cards'>", unsafe_allow_html=True)
-    st.markdown("<div class='dp-top-selected'>" if is_cal_open else "<div>", unsafe_allow_html=True)
-    if st.button("Calendário", use_container_width=True, key="btn_toggle_calendar_card", type="secondary"):
+    st.markdown("<div class='dp-top-click dp-top-selected'>" if is_cal_open else "<div class='dp-top-click'>", unsafe_allow_html=True)
+    st.markdown("<div class='dp-ghost-btn'>", unsafe_allow_html=True)
+    if st.button(" ", use_container_width=True, key="btn_toggle_calendar_card"):
         st.session_state["show_calendar"] = not is_cal_open
         st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
     st.markdown(
         f"""
-<div style="margin-top:-56px; pointer-events:none;">
+<div class="dp-top-card">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
     <div style="display:flex;align-items:center;gap:10px;">
       <div style="
@@ -6500,7 +6515,8 @@ def main() -> None:
     <span class="dp-pill" style="border-color:rgba(255,255,255,.12);">Ajustável</span>
   </div>
 </div>
-</div></div>
+</div>
+</div>
 """,
         unsafe_allow_html=True,
     )
@@ -6560,14 +6576,15 @@ def main() -> None:
         )
     with qa2:
         is_open = bool(st.session_state.get("show_upload"))
-        st.markdown("<div class='dp-top-cards'>", unsafe_allow_html=True)
-        st.markdown("<div class='dp-top-selected'>" if is_open else "<div>", unsafe_allow_html=True)
-        if st.button("Nova análise", use_container_width=True, key="btn_toggle_upload_top", type="secondary"):
+        st.markdown("<div class='dp-top-click dp-top-selected'>" if is_open else "<div class='dp-top-click'>", unsafe_allow_html=True)
+        st.markdown("<div class='dp-ghost-btn'>", unsafe_allow_html=True)
+        if st.button(" ", use_container_width=True, key="btn_toggle_upload_top"):
             st.session_state["show_upload"] = not is_open
             st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
         st.markdown(
             f"""
-<div style="margin-top:-56px; pointer-events:none;">
+<div class="dp-top-card">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
     <div style="display:flex;align-items:center;gap:10px;">
       <div style="
@@ -6587,7 +6604,8 @@ def main() -> None:
     <span class="dp-pill" style="border-color:rgba(255,255,255,.12);">Arquivos</span>
   </div>
 </div>
-</div></div>
+</div>
+</div>
 """,
             unsafe_allow_html=True,
         )
