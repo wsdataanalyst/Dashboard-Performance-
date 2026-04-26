@@ -4583,6 +4583,68 @@ def page_sala_gestao(settings, conn) -> None:
                     with s3:
                         _mini_card("→ Sem mudança (Fat.)", str(zero), _join_names(zero_names), icon="➖", accent="#94a3b8")
 
+                # Participação + Margem (entregue vs não entregue)
+                try:
+                    part_df = df_today2.copy()
+                    part_df["participacao_pct"] = pd.to_numeric(part_df.get("participacao_pct"), errors="coerce")
+                    part_df["margem_pct"] = pd.to_numeric(part_df.get("margem_pct"), errors="coerce")
+                    part_df[key] = part_df[key].astype(str)
+
+                    part_ok = part_df[part_df["participacao_pct"].notna() & (part_df[key].str.strip() != "")].copy()
+                    top_part = part_ok.sort_values("participacao_pct", ascending=False).head(6) if not part_ok.empty else pd.DataFrame()
+
+                    def _join_part_rows(df_in: pd.DataFrame, max_n: int = 4) -> str:
+                        if df_in is None or df_in.empty:
+                            return "—"
+                        rows2: list[str] = []
+                        for _, rr in df_in.head(max_n).iterrows():
+                            nm = str(rr.get(key) or "").strip()
+                            pv = rr.get("participacao_pct")
+                            if not nm or nm.lower() == "nan" or pv is None or (isinstance(pv, float) and pd.isna(pv)):
+                                continue
+                            rows2.append(f"{nm} ({float(pv):.2f}%)")
+                        if not rows2:
+                            return "—"
+                        tail = max(0, int(len(df_in)) - len(rows2))
+                        return ", ".join(rows2) + (f" (+{tail})" if tail > 0 else "")
+
+                    # Margem entregue: usa o mesmo "ideal" de performance (26%)
+                    MARGEM_OK = 26.0
+                    m_ok = part_df[part_df["margem_pct"].notna() & (part_df["margem_pct"] >= MARGEM_OK) & (part_df[key].str.strip() != "")]
+                    m_bad = part_df[part_df["margem_pct"].notna() & (part_df["margem_pct"] < MARGEM_OK) & (part_df[key].str.strip() != "")]
+                    n_ok = int(len(m_ok))
+                    n_bad = int(len(m_bad))
+                    ok_names = [str(x).strip() for x in m_ok[key].astype(str).tolist() if str(x).strip() and str(x).strip().lower() != "nan"]
+                    bad_names = [str(x).strip() for x in m_bad[key].astype(str).tolist() if str(x).strip() and str(x).strip().lower() != "nan"]
+
+                    def _join_names2(xs: list[str], max_n: int = 6) -> str:
+                        xs2 = [str(x).strip() for x in xs if str(x).strip() and str(x).strip().lower() != "nan"]
+                        if not xs2:
+                            return "—"
+                        head = xs2[:max_n]
+                        tail = len(xs2) - len(head)
+                        return ", ".join(head) + (f" (+{tail})" if tail > 0 else "")
+
+                    p1, p2 = st.columns(2)
+                    with p1:
+                        _mini_card(
+                            "% Participação — TOP",
+                            (f"{float(top_part['participacao_pct'].max()):.2f}%" if (not top_part.empty and top_part["participacao_pct"].notna().any()) else "—"),
+                            _join_part_rows(top_part, max_n=4),
+                            icon="🥇",
+                            accent="#FBBF24",
+                        )
+                    with p2:
+                        _mini_card(
+                            "Margem — entregue vs abaixo",
+                            f"{n_ok} ok | {n_bad} abaixo",
+                            f"OK (≥{MARGEM_OK:.0f}%): { _join_names2(ok_names, max_n=4) } • Abaixo: { _join_names2(bad_names, max_n=4) }",
+                            icon="📊",
+                            accent="#A7F3D0" if n_bad == 0 else "#93c5fd",
+                        )
+                except Exception:
+                    pass
+
                 def _arrow(v: object, kind: str) -> str:
                     if v is None or (isinstance(v, float) and pd.isna(v)):
                         return "—"
