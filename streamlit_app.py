@@ -3823,6 +3823,12 @@ def page_sala_gestao(settings, conn) -> None:
                 import datetime as _dt
                 import re as _re
 
+                # Só usa a base diária se ela bater com o mês/ano atual do app
+                # (evita "não se mexer" quando troca análise ativa/período).
+                cal_now = st.session_state.get("calendar_info") if isinstance(st.session_state.get("calendar_info"), dict) else {}
+                expected_yy = int(cal_now.get("ano") or _dt.date.today().year)
+                expected_mm = int(cal_now.get("mes") or _dt.date.today().month)
+
                 # tenta inferir ano/mês para calcular dia da semana
                 mes_ref = str(meta_d.get("mes_referencia") or "").strip().lower()
                 today = _dt.date.today()
@@ -3839,55 +3845,61 @@ def page_sala_gestao(settings, conn) -> None:
                         yy = int(m2.group(1))
                         mm = int(m2.group(2))
 
-                d0 = daily.copy().sort_values("dia").reset_index(drop=True)
-                d0["dia"] = pd.to_numeric(d0["dia"], errors="coerce")
-                d0 = d0[d0["dia"].notna()].copy()
-                d0["dia"] = d0["dia"].astype(int)
-                d0["_weekday"] = d0["dia"].apply(lambda dd: _dt.date(int(yy), int(mm), int(dd)).weekday())
+                # Se não bater com o mês selecionado/esperado, não sobrescreve os KPIs do consolidado
+                if int(yy) != int(expected_yy) or int(mm) != int(expected_mm):
+                    daily_roll = None
+                    sat_note = None
+                else:
 
-                # acumulados do mês (inclui sábado)
-                acc_fat = float(pd.to_numeric(d0.get("faturamento"), errors="coerce").fillna(0.0).sum())
-                acc_nf = int(pd.to_numeric(d0.get("nfs_emitidas"), errors="coerce").fillna(0).sum())
-                acc_cli = int(pd.to_numeric(d0.get("clientes_atendidos"), errors="coerce").fillna(0).sum())
+                    d0 = daily.copy().sort_values("dia").reset_index(drop=True)
+                    d0["dia"] = pd.to_numeric(d0["dia"], errors="coerce")
+                    d0 = d0[d0["dia"].notna()].copy()
+                    d0["dia"] = d0["dia"].astype(int)
+                    d0["_weekday"] = d0["dia"].apply(lambda dd: _dt.date(int(yy), int(mm), int(dd)).weekday())
 
-                # sábado com movimento (se existir)
-                sat = d0[d0["_weekday"] == 5].copy()
-                if not sat.empty:
-                    sat_move = sat[
-                        (pd.to_numeric(sat.get("faturamento"), errors="coerce").fillna(0.0) > 0.0)
-                        | (pd.to_numeric(sat.get("nfs_emitidas"), errors="coerce").fillna(0) > 0)
-                        | (pd.to_numeric(sat.get("clientes_atendidos"), errors="coerce").fillna(0) > 0)
-                    ]
-                    if not sat_move.empty:
-                        sat_last = sat_move.sort_values("dia").iloc[-1]
-                        sat_note = {
-                            "dia": int(sat_last.get("dia") or 0),
-                            "fat": float(pd.to_numeric(sat_last.get("faturamento"), errors="coerce") or 0.0),
-                            "nf": int(pd.to_numeric(sat_last.get("nfs_emitidas"), errors="coerce") or 0),
-                            "cli": int(pd.to_numeric(sat_last.get("clientes_atendidos"), errors="coerce") or 0),
-                        }
+                    # acumulados do mês (inclui sábado)
+                    acc_fat = float(pd.to_numeric(d0.get("faturamento"), errors="coerce").fillna(0.0).sum())
+                    acc_nf = int(pd.to_numeric(d0.get("nfs_emitidas"), errors="coerce").fillna(0).sum())
+                    acc_cli = int(pd.to_numeric(d0.get("clientes_atendidos"), errors="coerce").fillna(0).sum())
 
-                # último dia útil com movimento (referência para "dia anterior")
-                bus = d0[d0["_weekday"] < 5].copy()
-                if not bus.empty:
-                    bus_move = bus[
-                        (pd.to_numeric(bus.get("faturamento"), errors="coerce").fillna(0.0) > 0.0)
-                        | (pd.to_numeric(bus.get("nfs_emitidas"), errors="coerce").fillna(0) > 0)
-                        | (pd.to_numeric(bus.get("clientes_atendidos"), errors="coerce").fillna(0) > 0)
-                    ]
-                    if not bus_move.empty:
-                        bb = bus_move.sort_values("dia").iloc[-1]
-                        daily_roll = {
-                            "acc_fat": acc_fat,
-                            "acc_nf": acc_nf,
-                            "acc_cli": acc_cli,
-                            "last_bus": {
-                                "dia": int(bb.get("dia") or 0),
-                                "fat": float(pd.to_numeric(bb.get("faturamento"), errors="coerce") or 0.0),
-                                "nf": int(pd.to_numeric(bb.get("nfs_emitidas"), errors="coerce") or 0),
-                                "cli": int(pd.to_numeric(bb.get("clientes_atendidos"), errors="coerce") or 0),
-                            },
-                        }
+                    # sábado com movimento (se existir)
+                    sat = d0[d0["_weekday"] == 5].copy()
+                    if not sat.empty:
+                        sat_move = sat[
+                            (pd.to_numeric(sat.get("faturamento"), errors="coerce").fillna(0.0) > 0.0)
+                            | (pd.to_numeric(sat.get("nfs_emitidas"), errors="coerce").fillna(0) > 0)
+                            | (pd.to_numeric(sat.get("clientes_atendidos"), errors="coerce").fillna(0) > 0)
+                        ]
+                        if not sat_move.empty:
+                            sat_last = sat_move.sort_values("dia").iloc[-1]
+                            sat_note = {
+                                "dia": int(sat_last.get("dia") or 0),
+                                "fat": float(pd.to_numeric(sat_last.get("faturamento"), errors="coerce") or 0.0),
+                                "nf": int(pd.to_numeric(sat_last.get("nfs_emitidas"), errors="coerce") or 0),
+                                "cli": int(pd.to_numeric(sat_last.get("clientes_atendidos"), errors="coerce") or 0),
+                            }
+
+                    # último dia útil com movimento (referência para "dia anterior")
+                    bus = d0[d0["_weekday"] < 5].copy()
+                    if not bus.empty:
+                        bus_move = bus[
+                            (pd.to_numeric(bus.get("faturamento"), errors="coerce").fillna(0.0) > 0.0)
+                            | (pd.to_numeric(bus.get("nfs_emitidas"), errors="coerce").fillna(0) > 0)
+                            | (pd.to_numeric(bus.get("clientes_atendidos"), errors="coerce").fillna(0) > 0)
+                        ]
+                        if not bus_move.empty:
+                            bb = bus_move.sort_values("dia").iloc[-1]
+                            daily_roll = {
+                                "acc_fat": acc_fat,
+                                "acc_nf": acc_nf,
+                                "acc_cli": acc_cli,
+                                "last_bus": {
+                                    "dia": int(bb.get("dia") or 0),
+                                    "fat": float(pd.to_numeric(bb.get("faturamento"), errors="coerce") or 0.0),
+                                    "nf": int(pd.to_numeric(bb.get("nfs_emitidas"), errors="coerce") or 0),
+                                    "cli": int(pd.to_numeric(bb.get("clientes_atendidos"), errors="coerce") or 0),
+                                },
+                            }
         except Exception:
             sat_note = sat_note
 
