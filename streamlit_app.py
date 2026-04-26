@@ -3855,6 +3855,25 @@ def page_sala_gestao(settings, conn) -> None:
         except Exception:
             pass
 
+        # Fallback (históricos antigos): buscar base de deptos salva com parent_analysis_id = análise ativa
+        try:
+            if st.session_state.get("dept_payload") is None and active_id is not None:
+                r = conn.execute(
+                    "SELECT payload_json FROM analyses WHERE parent_analysis_id = ? ORDER BY id DESC LIMIT 1",
+                    (int(active_id),),
+                ).fetchone()
+                if r and r[0]:
+                    try:
+                        p2 = json.loads(str(r[0]))
+                    except Exception:
+                        p2 = None
+                    if isinstance(p2, dict) and p2.get("_kind") == "sala_gestao_departamentos":
+                        deps2 = p2.get("departamentos")
+                        if isinstance(deps2, list) and deps2:
+                            st.session_state["dept_payload"] = {"departamentos": deps2}
+        except Exception:
+            pass
+
         totais = (payload_base or {}).get("totais") if isinstance(payload_base, dict) else {}
         if not isinstance(totais, dict):
             totais = {}
@@ -6149,7 +6168,8 @@ def page_sala_gestao(settings, conn) -> None:
                         periodo=str((payload_base or {}).get("periodo") or "Sala de Gestão (Dept)"),
                         provider_used=str((st.session_state.get("dept_meta") or {}).get("provider") or "dept"),
                         model_used=str((st.session_state.get("dept_meta") or {}).get("model") or "dept"),
-                        parent_analysis_id=None,
+                        # Linka esta base ao histórico ativo (permite recarregar sem reupload)
+                        parent_analysis_id=int(active_id) if active_id is not None else None,
                         owner_user_id=owner_id,
                         payload=payload,
                         total_bonus=0.0,
