@@ -3788,8 +3788,9 @@ def page_highlights(settings, conn) -> None:
             st.info("Clique em **Gerar análise profunda**.")
 
 
-def page_sala_gestao(settings, conn) -> None:
-    render_header("Sala de Gestão", "Reunião diária: projeção, evolução, vendedores e departamentos.")
+def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
+    if show_header:
+        render_header("Sala de Gestão", "Reunião diária: projeção, evolução, vendedores e departamentos.")
 
     user = st.session_state.get("user") or {}
     owner_id = int(user.get("id") or 0) or None
@@ -6613,7 +6614,8 @@ def main() -> None:
         else:
             page_history(settings, conn)
     else:
-        page_sala_gestao(settings, conn)
+        # Header aqui é redundante com os cards de seleção acima
+        page_sala_gestao(settings, conn, show_header=False)
 
 
 if __name__ == "__main__":
