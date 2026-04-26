@@ -5321,8 +5321,16 @@ def page_sala_gestao(settings, conn) -> None:
 
                 ddf2 = ddf.copy()
                 if "meta_faturamento" in ddf2.columns and "faturamento" in ddf2.columns:
-                    # Falta p/ meta: soma só o que falta (não deixa negativo "puxar" o total)
-                    ddf2["falta_meta"] = (meta - fat)
+                    # Falta p/ meta (até hoje): meta proporcional aos dias úteis trabalhados - faturamento atual
+                    # Regra pedida: somar metas "já trabalhadas no momento" e subtrair do faturamento.
+                    cal = st.session_state.get("calendar_info") if isinstance(st.session_state.get("calendar_info"), dict) else {}
+                    du_total = int(cal.get("dias_uteis_total") or 0)
+                    du_trab = int(cal.get("dias_uteis_trabalhados") or 0)
+                    ratio = (float(du_trab) / float(du_total)) if (du_total > 0 and du_trab >= 0) else 0.0
+                    ratio = min(1.0, max(0.0, ratio))
+                    meta_to_date = meta * ratio
+                    ddf2["falta_meta"] = (meta_to_date - fat)
+                    # soma só o que falta (não deixa negativo "puxar" o total)
                     ddf2["falta_meta"] = pd.to_numeric(ddf2["falta_meta"], errors="coerce").clip(lower=0)
                     # Alcance Real (%): Faturamento/Meta*100
                     mm = pd.to_numeric(ddf2.get("meta_faturamento"), errors="coerce")
@@ -5344,9 +5352,9 @@ def page_sala_gestao(settings, conn) -> None:
                 c3.metric("Deptos Alcance Real < 80%", str(nlt))
                 if "falta_meta" in ddf2.columns:
                     low = pd.to_numeric(ddf2["falta_meta"], errors="coerce")
-                    c4.metric("Falta meta total (Deptos)", f"R$ {float(low.dropna().sum()):,.2f}" if low.notna().any() else "—")
+                    c4.metric("Falta meta (até hoje) — Deptos", f"R$ {float(low.dropna().sum()):,.2f}" if low.notna().any() else "—")
                 else:
-                    c4.metric("Falta meta total (Deptos)", "—")
+                    c4.metric("Falta meta (até hoje) — Deptos", "—")
 
                 st.markdown("### Departamentos: melhor margem vs detrator")
                 if marg.notna().any():
