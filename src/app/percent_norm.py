@@ -52,6 +52,12 @@ def normalize_alcance_projetado(v: Any) -> float | None:
     Alcance projetado: pode ser fração 0–1, ou fração 1–30 (10 = 1000%, 12,5 = 1250%),
     ou já em pontos (35 = 35%, 1500 = 1500%).
     """
+    # Se o valor veio explicitamente como percentual ("11,85%"), ele já está em pontos de %.
+    # Não deve ser escalado para 1185%.
+    if isinstance(v, str) and "%" in v:
+        f2 = to_float(v)
+        return round(float(f2), PCT_DEC) if f2 is not None else None
+
     f = to_float(v)
     if f is None:
         return None
