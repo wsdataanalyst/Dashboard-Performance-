@@ -6437,12 +6437,40 @@ def main() -> None:
     # Calendário (dias úteis automáticos) — card moderno (toggle)
     if st.session_state.get("show_calendar") is None:
         st.session_state["show_calendar"] = False
-
-    cal_left, cal_right = st.columns([1.35, 1])
-    with cal_left:
-        st.markdown(
-            """
-<div class="dp-card" style="padding:12px 14px;margin: 4px 0 10px 0;min-height:64px;">
+    is_cal_open = bool(st.session_state.get("show_calendar"))
+    st.markdown(
+        """
+<style>
+  .dp-cal-card [data-testid="stButton"] > button{
+    width: 100% !important;
+    text-align: left !important;
+    border-radius: 16px !important;
+    border: 1px solid rgba(255,255,255,.12) !important;
+    background: rgba(255,255,255,.02) !important;
+    padding: 12px 14px !important;
+    min-height: 64px !important;
+    box-shadow: 0 10px 26px rgba(0,0,0,.18) !important;
+    transition: transform .12s ease, border-color .12s ease, box-shadow .12s ease, background .12s ease !important;
+  }
+  .dp-cal-card [data-testid="stButton"] > button:hover{
+    transform: translateY(-1px) !important;
+    border-color: rgba(59,130,246,.22) !important;
+    box-shadow: 0 18px 40px rgba(0,0,0,.24) !important;
+    background: rgba(255,255,255,.03) !important;
+  }
+  .dp-cal-card .dp-cal-title{ color:#E5E7EB; font-weight:900; font-size:1.02rem; letter-spacing:.2px; }
+  .dp-cal-card .dp-cal-sub{ margin-top:3px;color:#94A3B8;font-size:.86rem;line-height:1.35; }
+</style>
+""",
+        unsafe_allow_html=True,
+    )
+    st.markdown("<div class='dp-cal-card'>", unsafe_allow_html=True)
+    if st.button("Calendário", use_container_width=True, key="btn_toggle_calendar_card"):
+        st.session_state["show_calendar"] = not is_cal_open
+        st.rerun()
+    st.markdown(
+        """
+<div style="margin-top:-52px; pointer-events:none;">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
     <div style="display:flex;align-items:center;gap:10px;">
       <div style="
@@ -6454,21 +6482,17 @@ def main() -> None:
         color: #93c5fd;
       ">🗓</div>
       <div>
-        <div style="color:#E5E7EB;font-weight:900;font-size:1.02rem;letter-spacing:.2px;">Calendário</div>
-        <div style="margin-top:3px;color:#94A3B8;font-size:.86rem;line-height:1.35;">Dias úteis automáticos (mês atual)</div>
+        <div class="dp-cal-title">Calendário</div>
+        <div class="dp-cal-sub">Dias úteis automáticos (mês atual)</div>
       </div>
     </div>
     <span class="dp-pill" style="border-color:rgba(255,255,255,.12);">Ajustável</span>
   </div>
 </div>
+</div>
 """,
-            unsafe_allow_html=True,
-        )
-    with cal_right:
-        is_cal_open = bool(st.session_state.get("show_calendar"))
-        if st.button("Fechar calendário" if is_cal_open else "Abrir calendário", use_container_width=True, key="btn_toggle_calendar"):
-            st.session_state["show_calendar"] = not is_cal_open
-            st.rerun()
+        unsafe_allow_html=True,
+    )
 
     if bool(st.session_state.get("show_calendar")):
         st.markdown("<div class='dp-card' style='padding:14px 14px;margin: 0 0 10px 0;'>", unsafe_allow_html=True)
@@ -6525,11 +6549,10 @@ def main() -> None:
         )
     with qa2:
         is_open = bool(st.session_state.get("show_upload"))
-        # Card clicável (substitui o botão verde separado)
+        # Card clicável (igual ao Status no design; sem verde; sem falar "7 arquivos")
         st.markdown(
             """
 <style>
-  /* Card-botão: usa o visual dp-card */
   .dp-upload-card [data-testid="stButton"] > button{
     width: 100% !important;
     text-align: left !important;
@@ -6555,7 +6578,7 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
-        card_label = "Fechar upload (7 arquivos)" if is_open else "Abrir upload (7 arquivos)"
+        card_label = "Fechar" if is_open else "Abrir"
         st.markdown("<div class='dp-upload-card'>", unsafe_allow_html=True)
         if st.button(card_label, use_container_width=True, key="btn_toggle_upload_top"):
             st.session_state["show_upload"] = not is_open
