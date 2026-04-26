@@ -1278,6 +1278,17 @@ def page_upload(settings, conn) -> None:
                     }
             except Exception:
                 pass
+            # Departamentos (Sala de Gestão) — salva junto da análise ativa
+            try:
+                dp = st.session_state.get("dept_payload")
+                if isinstance(dp, dict) and isinstance(dp.get("departamentos"), list) and dp.get("departamentos"):
+                    payload_to_save["_sg_dept"] = {
+                        "departamentos": dp.get("departamentos"),
+                        "meta": st.session_state.get("dept_meta") if isinstance(st.session_state.get("dept_meta"), dict) else {},
+                        "source": st.session_state.get("dept_source_name"),
+                    }
+            except Exception:
+                pass
             analysis_id = save_analysis(
                 conn,
                 periodo=periodo_final,
@@ -3827,6 +3838,20 @@ def page_sala_gestao(settings, conn) -> None:
                     st.session_state["sg_daily_meta"] = sd.get("meta") if isinstance(sd.get("meta"), dict) else {}
                     if sd.get("source"):
                         st.session_state["sg_daily_source_name"] = sd.get("source")
+        except Exception:
+            pass
+
+        # Se a análise ativa tiver departamentos salvos, usa eles (evita pedir upload ao trocar histórico)
+        try:
+            if isinstance(payload_base, dict) and isinstance(payload_base.get("_sg_dept"), dict):
+                dd = payload_base.get("_sg_dept") or {}
+                deps = dd.get("departamentos")
+                if isinstance(deps, list) and deps:
+                    st.session_state["dept_payload"] = {"departamentos": deps}
+                    if isinstance(dd.get("meta"), dict):
+                        st.session_state["dept_meta"] = dd.get("meta")
+                    if dd.get("source"):
+                        st.session_state["dept_source_name"] = dd.get("source")
         except Exception:
             pass
 
