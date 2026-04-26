@@ -4482,6 +4482,40 @@ def page_sala_gestao(settings, conn) -> None:
                     out.loc[mask, "alcance_real_pct"] = (ff[mask] / mm[mask]) * 100.0
                     return out
 
+                def _mini_card(title: str, value: str, subtitle: str, *, icon: str, accent: str) -> None:
+                    st.markdown(
+                        f"""
+<div class="dp-card" style="
+  padding:12px 12px;
+  min-height: 156px;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+  border-color: rgba(59,130,246,.18);
+  background: radial-gradient(900px 220px at 15% 0%, rgba(59,130,246,.18), transparent 60%),
+              radial-gradient(900px 220px at 85% 10%, rgba(110,231,183,.12), transparent 55%),
+              linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
+">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+    <div class="dp-kpi-label">{html.escape(str(title))}</div>
+    <div style="
+      width:28px;height:28px;border-radius:10px;
+      display:flex;align-items:center;justify-content:center;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.10);
+      font-size: 0.95rem;
+      color: {accent};
+    ">{html.escape(str(icon))}</div>
+  </div>
+  <div class="dp-kpi-value" style="font-size:1.35rem;color:{accent};text-shadow:0 0 24px rgba(59,130,246,.18);">{html.escape(str(value))}</div>
+  <div style="margin-top:8px;color:#CBD5E1;font-size:0.84rem;line-height:1.35;white-space:normal;">
+    {html.escape(str(subtitle)) if subtitle else ""}
+  </div>
+</div>
+""",
+                        unsafe_allow_html=True,
+                    )
+
                 df_today2 = _add_alcance_real(_add_falta_meta_to_date(df_today))
                 df_yday2 = _add_alcance_real(_add_falta_meta_to_date(df_yday))
 
