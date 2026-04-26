@@ -4649,6 +4649,16 @@ def page_sala_gestao(settings, conn) -> None:
                             icon="📊",
                             accent="#A7F3D0" if n_bad == 0 else "#93c5fd",
                         )
+
+                    # Diagnóstico rápido (quando meta margem não veio)
+                    if int(n_ok + n_bad) == 0 and int(n_na) > 0:
+                        cols_here = ", ".join([c for c in ["meta_margem_pct", "margem_pct", "meta_faturamento", "faturamento"] if c in part_df.columns])
+                        st.warning(
+                            "Meta de margem **não foi detectada** nesta base de Departamentos. "
+                            "Confirme que você carregou o Excel **Faturamento por departamento** (onde a **coluna G** é % Meta Margem e a **H** é % Margem). "
+                            f"Campos presentes agora: `{cols_here or '—'}`. "
+                            "Depois de recarregar, salve a análise novamente."
+                        )
                 except Exception:
                     pass
 
