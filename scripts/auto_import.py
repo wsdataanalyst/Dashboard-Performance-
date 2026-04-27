@@ -104,7 +104,8 @@ def main() -> int:
     paths: list[Path] = []
     for pat in patterns:
         paths.extend(sorted(inbox_dir.glob(pat)))
-    paths = [p for p in paths if p.is_file()]
+    # Ignora arquivos temporários do Excel (ex.: "~$arquivo.xlsx")
+    paths = [p for p in paths if p.is_file() and not p.name.startswith("~$")]
 
     if not paths:
         print(f"OK: nenhuma planilha encontrada em {inbox_dir}")
