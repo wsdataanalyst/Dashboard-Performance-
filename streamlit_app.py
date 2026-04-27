@@ -51,6 +51,7 @@ from src.app.kpi_import import import_faturamento_atendidos_daily_df, import_fat
 from src.app.ocr_fallback import extract_payload_from_prints_ocr
 from src.app.projection import projetar_resultados
 from src.app.calendar_utils import compute_calendar_info
+from src.app.budget_import import parse_orcamentos
 
 
 def _pdf_safe_text(s: object) -> str:
@@ -1017,6 +1018,51 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                     st.success("Importação concluída.")
             except Exception as e:
                 st.error("Falha ao importar Excel/HTML.")
+                st.caption(str(e))
+
+    st.markdown("---")
+    st.markdown("### 📑 Orçamentos (Pendentes + Finalizados)")
+    st.caption("Envie as 2 planilhas para calcular conversão (pendente → finalizado) por número do **Orçamento**.")
+    colA, colB = st.columns(2)
+    with colA:
+        f_pend = st.file_uploader("Orçamentos pendentes", type=["xlsx", "xls"], key="orc_pend_upload")
+    with colB:
+        f_fin = st.file_uploader("Orçamentos finalizados", type=["xlsx", "xls"], key="orc_fin_upload")
+    if f_pend and f_fin:
+        if st.button("💾 Salvar análise (Orçamentos)", use_container_width=True, key="btn_save_orcamentos"):
+            try:
+                with st.spinner("Processando orçamentos..."):
+                    parsed = parse_orcamentos(f_pend.read(), f_fin.read())
+                    payload = {
+                        "_kind": "orcamentos",
+                        "pendentes": {
+                            "rows": parsed.pendentes_df.fillna("").to_dict(orient="records"),
+                        },
+                        "finalizados": {
+                            "rows": parsed.finalizados_df.fillna("").to_dict(orient="records"),
+                        },
+                        "meta": parsed.meta,
+                    }
+                    import datetime as _dt
+
+                    periodo_orc = _dt.date.today().strftime("%d/%m/%Y") + " - Orçamentos"
+                    user = st.session_state.get("user") or {}
+                    owner_id = int(user.get("id") or 0) or None
+                    analysis_id = save_analysis(
+                        conn,
+                        periodo=periodo_orc,
+                        provider_used="orcamentos",
+                        model_used="pandas",
+                        parent_analysis_id=None,
+                        owner_user_id=owner_id,
+                        payload=payload,
+                        total_bonus=0.0,
+                    )
+                    st.session_state["active_orcamentos_analysis_id"] = int(analysis_id)
+                    st.success(f"Orçamentos salvos como análise **#{analysis_id}**.")
+                    st.rerun()
+            except Exception as e:
+                st.error("Falha ao processar orçamentos.")
                 st.caption(str(e))
 
     b1, b2, b3 = st.columns([1, 1, 1])
@@ -6376,6 +6422,203 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
             st.success(f"Radar salvo como análise **#{analysis_id}**.")
 
 
+def page_orcamentos(settings, conn) -> None:
+    render_header("Orçamento x Conversão", "Pendentes vs Finalizados, conversão por faixa e tipo de cliente.")
+
+    user = st.session_state.get("user") or {}
+    owner_id = int(user.get("id") or 0) or None
+    is_admin = str(user.get("role") or "").lower() == "admin"
+
+    # Descobrir análise ativa / última análise do tipo
+    active_id = st.session_state.get("active_orcamentos_analysis_id")
+    if active_id is None:
+        rows = list_analyses(conn, limit=200, owner_user_id=owner_id, include_all=is_admin)
+        for r in rows:
+            try:
+                p = json.loads(r.payload_json)
+            except Exception:
+                continue
+            if isinstance(p, dict) and p.get("_kind") == "orcamentos":
+                active_id = int(r.id)
+                st.session_state["active_orcamentos_analysis_id"] = active_id
+                break
+
+    if active_id is None:
+        st.info("Nenhuma análise de orçamentos ainda. Vá em **Nova análise** e salve os 2 arquivos (Pendentes + Finalizados).")
+        return
+
+    row = get_analysis(conn, int(active_id), owner_user_id=owner_id, include_all=is_admin)
+    if not row:
+        st.warning("Análise de orçamentos não encontrada.")
+        return
+
+    payload = json.loads(row.payload_json)
+    pend_rows = ((payload.get("pendentes") or {}).get("rows")) if isinstance(payload, dict) else None
+    fin_rows = ((payload.get("finalizados") or {}).get("rows")) if isinstance(payload, dict) else None
+    if not isinstance(pend_rows, list) or not isinstance(fin_rows, list):
+        st.warning("Payload de orçamentos inválido (sem rows).")
+        return
+
+    df_p = pd.DataFrame(pend_rows)
+    df_f = pd.DataFrame(fin_rows)
+
+    st.markdown("### Filtros")
+    f1, f2, f3 = st.columns([1.2, 1.4, 1.0])
+    with f1:
+        filiais = []
+        if "_filial" in df_p.columns:
+            filiais = sorted([x for x in df_p["_filial"].astype(str).unique().tolist() if x and x.lower() != "nan"])
+        filial_pick = st.multiselect("Filial", options=filiais, default=filiais)
+    with f2:
+        ems = pd.to_datetime(df_p.get("_emissao"), errors="coerce") if "_emissao" in df_p.columns else pd.Series([], dtype="datetime64[ns]")
+        dmin = ems.min().date() if len(ems.dropna()) else None
+        dmax = ems.max().date() if len(ems.dropna()) else None
+        if dmin and dmax:
+            dr = st.date_input("Emissão (intervalo)", value=(dmin, dmax))
+        else:
+            dr = None
+            st.caption("Sem coluna Emissão detectada.")
+    with f3:
+        tipo_pick = st.selectbox("CNPJ? (Tipo)", options=["Todos", "F", "J"], index=0)
+
+    search = st.text_input("Buscar nº Orçamento", value="", placeholder="ex.: 458585")
+
+    def _apply_filters(df_in: pd.DataFrame) -> pd.DataFrame:
+        df = df_in.copy()
+        if filial_pick and "_filial" in df.columns:
+            df = df[df["_filial"].astype(str).isin(set(filial_pick))]
+        if tipo_pick in {"F", "J"} and "_tipo_cliente" in df.columns:
+            df = df[df["_tipo_cliente"].astype(str).str.upper() == tipo_pick]
+        if search.strip() and "_orcamento" in df.columns:
+            s = search.strip()
+            df = df[df["_orcamento"].astype(str).str.contains(s, na=False)]
+        if dr and isinstance(dr, tuple) and len(dr) == 2 and "_emissao" in df.columns:
+            a, b = dr
+            em = pd.to_datetime(df["_emissao"], errors="coerce")
+            df = df[em.notna() & (em.dt.date >= a) & (em.dt.date <= b)]
+        return df
+
+    dfp = _apply_filters(df_p)
+    dff = _apply_filters(df_f)
+
+    def _sum_val(df: pd.DataFrame) -> float:
+        v = pd.to_numeric(df.get("_valor"), errors="coerce").fillna(0.0) if "_valor" in df.columns else pd.Series([0.0])
+        return float(v.sum())
+
+    def _count_orc(df: pd.DataFrame) -> int:
+        if "_orcamento" not in df.columns:
+            return 0
+        s = df["_orcamento"].astype(str).str.strip()
+        s = s.replace("nan", "")
+        return int(s.ne("").sum())
+
+    pend_q = _count_orc(dfp)
+    pend_v = _sum_val(dfp)
+    fin_q = _count_orc(dff)
+    fin_v = _sum_val(dff)
+
+    st.markdown("### Resumo")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Pendentes (qtd)", str(pend_q))
+        st.metric("Pendentes (valor)", f"R$ {pend_v:,.2f}")
+    with c2:
+        st.metric("Finalizados (qtd)", str(fin_q))
+        st.metric("Finalizados (valor)", f"R$ {fin_v:,.2f}")
+    with c3:
+        st.metric("Total (qtd)", str(int(pend_q + fin_q)))
+        st.metric("Total (valor)", f"R$ {float(pend_v + fin_v):,.2f}")
+
+    st.markdown("### Conversão (pendente → finalizado)")
+    st.caption("Validação sempre por cruzamento do campo **Orçamento** entre análises.")
+
+    # Busca análise anterior do mesmo tipo (para calcular convertidos)
+    prev_payload = None
+    try:
+        rows_prev = list_analyses(conn, limit=300, owner_user_id=owner_id, include_all=is_admin)
+        seen_current = False
+        for r in rows_prev:
+            if int(r.id) == int(active_id):
+                seen_current = True
+                continue
+            if not seen_current:
+                continue
+            try:
+                p2 = json.loads(r.payload_json)
+            except Exception:
+                continue
+            if isinstance(p2, dict) and p2.get("_kind") == "orcamentos":
+                prev_payload = p2
+                break
+    except Exception:
+        prev_payload = None
+
+    conv_ids: set[str] = set()
+    conv_val = 0.0
+    if isinstance(prev_payload, dict):
+        prev_p = pd.DataFrame(((prev_payload.get("pendentes") or {}).get("rows")) or [])
+        now_f = pd.DataFrame(((payload.get("finalizados") or {}).get("rows")) or [])
+        if "_orcamento" in prev_p.columns and "_orcamento" in now_f.columns:
+            prev_pending = set(prev_p["_orcamento"].astype(str).str.strip().tolist())
+            now_final = set(now_f["_orcamento"].astype(str).str.strip().tolist())
+            conv_ids = {x for x in prev_pending.intersection(now_final) if x and x.lower() != "nan"}
+            if conv_ids and "_valor" in prev_p.columns:
+                vv = pd.to_numeric(prev_p["_valor"], errors="coerce").fillna(0.0)
+                conv_val = float(vv[prev_p["_orcamento"].astype(str).str.strip().isin(conv_ids)].sum())
+
+    cc1, cc2 = st.columns(2)
+    cc1.metric("Convertidos (qtd)", str(len(conv_ids)))
+    cc2.metric("Convertidos (valor)", f"R$ {conv_val:,.2f}")
+
+    def _faixa(v: float) -> str:
+        if v <= 500:
+            return "0,00–500"
+        if v <= 1000:
+            return "500,01–1000"
+        if v <= 2000:
+            return "1001,01–2000"
+        if v <= 5000:
+            return "2000,01–5000"
+        if v <= 10000:
+            return "5000,01–10000"
+        if v <= 30000:
+            return "10000,01–30000"
+        return "30000,01+"
+
+    base_fin = dff.copy()
+    if conv_ids and "_orcamento" in base_fin.columns:
+        base_fin = base_fin[base_fin["_orcamento"].astype(str).str.strip().isin(conv_ids)].copy()
+        st.caption("As tabelas abaixo consideram **somente os convertidos** (comparando com a análise anterior).")
+    else:
+        st.caption("Sem análise anterior detectada: as tabelas abaixo consideram **finalizados do arquivo atual**.")
+
+    base_fin["_valor_num"] = pd.to_numeric(base_fin.get("_valor"), errors="coerce").fillna(0.0)
+    base_fin["faixa"] = base_fin["_valor_num"].apply(lambda x: _faixa(float(x or 0.0)))
+    base_fin["tipo"] = base_fin.get("_tipo_cliente", "").astype(str).str.upper().replace({"PF": "F", "PJ": "J"})
+
+    tab1, tab2, tab3 = st.tabs(["Setor", "Consultor", "Busca"])
+    with tab1:
+        st.markdown("### Setor (por faixa e tipo)")
+        g = base_fin.groupby(["faixa", "tipo"], as_index=False).agg(qtd=("_orcamento", "count"), valor=("_valor_num", "sum"))
+        st.dataframe(g.sort_values(["faixa", "tipo"]), use_container_width=True, hide_index=True)
+    with tab2:
+        st.markdown("### Consultor (por faixa e tipo)")
+        if "_consultor" in base_fin.columns:
+            g2 = base_fin.groupby(["_consultor", "faixa", "tipo"], as_index=False).agg(qtd=("_orcamento", "count"), valor=("_valor_num", "sum"))
+            st.dataframe(g2.sort_values(["_consultor", "faixa", "tipo"]), use_container_width=True, hide_index=True)
+        else:
+            st.info("Coluna de consultor/vendedor não detectada.")
+    with tab3:
+        st.markdown("### Detalhe por nº do orçamento")
+        if not search.strip():
+            st.caption("Digite um número (ou parte dele) em **Buscar nº Orçamento**.")
+        else:
+            st.write("Pendentes (filtrados)")
+            st.dataframe(dfp, use_container_width=True, hide_index=True)
+            st.write("Finalizados (filtrados)")
+            st.dataframe(dff, use_container_width=True, hide_index=True)
+
+
 def main() -> None:
     st.set_page_config(page_title="Dashboard Performance", page_icon="📊", layout="wide")
     # Perfil de layout (Mobile / Tablet / Desktop)
@@ -6759,7 +7002,12 @@ def main() -> None:
         page_upload(settings, conn, embedded=True)
 
     st.markdown("### Selecione o Dashboard:")
-    if st.session_state.get("dash_selector") not in {"Dashboard de Bônus", "Dashboard de Performance", "Sala de Gestão"}:
+    if st.session_state.get("dash_selector") not in {
+        "Dashboard de Bônus",
+        "Dashboard de Performance",
+        "Sala de Gestão",
+        "Orçamento x Conversão",
+    }:
         st.session_state["dash_selector"] = "Sala de Gestão"
 
     st.markdown(
@@ -6806,7 +7054,7 @@ def main() -> None:
 
     dash = str(st.session_state.get("dash_selector"))
     st.markdown("<div class='dp-dash-select'>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.markdown("<div class='dp-dash-selected'>" if dash == "Dashboard de Bônus" else "<div>", unsafe_allow_html=True)
         if st.button("Dashboard de Bônus", use_container_width=True, key="dash_pick_bonus"):
@@ -6825,6 +7073,12 @@ def main() -> None:
             st.session_state["dash_selector"] = "Sala de Gestão"
             st.rerun()
         st.markdown("<p class='dp-dash-sub'>Reunião diária: consolidado e deptos</p></div>", unsafe_allow_html=True)
+    with c4:
+        st.markdown("<div class='dp-dash-selected'>" if dash == "Orçamento x Conversão" else "<div>", unsafe_allow_html=True)
+        if st.button("Orçamento x Conversão", use_container_width=True, key="dash_pick_orc"):
+            st.session_state["dash_selector"] = "Orçamento x Conversão"
+            st.rerun()
+        st.markdown("<p class='dp-dash-sub'>Pendentes, finalizados e conversão</p></div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
     dash = str(st.session_state.get("dash_selector"))
@@ -6867,6 +7121,8 @@ def main() -> None:
             page_insights(settings, conn)
         else:
             page_history(settings, conn)
+    elif dash == "Orçamento x Conversão":
+        page_orcamentos(settings, conn)
     else:
         # Header aqui é redundante com os cards de seleção acima
         page_sala_gestao(settings, conn, show_header=False)
