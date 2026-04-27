@@ -8,3 +8,7 @@ __pycache__/
 
 data/
 !data/.gitkeep
+
+# Pastas usadas pela automação local
+auto_inbox/
+auto_archive/

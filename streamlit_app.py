@@ -690,9 +690,13 @@ def _ensure_db():
     conn = connect(settings.db_path, settings.database_url)
     init_db(conn)
     # Bootstrap: garante admin no DB e atribui ownership às análises antigas
-    # Defaults precisam continuar compatíveis com o login antigo do app
-    admin_user = settings.admin_username or "wsdataanalyst"
-    admin_pass = settings.admin_password or "#P161217m"
+    admin_user = (settings.admin_username or "").strip()
+    admin_pass = (settings.admin_password or "").strip()
+    if not admin_user or not admin_pass:
+        raise RuntimeError(
+            "Configuração obrigatória ausente: defina ADMIN_USERNAME e ADMIN_PASSWORD "
+            "via Streamlit Secrets (.streamlit/secrets.toml) ou .env antes de usar o app."
+        )
     admin_id = ensure_admin_user(
         conn,
         username=admin_user,
@@ -750,7 +754,11 @@ def _maybe_login(settings) -> None:
             u = st.text_input("Usuário", placeholder="ex.: gerson", key="login_user")
             p = st.text_input("Senha", type="password", key="login_pass")
             if st.button("Entrar", use_container_width=True, key="btn_login"):
-                _, conn = _ensure_db()
+                try:
+                    _, conn = _ensure_db()
+                except Exception as e:
+                    st.error(str(e))
+                    st.stop()
                 rec = get_user_by_username(conn, (u or "").strip())
                 if not rec or int(rec.get("active") or 0) != 1:
                     st.error("Usuário inválido ou inativo.")
@@ -778,7 +786,11 @@ def _maybe_login(settings) -> None:
                 elif p1 != p2 or len(p1 or "") < 6:
                     st.error("Senha inválida (mínimo 6 caracteres) ou confirmação não confere.")
                 else:
-                    _, conn = _ensure_db()
+                    try:
+                        _, conn = _ensure_db()
+                    except Exception as e:
+                        st.error(str(e))
+                        st.stop()
                     try:
                         uid, role = create_user_from_invite(
                             conn,
@@ -6225,6 +6237,24 @@ def main() -> None:
 
     settings, conn = _ensure_db()
     _maybe_login(settings)
+    # Calendário é usado em várias telas (meta por dia útil, projeções, etc.).
+    # Se o usuário não abrir o card "Calendário", ainda assim precisamos de um default (mês atual).
+    try:
+        if not isinstance(st.session_state.get("calendar_info"), dict) or not st.session_state["calendar_info"].get("ano"):
+            import datetime as _dt
+
+            today = _dt.date.today()
+            info0 = compute_calendar_info(ano=int(today.year), mes=int(today.month), subdiv=None)
+            st.session_state["calendar_info"] = {
+                "ano": info0.ano,
+                "mes": info0.mes,
+                "hoje": info0.hoje.isoformat(),
+                "dias_uteis_total": info0.dias_uteis_total,
+                "dias_uteis_trabalhados": info0.dias_uteis_trabalhados,
+                "dias_uteis_restantes": info0.dias_uteis_restantes,
+            }
+    except Exception:
+        pass
     try:
         purge_excluded_sellers_from_all_analyses(conn)
     except Exception:
