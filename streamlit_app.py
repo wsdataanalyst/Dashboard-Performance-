@@ -3679,13 +3679,25 @@ def page_highlights(settings, conn) -> None:
     user = st.session_state.get("user") or {}
     owner_id = int(user.get("id") or 0) or None
     is_admin = str(user.get("role") or "").lower() == "admin"
-    rows = list_analyses(conn, limit=24, owner_user_id=owner_id, include_all=is_admin)
-    if len(rows) < 2:
+    # Usar o mesmo conjunto de "análises base" que aparece no Histórico rápido:
+    # filtra registros auxiliares com `_kind` (KPIs/Dept/Radar/etc.)
+    rows_all = list_analyses(conn, limit=200, owner_user_id=owner_id, include_all=is_admin)
+    base_rows = []
+    for r in rows_all:
+        try:
+            p0 = json.loads(r.payload_json)
+        except Exception:
+            p0 = None
+        kind0 = p0.get("_kind") if isinstance(p0, dict) else None
+        if not kind0:
+            base_rows.append(r)
+
+    if len(base_rows) < 2:
         st.info("Salve mais análises para habilitar tendência semanal/mensal.")
         return
 
     hist: list[dict] = []
-    for r in reversed(rows):
+    for r in reversed(base_rows):
         try:
             p = json.loads(r.payload_json)
         except Exception:
