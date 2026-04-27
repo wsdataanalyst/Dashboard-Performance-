@@ -3260,8 +3260,9 @@ def page_history(settings, conn) -> None:
     owner_id = int(user.get("id") or 0) or None
     is_admin = str(user.get("role") or "").lower() == "admin"
     rows_all = list_analyses(conn, limit=150, owner_user_id=owner_id, include_all=is_admin)
-    # Histórico "base" (prints/excel de vendedores/bônus/performance) não deve misturar com registros da Sala de Gestão
-    rows: list = []
+    # Separar histórico por tipo (sem misturar Sala de Gestão com Vendedores ou Orçamentos)
+    rows_base: list = []
+    rows_orc: list = []
     for r in rows_all:
         try:
             p = json.loads(r.payload_json)
@@ -3269,52 +3270,81 @@ def page_history(settings, conn) -> None:
             p = None
         kind = p.get("_kind") if isinstance(p, dict) else None
         if not kind:
-            rows.append(r)
-    if not rows:
-        n_db = count_all_analyses(conn)
-        if n_db > 0 and not is_admin:
-            st.warning(
-                f"O banco tem **{n_db}** registro(s) de análise, mas **nenhum aparece no seu histórico** com o usuário "
-                f"atual: as linhas provavelmente estão vinculadas a **outro dono** (`owner_user_id`). "
-                f"**Entre como administrador** (vê tudo) ou com a **mesma conta** que salvou. "
-                f"O que parecia 'fantasma' era o filtro de permissão, não a perda de dados."
-            )
-        elif n_db > 0 and is_admin:
-            st.info(
-                f"Existe(m) **{n_db}** análise(s) no banco, mas nenhuma entra no histórico de vendedores (todas têm `_kind`, ex. Sala de Gestão)."
-            )
+            rows_base.append(r)  # prints/excel de vendedores (bônus/performance)
+        elif str(kind) == "orcamentos":
+            rows_orc.append(r)
+
+    tab_base, tab_orc = st.tabs(["Vendedores (Bônus/Performance)", "Orçamentos x Conversão"])
+
+    with tab_base:
+        if not rows_base:
+            st.info("Sem histórico de vendedores neste usuário.")
         else:
-            st.info("Histórico vazio. Faça sua primeira análise em **Upload e extração**.")
-        return
+            options = {f"#{r.id} · {r.periodo} · {r.created_at} · R$ {r.total_bonus:,.2f}": r.id for r in rows_base}
+            selected = st.selectbox("Selecione uma análise", options=list(options.keys()), key="hist_base_pick")
+            selected_id = int(options[selected])
 
-    options = {f"#{r.id} · {r.periodo} · {r.created_at} · R$ {r.total_bonus:,.2f}": r.id for r in rows}
-    selected = st.selectbox("Selecione uma análise", options=list(options.keys()))
-    selected_id = int(options[selected])
+            c1, c2, c3 = st.columns([1, 1, 2])
+            with c1:
+                if st.button("📌 Tornar ativa", use_container_width=True, key="hist_base_activate"):
+                    st.session_state["active_analysis_id"] = selected_id
+                    st.success("Análise ativa atualizada.")
+                    st.rerun()
+            with c2:
+                if st.button("🗑️ Apagar", use_container_width=True, key="hist_base_delete"):
+                    delete_analysis(conn, selected_id, owner_user_id=owner_id, include_all=is_admin)
+                    if st.session_state.get("active_analysis_id") == selected_id:
+                        st.session_state.pop("active_analysis_id", None)
+                    st.success("Análise apagada.")
+                    st.rerun()
+            with c3:
+                st.caption("Dica: apagar remove o registro e os uploads vinculados (por cascata).")
 
-    c1, c2, c3 = st.columns([1, 1, 2])
-    with c1:
-        if st.button("📌 Tornar ativa", use_container_width=True):
-            st.session_state["active_analysis_id"] = selected_id
-            st.success("Análise ativa atualizada.")
-            st.rerun()
-    with c2:
-        if st.button("🗑️ Apagar", use_container_width=True):
-            delete_analysis(conn, selected_id, owner_user_id=owner_id, include_all=is_admin)
-            if st.session_state.get("active_analysis_id") == selected_id:
-                st.session_state.pop("active_analysis_id", None)
-            st.success("Análise apagada.")
-            st.rerun()
-    with c3:
-        st.caption("Dica: apagar remove o registro e os uploads vinculados (por cascata).")
+            row = get_analysis(conn, selected_id, owner_user_id=owner_id, include_all=is_admin)
+            if row:
+                st.markdown("---")
+                st.subheader("Detalhe")
+                st.write("**Período:**", row.periodo)
+                st.write("**IA:**", f"{row.provider_used} / {row.model_used}")
+                st.write("**Total bônus:**", f"R$ {row.total_bonus:,.2f}")
+                st.json(json.loads(row.payload_json))
 
-    row = get_analysis(conn, selected_id, owner_user_id=owner_id, include_all=is_admin)
-    if row:
-        st.markdown("---")
-        st.subheader("Detalhe")
-        st.write("**Período:**", row.periodo)
-        st.write("**IA:**", f"{row.provider_used} / {row.model_used}")
-        st.write("**Total bônus:**", f"R$ {row.total_bonus:,.2f}")
-        st.json(json.loads(row.payload_json))
+    with tab_orc:
+        if not rows_orc:
+            n_db = count_all_analyses(conn)
+            if n_db > 0 and not is_admin:
+                st.info("Sem histórico de **Orçamentos** neste usuário (pode ser permissão/owner).")
+            else:
+                st.info("Ainda não existe análise de **Orçamentos** salva.")
+        else:
+            options2 = {f"#{r.id} · {r.periodo} · {r.created_at}": r.id for r in rows_orc}
+            selected2 = st.selectbox("Selecione uma análise (Orçamentos)", options=list(options2.keys()), key="hist_orc_pick")
+            selected_id2 = int(options2[selected2])
+
+            c1, c2, c3 = st.columns([1, 1, 2])
+            with c1:
+                if st.button("📌 Tornar ativa (Orçamentos)", use_container_width=True, key="hist_orc_activate"):
+                    st.session_state["active_orcamentos_analysis_id"] = selected_id2
+                    st.session_state["dash_selector"] = "Orçamento x Conversão"
+                    st.success("Análise de orçamentos ativa atualizada.")
+                    st.rerun()
+            with c2:
+                if st.button("🗑️ Apagar (Orçamentos)", use_container_width=True, key="hist_orc_delete"):
+                    delete_analysis(conn, selected_id2, owner_user_id=owner_id, include_all=is_admin)
+                    if st.session_state.get("active_orcamentos_analysis_id") == selected_id2:
+                        st.session_state.pop("active_orcamentos_analysis_id", None)
+                    st.success("Análise apagada.")
+                    st.rerun()
+            with c3:
+                st.caption("Dica: apagar remove o registro e os uploads vinculados (por cascata).")
+
+            row2 = get_analysis(conn, selected_id2, owner_user_id=owner_id, include_all=is_admin)
+            if row2:
+                st.markdown("---")
+                st.subheader("Detalhe (Orçamentos)")
+                st.write("**Período:**", row2.periodo)
+                st.write("**IA:**", f"{row2.provider_used} / {row2.model_used}")
+                st.json(json.loads(row2.payload_json))
 
 
 def page_insights(settings, conn) -> None:
