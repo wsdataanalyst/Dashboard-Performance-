@@ -464,6 +464,8 @@ def _enrich_results_df_for_performance(results_df: pd.DataFrame, sellers: list) 
     df = results_df.copy()
     df["faturamento"] = df["nome"].apply(lambda n: getattr(raw_map.get(n), "faturamento", None))
     df["meta_faturamento"] = df["nome"].apply(lambda n: getattr(raw_map.get(n), "meta_faturamento", None))
+    df["desconto_pct"] = df["nome"].apply(lambda n: getattr(raw_map.get(n), "desconto_pct", None))
+    df["qtd_desconto_pct"] = df["nome"].apply(lambda n: getattr(raw_map.get(n), "qtd_desconto_pct", None))
     # Alcance real: SEMPRE prioriza (Faturamento / Meta) * 100 quando houver ambos
     # (regra pedida: bater com a planilha "Alcance e Margem")
     df["alcance_real_pct"] = None
