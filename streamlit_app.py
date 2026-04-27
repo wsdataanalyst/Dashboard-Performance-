@@ -3904,6 +3904,33 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
         except Exception:
             pass
 
+        # Fallback moderno: se a análise ativa não trouxe `_sg_dept`,
+        # reutilizar a última base de departamentos disponível no histórico.
+        # Isso evita "sumir" a Margem entregue vs abaixo quando o usuário troca a análise ativa.
+        try:
+            if st.session_state.get("dept_payload") is None:
+                rows2 = list_analyses(conn, limit=120, owner_user_id=owner_id, include_all=is_admin)
+                for rr in rows2:
+                    try:
+                        pp = json.loads(rr.payload_json)
+                    except Exception:
+                        continue
+                    if not isinstance(pp, dict):
+                        continue
+                    dd2 = pp.get("_sg_dept")
+                    if not isinstance(dd2, dict):
+                        continue
+                    deps3 = dd2.get("departamentos")
+                    if isinstance(deps3, list) and deps3:
+                        st.session_state["dept_payload"] = {"departamentos": deps3}
+                        if isinstance(dd2.get("meta"), dict):
+                            st.session_state["dept_meta"] = dd2.get("meta")
+                        if dd2.get("source"):
+                            st.session_state["dept_source_name"] = dd2.get("source")
+                        break
+        except Exception:
+            pass
+
         totais = (payload_base or {}).get("totais") if isinstance(payload_base, dict) else {}
         if not isinstance(totais, dict):
             totais = {}
