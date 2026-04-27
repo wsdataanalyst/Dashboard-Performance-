@@ -4741,15 +4741,25 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                             accent="#FBBF24",
                         )
                     with p2:
-                        _mini_card(
-                            "Margem — entregue vs abaixo",
-                            f"{n_ok} ok | {n_bad} abaixo | {n_na} s/ meta",
-                            f"OK (meta depto): { _join_names2(ok_names, max_n=4) } • "
-                            f"Abaixo (meta depto): { _join_names2(bad_names, max_n=4) } • "
-                            f"Sem meta: { _join_names2(na_names, max_n=4) }",
-                            icon="📊",
-                            accent="#A7F3D0" if n_bad == 0 else "#93c5fd",
-                        )
+                        c_ok, c_bad = st.columns(2)
+                        with c_ok:
+                            _mini_card(
+                                "Margem — metas batidas",
+                                f"{n_ok}",
+                                f"OK (meta depto): { _join_names2(ok_names, max_n=4) }"
+                                + (f" • Sem meta: { _join_names2(na_names, max_n=4) }" if n_na > 0 else ""),
+                                icon="✅",
+                                accent="#6EE7B7",
+                            )
+                        with c_bad:
+                            _mini_card(
+                                "Margem — abaixo da meta",
+                                f"{n_bad}",
+                                f"Abaixo (meta depto): { _join_names2(bad_names, max_n=4) }"
+                                + (f" • Sem meta: { _join_names2(na_names, max_n=4) }" if n_na > 0 else ""),
+                                icon="⚠️",
+                                accent="#fb7185" if n_bad > 0 else "#93c5fd",
+                            )
 
                     # Diagnóstico rápido (quando meta margem não veio)
                     if int(n_ok + n_bad) == 0 and int(n_na) > 0:
