@@ -326,7 +326,10 @@ def import_5_files_to_payload(files: list[tuple[str, bytes]]) -> ImportResult:
 
             # Qtd. faturadas
             if _find_col(t, "qtd fatur", "qtd. fatur", "qtd faturadas", "qtd. faturadas"):
-                c_nome = _pick_name_col(t)
+                # Em exports comuns, a tabela vem com "Canal" e "Vendedor".
+                # Usar "Vendedor" quando existir evita confundir com a coluna de Canal.
+                c_vend = _find_col(t, "vendedor")
+                c_nome = c_vend or _pick_name_col(t)
                 c_qtd = _find_col(t, "qtd fatur", "qtd. fatur", "qtd faturadas", "qtd. faturadas")
                 c_fat = _find_col(t, "faturamento")
                 c_desc = _find_col(t, "desconto")
