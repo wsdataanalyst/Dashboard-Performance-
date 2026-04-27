@@ -98,6 +98,29 @@ def _find_meta_margem_col(df: pd.DataFrame) -> str | None:
     return best
 
 
+def _find_margem_result_col(df: pd.DataFrame, *, skip: str | None) -> str | None:
+    """
+    Coluna de margem RESULTADO (% Margem), evitando confundir com '% Meta Margem'.
+    Se `skip` for a coluna de meta, nunca retorna ela.
+    """
+    cols = _col_lookup(df)
+    # Preferir explicitamente "% margem" / "margem %" sem "meta"
+    preferred: list[str] = []
+    fallback: list[str] = []
+    for k, orig in cols.items():
+        if skip is not None and orig == skip:
+            continue
+        if "margem" not in k:
+            continue
+        if "meta" in k:
+            continue
+        if "% margem" in k or k.startswith("% margem") or k.endswith(" % margem") or "margem %" in k:
+            preferred.append(orig)
+        else:
+            fallback.append(orig)
+    return preferred[0] if preferred else (fallback[0] if fallback else None)
+
+
 def _col_by_excel_pos(df: pd.DataFrame, excel_col_letter: str) -> str | None:
     """
     Fallback por posição do Excel (A=0, B=1, ...).
@@ -225,7 +248,7 @@ def import_departamentos(files: list[tuple[str, bytes]]) -> DeptImportResult:
             c_meta_marg = _find_meta_margem_col(df) or _find_col(df, "meta margem", "% meta margem", "margem meta")
             c_part = _find_col(df, "particip", "% particip")
             c_alc = _find_col(df, "alcance", "alcance projet")
-            c_marg = _find_col(df, "margem", "% margem")
+            c_marg = _find_margem_result_col(df, skip=c_meta_marg) or _find_col(df, "% margem")
 
             # Fallback pedido: na base "Faturamento por departamento", col G = % Meta Margem, col H = % Margem (resultado)
             # Só aplica quando ainda não identificou as colunas por nome.
