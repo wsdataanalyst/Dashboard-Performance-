@@ -33,15 +33,30 @@ def _read_excel_or_html(file_name: str, b: bytes) -> list[pd.DataFrame]:
         html = b.decode("utf-8", errors="ignore")
         return list(pd.read_html(io.StringIO(html)))
 
-    # excel real
+    # Excel (robusto): alguns exports vêm com extensão errada (.xlsx mas é .xls, etc.).
     ext = Path(file_name).suffix.lower()
+    bio = io.BytesIO(b)
     if ext == ".xlsx":
-        return [pd.read_excel(io.BytesIO(b), engine="openpyxl")]
+        try:
+            return [pd.read_excel(bio, engine="openpyxl")]
+        except Exception:
+            # extensão pode estar errada → tenta xlrd também
+            bio.seek(0)
+            return [pd.read_excel(bio, engine="xlrd")]
     if ext == ".xls":
-        # xls real (binário antigo)
-        return [pd.read_excel(io.BytesIO(b), engine="xlrd")]
-    # fallback: tenta como excel
-    return [pd.read_excel(io.BytesIO(b))]
+        try:
+            return [pd.read_excel(bio, engine="xlrd")]
+        except Exception:
+            # às vezes vem como xlsx mas com .xls
+            bio.seek(0)
+            return [pd.read_excel(bio, engine="openpyxl")]
+
+    # fallback: tenta engines comuns
+    try:
+        return [pd.read_excel(bio, engine="openpyxl")]
+    except Exception:
+        bio.seek(0)
+        return [pd.read_excel(bio, engine="xlrd")]
 
 
 def _clean_name(name: str) -> str:
