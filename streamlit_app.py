@@ -3574,6 +3574,7 @@ def _extract_perf_summary_from_payload(periodo: str, payload: dict) -> dict:
     ticket = pd.to_numeric(df.get("ticket_medio"), errors="coerce").dropna() if not df.empty else pd.Series([], dtype=float)
     conv = pd.to_numeric(df.get("conversao_pct"), errors="coerce").dropna() if not df.empty else pd.Series([], dtype=float)
     marg = pd.to_numeric(df.get("margem_pct"), errors="coerce").dropna() if not df.empty else pd.Series([], dtype=float)
+    disc = pd.to_numeric(df.get("desconto_pct"), errors="coerce").dropna() if not df.empty else pd.Series([], dtype=float)
 
     return {
         "periodo": periodo,
@@ -3584,6 +3585,7 @@ def _extract_perf_summary_from_payload(periodo: str, payload: dict) -> dict:
         "media_ticket": float(ticket.mean()) if len(ticket) else None,
         "media_conversao": float(conv.mean()) if len(conv) else None,
         "media_margem": float(marg.mean()) if len(marg) else None,
+        "media_desconto": float(disc.mean()) if len(disc) else None,
         "total_bonus": float(total_bonus),
         "vendedores": df.to_dict(orient="records") if not df.empty else [],
     }
@@ -3725,7 +3727,7 @@ def page_highlights(settings, conn) -> None:
 
             c1, c2 = st.columns(2)
             with c1:
-                fig = px.line(sub, x="id", y="tot_faturamento", markers=True, title="Faturamento do time")
+                fig = px.line(sub, x="id", y="media_desconto", markers=True, title="Desconto médio (time)")
                 fig.update_layout(height=320)
                 st.plotly_chart(fig, use_container_width=True, key=f"hl_trend_faturamento_{title}")
             with c2:
@@ -3751,7 +3753,7 @@ def page_highlights(settings, conn) -> None:
                     "id",
                     "created_at",
                     "periodo",
-                    "tot_faturamento",
+                    "media_desconto",
                     "tot_nfs",
                     "tot_interacoes",
                     "media_ticket",
