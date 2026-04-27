@@ -3594,6 +3594,27 @@ def _extract_perf_summary_from_payload(periodo: str, payload: dict) -> dict:
     }
 
 
+def _extract_date_label_from_periodo(periodo: str, created_at: str | None) -> tuple[str, str]:
+    """
+    Retorna (date_key_iso, date_label_br) para ordenar e exibir no eixo X.
+    - Prioriza dd/mm/aaaa no texto do `periodo` (ex.: "23/04/2026 - Atualizado")
+    - Fallback: usa `created_at` (YYYY-mm-ddTHH:MM:SS...)
+    """
+    import re
+
+    p = str(periodo or "").strip()
+    m = re.search(r"(?<!\d)(\d{2})/(\d{2})/(\d{4})(?!\d)", p)
+    if m:
+        dd, mm, yy = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return f"{yy:04d}-{mm:02d}-{dd:02d}", f"{dd:02d}/{mm:02d}/{yy:04d}"
+    s = str(created_at or "").strip()
+    m2 = re.search(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)", s)
+    if m2:
+        yy, mm, dd = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
+        return f"{yy:04d}-{mm:02d}-{dd:02d}", f"{dd:02d}/{mm:02d}/{yy:04d}"
+    return "0000-00-00", "—"
+
+
 def page_highlights(settings, conn) -> None:
     render_header("Highlight semanal e mensal", "Leitura profunda e gráficos do período e do histórico.")
 
@@ -3707,11 +3728,24 @@ def page_highlights(settings, conn) -> None:
             p = json.loads(r.payload_json)
         except Exception:
             continue
-        hist.append(_extract_perf_summary_from_payload(r.periodo, p) | {"id": r.id, "created_at": r.created_at})
+        date_key, date_label = _extract_date_label_from_periodo(str(r.periodo), str(r.created_at))
+        hist.append(
+            _extract_perf_summary_from_payload(r.periodo, p)
+            | {
+                "id": r.id,
+                "created_at": r.created_at,
+                "date_key": date_key,
+                "date_label": date_label,
+            }
+        )
     hdf = pd.DataFrame(hist)
     if hdf.empty:
         st.info("Não consegui montar o histórico.")
         return
+    try:
+        hdf = hdf.sort_values(["date_key", "id"]).reset_index(drop=True)
+    except Exception:
+        pass
 
     # “Semanal” = últimas N análises disponíveis (até 4), “Mensal” = até 12
     n_week = int(min(4, len(hdf)))
@@ -3730,21 +3764,21 @@ def page_highlights(settings, conn) -> None:
 
             c1, c2 = st.columns(2)
             with c1:
-                fig = px.line(sub, x="id", y="media_desconto", markers=True, title="Desconto médio (time)")
+                fig = px.line(sub, x="date_label", y="media_desconto", markers=True, title="Desconto médio (time)")
                 fig.update_layout(height=320)
                 st.plotly_chart(fig, use_container_width=True, key=f"hl_trend_faturamento_{title}")
             with c2:
-                fig = px.line(sub, x="id", y="tot_nfs", markers=True, title="NFs do time")
+                fig = px.line(sub, x="date_label", y="tot_nfs", markers=True, title="NFs do time")
                 fig.update_layout(height=320)
                 st.plotly_chart(fig, use_container_width=True, key=f"hl_trend_nfs_{title}")
 
             c3, c4 = st.columns(2)
             with c3:
-                fig = px.line(sub, x="id", y="media_ticket", markers=True, title="Ticket médio (média)")
+                fig = px.line(sub, x="date_label", y="media_ticket", markers=True, title="Ticket médio (média)")
                 fig.update_layout(height=320)
                 st.plotly_chart(fig, use_container_width=True, key=f"hl_trend_ticket_{title}")
             with c4:
-                fig = px.line(sub, x="id", y="media_conversao", markers=True, title="Conversão (média)")
+                fig = px.line(sub, x="date_label", y="media_conversao", markers=True, title="Conversão (média)")
                 fig.update_layout(height=320)
                 st.plotly_chart(fig, use_container_width=True, key=f"hl_trend_conversao_{title}")
         except Exception as e:
@@ -3756,6 +3790,7 @@ def page_highlights(settings, conn) -> None:
                     "id",
                     "created_at",
                     "periodo",
+                    "date_label",
                     "media_desconto",
                     "tot_nfs",
                     "tot_interacoes",
