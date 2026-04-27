@@ -3574,7 +3574,10 @@ def _extract_perf_summary_from_payload(periodo: str, payload: dict) -> dict:
     ticket = pd.to_numeric(df.get("ticket_medio"), errors="coerce").dropna() if not df.empty else pd.Series([], dtype=float)
     conv = pd.to_numeric(df.get("conversao_pct"), errors="coerce").dropna() if not df.empty else pd.Series([], dtype=float)
     marg = pd.to_numeric(df.get("margem_pct"), errors="coerce").dropna() if not df.empty else pd.Series([], dtype=float)
-    disc = pd.to_numeric(df.get("desconto_pct"), errors="coerce").dropna() if not df.empty else pd.Series([], dtype=float)
+    if not df.empty and "desconto_pct" in df.columns:
+        disc = pd.to_numeric(df["desconto_pct"], errors="coerce").dropna()
+    else:
+        disc = pd.Series([], dtype=float)
 
     return {
         "periodo": periodo,
