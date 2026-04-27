@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import secrets
 import time
-from dataclasses import dataclass
+from typing import NamedTuple
 
 from passlib.context import CryptContext
 
@@ -32,8 +32,7 @@ def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
 
 
-@dataclass(frozen=True)
-class UserSession:
+class UserSession(NamedTuple):
     id: int
     username: str
     name: str
