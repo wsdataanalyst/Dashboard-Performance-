@@ -7065,6 +7065,23 @@ def main() -> None:
     outline: none !important;
     box-shadow: 0 0 0 3px rgba(59,130,246,.22), 0 18px 40px rgba(0,0,0,.28) !important;
   }
+  /* “assinatura” de cor por dashboard (borda superior + glow leve) */
+  .dp-dash-select .dp-dash-bonus [data-testid="stButton"] > button{
+    border-top: 3px solid rgba(251,191,36,.65) !important;
+    box-shadow: 0 10px 26px rgba(0,0,0,.18), 0 0 0 1px rgba(251,191,36,.08) inset !important;
+  }
+  .dp-dash-select .dp-dash-perf [data-testid="stButton"] > button{
+    border-top: 3px solid rgba(59,130,246,.65) !important;
+    box-shadow: 0 10px 26px rgba(0,0,0,.18), 0 0 0 1px rgba(59,130,246,.08) inset !important;
+  }
+  .dp-dash-select .dp-dash-sg [data-testid="stButton"] > button{
+    border-top: 3px solid rgba(110,231,183,.65) !important;
+    box-shadow: 0 10px 26px rgba(0,0,0,.18), 0 0 0 1px rgba(110,231,183,.08) inset !important;
+  }
+  .dp-dash-select .dp-dash-orc [data-testid="stButton"] > button{
+    border-top: 3px solid rgba(196,181,253,.70) !important;
+    box-shadow: 0 10px 26px rgba(0,0,0,.18), 0 0 0 1px rgba(196,181,253,.08) inset !important;
+  }
   /* Selecionado */
   .dp-dash-select .dp-dash-selected [data-testid="stButton"] > button{
     border-color: rgba(110,231,183,.65) !important;
@@ -7086,26 +7103,38 @@ def main() -> None:
     st.markdown("<div class='dp-dash-select'>", unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.markdown("<div class='dp-dash-selected'>" if dash == "Dashboard de Bônus" else "<div>", unsafe_allow_html=True)
-        if st.button("Dashboard de Bônus", use_container_width=True, key="dash_pick_bonus"):
+        st.markdown(
+            "<div class='dp-dash-selected dp-dash-bonus'>" if dash == "Dashboard de Bônus" else "<div class='dp-dash-bonus'>",
+            unsafe_allow_html=True,
+        )
+        if st.button("🎯 Dashboard de Bônus", use_container_width=True, key="dash_pick_bonus"):
             st.session_state["dash_selector"] = "Dashboard de Bônus"
             st.rerun()
         st.markdown("<p class='dp-dash-sub'>Bônus, evolução e insights</p></div>", unsafe_allow_html=True)
     with c2:
-        st.markdown("<div class='dp-dash-selected'>" if dash == "Dashboard de Performance" else "<div>", unsafe_allow_html=True)
-        if st.button("Dashboard de Performance", use_container_width=True, key="dash_pick_perf"):
+        st.markdown(
+            "<div class='dp-dash-selected dp-dash-perf'>" if dash == "Dashboard de Performance" else "<div class='dp-dash-perf'>",
+            unsafe_allow_html=True,
+        )
+        if st.button("📈 Dashboard de Performance", use_container_width=True, key="dash_pick_perf"):
             st.session_state["dash_selector"] = "Dashboard de Performance"
             st.rerun()
         st.markdown("<p class='dp-dash-sub'>Indicadores, projeção e ranking</p></div>", unsafe_allow_html=True)
     with c3:
-        st.markdown("<div class='dp-dash-selected'>" if dash == "Sala de Gestão" else "<div>", unsafe_allow_html=True)
-        if st.button("Sala de Gestão", use_container_width=True, key="dash_pick_sg"):
+        st.markdown(
+            "<div class='dp-dash-selected dp-dash-sg'>" if dash == "Sala de Gestão" else "<div class='dp-dash-sg'>",
+            unsafe_allow_html=True,
+        )
+        if st.button("🧭 Sala de Gestão", use_container_width=True, key="dash_pick_sg"):
             st.session_state["dash_selector"] = "Sala de Gestão"
             st.rerun()
         st.markdown("<p class='dp-dash-sub'>Reunião diária: consolidado e deptos</p></div>", unsafe_allow_html=True)
     with c4:
-        st.markdown("<div class='dp-dash-selected'>" if dash == "Orçamento x Conversão" else "<div>", unsafe_allow_html=True)
-        if st.button("Orçamento x Conversão", use_container_width=True, key="dash_pick_orc"):
+        st.markdown(
+            "<div class='dp-dash-selected dp-dash-orc'>" if dash == "Orçamento x Conversão" else "<div class='dp-dash-orc'>",
+            unsafe_allow_html=True,
+        )
+        if st.button("📑 Orçamento x Conversão", use_container_width=True, key="dash_pick_orc"):
             st.session_state["dash_selector"] = "Orçamento x Conversão"
             st.rerun()
         st.markdown("<p class='dp-dash-sub'>Pendentes, finalizados e conversão</p></div>", unsafe_allow_html=True)
