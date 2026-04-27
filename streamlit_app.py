@@ -4268,6 +4268,38 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
             prev_cli_dia_ant = int(pb.get("cli") or 0)
         prev_marg_hoje_pct = prev1_k.get("margem_hoje_pct")
 
+        # Melhor dia do mês (pela base diária "Faturamento e Atendidos")
+        best_nf_day: int | None = None
+        best_nf_val: int | None = None
+        best_cli_day: int | None = None
+        best_cli_val: int | None = None
+        try:
+            if isinstance(daily_roll, dict) and isinstance(daily_roll.get("df"), pd.DataFrame):
+                d0 = daily_roll["df"]
+            else:
+                d0 = None
+            if isinstance(d0, pd.DataFrame) and not d0.empty and "dia" in d0.columns:
+                nf_s = pd.to_numeric(d0.get("nfs_emitidas"), errors="coerce").fillna(0)
+                cli_s = pd.to_numeric(d0.get("clientes_atendidos"), errors="coerce").fillna(0)
+                dia_s = pd.to_numeric(d0.get("dia"), errors="coerce")
+                # Melhor dia = maior valor (ignora linhas sem dia numérico)
+                ok_mask = dia_s.notna()
+                if ok_mask.any():
+                    d2 = d0.loc[ok_mask].copy()
+                    d2["_dia"] = pd.to_numeric(d2.get("dia"), errors="coerce")
+                    d2["_nf"] = pd.to_numeric(d2.get("nfs_emitidas"), errors="coerce").fillna(0)
+                    d2["_cli"] = pd.to_numeric(d2.get("clientes_atendidos"), errors="coerce").fillna(0)
+                    if d2["_nf"].notna().any():
+                        i_nf = int(d2["_nf"].idxmax())
+                        best_nf_day = int(d2.loc[i_nf, "_dia"] or 0) if pd.notna(d2.loc[i_nf, "_dia"]) else None
+                        best_nf_val = int(d2.loc[i_nf, "_nf"] or 0)
+                    if d2["_cli"].notna().any():
+                        i_cli = int(d2["_cli"].idxmax())
+                        best_cli_day = int(d2.loc[i_cli, "_dia"] or 0) if pd.notna(d2.loc[i_cli, "_dia"]) else None
+                        best_cli_val = int(d2.loc[i_cli, "_cli"] or 0)
+        except Exception:
+            pass
+
         with k1:
             _sg_kpi_card(
                 "Faturamento (dia anterior)",
@@ -4281,6 +4313,16 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                 ),
             )
         with k2:
+            best_nf_txt = None
+            try:
+                ref_day = int(last_bus.get("dia") or 0) if isinstance(daily_roll, dict) and isinstance(daily_roll.get("last_bus"), dict) else None
+            except Exception:
+                ref_day = None
+            if best_nf_day is not None and best_nf_val is not None:
+                if ref_day is not None and int(best_nf_day) == int(ref_day):
+                    best_nf_txt = f"Melhor dia do mês: **dia {int(best_nf_day):02d}** (este) • **{int(best_nf_val)}** NFs"
+                else:
+                    best_nf_txt = f"Melhor dia do mês: **dia {int(best_nf_day):02d}** • **{int(best_nf_val)}** NFs"
             _sg_kpi_card(
                 "NFs (dia anterior)",
                 str(int(nf_dia_ant or 0)),
@@ -4292,7 +4334,19 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                     is_money=False,
                 ),
             )
+            if best_nf_txt:
+                st.caption(best_nf_txt)
         with k3:
+            best_cli_txt = None
+            try:
+                ref_day2 = int(last_bus.get("dia") or 0) if isinstance(daily_roll, dict) and isinstance(daily_roll.get("last_bus"), dict) else None
+            except Exception:
+                ref_day2 = None
+            if best_cli_day is not None and best_cli_val is not None:
+                if ref_day2 is not None and int(best_cli_day) == int(ref_day2):
+                    best_cli_txt = f"Melhor dia do mês: **dia {int(best_cli_day):02d}** (este) • **{int(best_cli_val)}** atendidos"
+                else:
+                    best_cli_txt = f"Melhor dia do mês: **dia {int(best_cli_day):02d}** • **{int(best_cli_val)}** atendidos"
             _sg_kpi_card(
                 "Clientes (dia anterior)",
                 str(int(cli_dia_ant or 0)),
@@ -4304,6 +4358,8 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                     is_money=False,
                 ),
             )
+            if best_cli_txt:
+                st.caption(best_cli_txt)
         # Margem média (replica o "Performance > Visão Geral")
         margem_media = None
         try:
