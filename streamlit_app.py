@@ -35,6 +35,7 @@ from src.app.storage import (
     save_analysis,
     save_feedback,
     save_upload_file,
+    update_analysis_periodo,
 )
 from src.app.theme import inject_styles, render_header
 from src.app.ai.router import Provider, extract_json_from_images, json_from_text
@@ -3310,6 +3311,29 @@ def page_history(settings, conn) -> None:
             with c3:
                 st.caption("Dica: apagar remove o registro e os uploads vinculados (por cascata).")
 
+            _bp = next((str(r.periodo) for r in rows_base if int(r.id) == selected_id), "")
+            new_period_hist = st.text_input(
+                "Renomear período / descrição",
+                value=_bp,
+                key=f"hist_page_rename_vend_{selected_id}",
+                placeholder="ex.: Abril/2026 · Até 27/04/2026",
+            )
+            if st.button("💾 Salvar novo nome", use_container_width=True, key=f"hist_page_rename_save_vend_{selected_id}"):
+                try:
+                    if update_analysis_periodo(
+                        conn,
+                        selected_id,
+                        new_periodo=new_period_hist,
+                        owner_user_id=owner_id,
+                        include_all=is_admin,
+                    ):
+                        st.success("Nome atualizado.")
+                        st.rerun()
+                    else:
+                        st.error("Não foi possível salvar (texto vazio ou sem permissão).")
+                except Exception as e:
+                    st.error(str(e))
+
             row = get_analysis(conn, selected_id, owner_user_id=owner_id, include_all=is_admin)
             if row:
                 st.markdown("---")
@@ -3347,6 +3371,29 @@ def page_history(settings, conn) -> None:
                     st.rerun()
             with c3:
                 st.caption("Dica: apagar remove o registro e os uploads vinculados (por cascata).")
+
+            _op = next((str(r.periodo) for r in rows_orc if int(r.id) == selected_id2), "")
+            new_period_orc = st.text_input(
+                "Renomear período / descrição",
+                value=_op,
+                key=f"hist_page_rename_orc_{selected_id2}",
+                placeholder="ex.: Semana 15–21/04 · Orçamentos",
+            )
+            if st.button("💾 Salvar novo nome", use_container_width=True, key=f"hist_page_rename_save_orc_{selected_id2}"):
+                try:
+                    if update_analysis_periodo(
+                        conn,
+                        selected_id2,
+                        new_periodo=new_period_orc,
+                        owner_user_id=owner_id,
+                        include_all=is_admin,
+                    ):
+                        st.success("Nome atualizado.")
+                        st.rerun()
+                    else:
+                        st.error("Não foi possível salvar (texto vazio ou sem permissão).")
+                except Exception as e:
+                    st.error(str(e))
 
             row2 = get_analysis(conn, selected_id2, owner_user_id=owner_id, include_all=is_admin)
             if row2:
@@ -7095,10 +7142,35 @@ def main() -> None:
                 base_rows.append(r)
         if base_rows:
             options = {f"#{r.id} · {r.periodo}": r.id for r in base_rows}
-            pick = st.selectbox("Carregar análise", options=list(options.keys()))
-            if st.button("📌 Tornar ativa", use_container_width=True):
-                st.session_state["active_analysis_id"] = int(options[pick])
+            pick = st.selectbox("Carregar análise", options=list(options.keys()), key="sidebar_hist_quick_pick")
+            sel_hist_id = int(options[pick])
+            sel_hist_period = next((str(r.periodo) for r in base_rows if int(r.id) == sel_hist_id), "")
+            if st.button("📌 Tornar ativa", use_container_width=True, key="sidebar_hist_activate"):
+                st.session_state["active_analysis_id"] = sel_hist_id
                 st.rerun()
+            st.caption("Esqueceu o período ao salvar? **Renomeie** o rótulo abaixo (atualiza o histórico e o JSON da análise).")
+            new_period_label = st.text_input(
+                "Renomear período desta análise",
+                value=sel_hist_period,
+                key=f"sidebar_hist_rename_field_{sel_hist_id}",
+                placeholder="ex.: Abril/2026 ou Até 27/04/2026",
+            )
+            if st.button("💾 Salvar novo nome", use_container_width=True, key="sidebar_hist_rename_btn"):
+                try:
+                    ok = update_analysis_periodo(
+                        conn,
+                        sel_hist_id,
+                        new_periodo=new_period_label,
+                        owner_user_id=owner_id,
+                        include_all=is_admin,
+                    )
+                    if ok:
+                        st.success("Nome atualizado no histórico.")
+                        st.rerun()
+                    else:
+                        st.error("Não foi possível salvar (texto vazio ou sem permissão).")
+                except Exception as e:
+                    st.error(str(e))
         else:
             n_db = count_all_analyses(conn)
             if n_db > 0 and not is_admin:

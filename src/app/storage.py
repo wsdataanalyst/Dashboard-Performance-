@@ -6,7 +6,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Union
+from typing import Any, Union, cast
 
 DbConnection = Union["sqlite3.Connection", "PgShim"]
 
@@ -535,6 +535,56 @@ def delete_analysis(
             (int(analysis_id), int(owner_user_id)),
         )
     conn.commit()
+
+
+def update_analysis_periodo(
+    conn: Any,
+    analysis_id: int,
+    *,
+    new_periodo: str,
+    owner_user_id: int | None = None,
+    include_all: bool = False,
+) -> bool:
+    """
+    Atualiza o rótulo `periodo` (nome no histórico) e, quando o payload é um objeto JSON,
+    sincroniza `payload["periodo"]` para manter consistência com dashboards e exportações.
+    """
+    new_periodo = (new_periodo or "").strip()
+    if not new_periodo:
+        return False
+    if len(new_periodo) > 600:
+        new_periodo = new_periodo[:600]
+
+    row = get_analysis(conn, int(analysis_id), owner_user_id=owner_user_id, include_all=include_all)
+    if row is None:
+        return False
+
+    payload_json_out = row.payload_json
+    try:
+        raw = json.loads(row.payload_json)
+    except Exception:
+        raw = None
+    if isinstance(raw, dict):
+        payload = cast(dict[str, Any], raw)
+        payload["periodo"] = new_periodo
+        payload_json_out = json.dumps(payload, ensure_ascii=False)
+
+    params = (new_periodo, payload_json_out, int(analysis_id))
+    if include_all or owner_user_id is None:
+        conn.execute(
+            "UPDATE analyses SET periodo = ?, payload_json = ? WHERE id = ?",
+            params,
+        )
+    else:
+        conn.execute(
+            """
+UPDATE analyses SET periodo = ?, payload_json = ?
+WHERE id = ? AND (owner_user_id = ? OR owner_user_id IS NULL)
+""",
+            (new_periodo, payload_json_out, int(analysis_id), int(owner_user_id)),
+        )
+    conn.commit()
+    return True
 
 
 def ensure_admin_user(conn: Any, *, username: str, password_hash: str, name: str = "Administrador") -> int:
