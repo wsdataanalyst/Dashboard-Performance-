@@ -223,6 +223,61 @@ def _text_has_date_token(txt: object) -> bool:
     return False
 
 
+def _extract_ref_date_iso_from_periodo(txt: object) -> str | None:
+    """
+    Extrai uma data ISO (YYYY-MM-DD) do texto do período.
+    Aceita: dd/mm, dd/mm/aa, dd/mm/aaaa, yyyy-mm-dd.
+    Para dd/mm sem ano, assume o ano atual (Fortaleza).
+    """
+    import re
+
+    s = str(txt or "").strip()
+    if not s:
+        return None
+    m_iso = re.search(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)", s)
+    if m_iso:
+        yy, mm, dd = int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3))
+        if 1 <= mm <= 12 and 1 <= dd <= 31:
+            return f"{yy:04d}-{mm:02d}-{dd:02d}"
+        return None
+    m_br = re.search(r"(?<!\d)(\d{2})/(\d{2})(?:/(\d{2}|\d{4}))?(?!\d)", s)
+    if not m_br:
+        return None
+    dd, mm = int(m_br.group(1)), int(m_br.group(2))
+    yy_raw = m_br.group(3)
+    if yy_raw is None:
+        try:
+            from datetime import timedelta, timezone, datetime
+
+            tz = timezone(timedelta(hours=-3))
+            yy = int(datetime.now(tz).year)
+        except Exception:
+            return None
+    else:
+        yy = int(yy_raw)
+        if yy < 100:
+            yy = 2000 + yy
+    if not (1 <= mm <= 12 and 1 <= dd <= 31):
+        return None
+    return f"{yy:04d}-{mm:02d}-{dd:02d}"
+
+
+def _iso_to_br(iso_yyyy_mm_dd: str) -> str:
+    try:
+        yy, mm, dd = str(iso_yyyy_mm_dd).split("-")
+        return f"{dd}/{mm}/{yy}"
+    except Exception:
+        return str(iso_yyyy_mm_dd)
+
+
+def _iso_to_br(iso_yyyy_mm_dd: str) -> str:
+    try:
+        yy, mm, dd = iso_yyyy_mm_dd.split("-")
+        return f"{dd}/{mm}/{yy}"
+    except Exception:
+        return str(iso_yyyy_mm_dd)
+
+
 def _pdf_safe_text(s: object) -> str:
     """
     FPDF (Helvetica) não suporta unicode completo. Normaliza para ASCII/latin-1 seguro.
@@ -1594,37 +1649,91 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
             # Vincular bases auxiliares (Sala de Gestão) à análise salva:
             # evita ficar dependente do "cache da sessão" ao trocar a análise ativa.
             payload_to_save = dict(payload)
-            # Se for um "dia" específico, pode ser delta do dia: soma no acumulado salvo da análise ativa.
-            try:
-                do_acc_save = bool(st.session_state.get("upload_do_accumulate_on_save") is True)
-                has_day_save = _text_has_date_token(periodo_final)
-                active_id = st.session_state.get("active_analysis_id")
-                is_admin = str(user.get("role") or "").lower() == "admin"
-                if do_acc_save and has_day_save and active_id is not None:
-                    base_row = get_analysis(conn, int(active_id), owner_user_id=owner_id, include_all=is_admin)
-                    if base_row:
+            # Novo modelo robusto: quando o usuário informa data no período, isso vira a "chave do dia".
+            # O app salva um registro "delta do dia" e, em seguida, materializa o "acumulado até a data"
+            # somando todos os deltas (determinístico, sem heurística).
+            ref_date = _extract_ref_date_iso_from_periodo(periodo_final)
+            is_admin = str(user.get("role") or "").lower() == "admin"
+            if ref_date:
+                try:
+                    # 1) Salvar/atualizar DELTA do dia (idempotente por data)
+                    rows_scan = list_analyses(conn, limit=2000, owner_user_id=owner_id, include_all=is_admin)
+                    for rr in rows_scan:
                         try:
-                            base_payload = json.loads(base_row.payload_json)
+                            p0 = json.loads(getattr(rr, "payload_json", "") or "")
                         except Exception:
-                            base_payload = None
-                        if isinstance(base_payload, dict):
-                            bt0 = base_payload.get("totais") if isinstance(base_payload.get("totais"), dict) else {}
-                            dt0 = payload_to_save.get("totais") if isinstance(payload_to_save.get("totais"), dict) else {}
-                            base_f0 = _as_float(bt0.get("faturamento_total"))
-                            delta_f0 = _as_float(dt0.get("faturamento_total"))
-                            payload_to_save = _accumulate_payload(base_payload, payload_to_save)
-                            rt0 = payload_to_save.get("totais") if isinstance(payload_to_save.get("totais"), dict) else {}
-                            res_f0 = _as_float(rt0.get("faturamento_total"))
-                            st.session_state["_save_acc_diag"] = {
-                                "aplicou": True,
-                                "active_id": int(active_id),
-                                "periodo": str(periodo_final or ""),
-                                "base_faturamento_total": base_f0,
-                                "delta_faturamento_total": delta_f0,
-                                "resultado_faturamento_total": res_f0,
-                            }
-            except Exception:
-                pass
+                            continue
+                        if not isinstance(p0, dict):
+                            continue
+                        if str(p0.get("_kind") or "") != "daily_delta":
+                            continue
+                        if str(p0.get("ref_date") or "") != str(ref_date):
+                            continue
+                        # remove delta antigo do mesmo dia (substituição)
+                        try:
+                            delete_analysis(conn, int(getattr(rr, "id", 0) or 0), owner_user_id=owner_id, include_all=is_admin)
+                        except Exception:
+                            pass
+
+                    delta_payload = dict(payload_to_save)
+                    delta_payload["_kind"] = "daily_delta"
+                    delta_payload["ref_date"] = str(ref_date)
+                    delta_payload["periodo"] = str(periodo_final or _iso_to_br(ref_date))
+
+                    delta_id = save_analysis(
+                        conn,
+                        periodo=str(periodo_final or _iso_to_br(ref_date)),
+                        provider_used=str(meta.get("provider", "unknown")),
+                        model_used=str(meta.get("model", "unknown")),
+                        parent_analysis_id=None,
+                        owner_user_id=owner_id,
+                        payload=delta_payload,
+                        total_bonus=0.0,
+                    )
+
+                    # 2) Recalcular ACUMULADO até ref_date somando deltas <= ref_date
+                    rows_all = list_analyses(conn, limit=4000, owner_user_id=owner_id, include_all=is_admin)
+                    deltas: list[tuple[str, dict]] = []
+                    for rr in rows_all:
+                        try:
+                            p0 = json.loads(getattr(rr, "payload_json", "") or "")
+                        except Exception:
+                            continue
+                        if not isinstance(p0, dict):
+                            continue
+                        if str(p0.get("_kind") or "") != "daily_delta":
+                            continue
+                        rk = str(p0.get("ref_date") or "")
+                        if not rk or rk > str(ref_date):
+                            continue
+                        deltas.append((rk, p0))
+                    deltas.sort(key=lambda x: x[0])
+
+                    acc: dict = {"vendedores": [], "totais": {}}
+                    for _, dp in deltas:
+                        acc = _accumulate_payload(acc, dp)
+                    acc["periodo"] = f"Acumulado até {_iso_to_br(ref_date)}"
+                    acc["_ledger"] = {"through": str(ref_date), "n_deltas": int(len(deltas))}
+
+                    analysis_id = save_analysis(
+                        conn,
+                        periodo=str(acc.get("periodo") or f"Acumulado até {_iso_to_br(ref_date)}"),
+                        provider_used="ledger",
+                        model_used="ledger",
+                        parent_analysis_id=int(delta_id),
+                        owner_user_id=owner_id,
+                        payload=acc,
+                        total_bonus=0.0,
+                    )
+
+                    st.success(f"Delta do dia salvo (**#{delta_id}**) e acumulado materializado (**#{analysis_id}**).")
+                    st.session_state["active_analysis_id"] = analysis_id
+                    st.session_state["show_upload"] = False
+                    st.rerun()
+                except Exception as e:
+                    st.error("Não consegui salvar no modo acumulativo (ledger).")
+                    st.caption(str(e))
+                    return
             try:
                 daily_df = st.session_state.get("sg_daily_df")
                 daily_meta = st.session_state.get("sg_daily_meta") if isinstance(st.session_state.get("sg_daily_meta"), dict) else None
