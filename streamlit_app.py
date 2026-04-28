@@ -55,6 +55,34 @@ from src.app.calendar_utils import compute_calendar_info
 from src.app.budget_import import is_orcamento_workbook, parse_orcamentos, resolve_orcamentos_pend_fin_bytes
 
 
+def _parse_iso_dt(s: object):
+    try:
+        from datetime import datetime
+
+        txt = str(s or "").strip()
+        if not txt:
+            return None
+        txt = txt.replace("Z", "+00:00")
+        return datetime.fromisoformat(txt)
+    except Exception:
+        return None
+
+
+def _fmt_created_at_local(created_at: object) -> str:
+    """Formata timestamps para Fortaleza (UTC-03) como dd/mm/aaaa HH:MM."""
+    from datetime import timedelta, timezone
+
+    dt = _parse_iso_dt(created_at)
+    if dt is None:
+        return "—"
+    tz_fortaleza = timezone(timedelta(hours=-3))
+    if getattr(dt, "tzinfo", None) is None:
+        dt = dt.replace(tzinfo=tz_fortaleza)
+    else:
+        dt = dt.astimezone(tz_fortaleza)
+    return dt.strftime("%d/%m/%Y %H:%M")
+
+
 def _pdf_safe_text(s: object) -> str:
     """
     FPDF (Helvetica) não suporta unicode completo. Normaliza para ASCII/latin-1 seguro.
@@ -1708,7 +1736,7 @@ def page_evolution(settings, conn) -> None:
         hist.append(
             {
                 "id": int(r.id),
-                "created_at": str(r.created_at),
+                "created_at": _fmt_created_at_local(getattr(r, "created_at", None)),
                 "periodo": str(r.periodo),
                 "total_bonus": float(getattr(r, "total_bonus", 0.0) or 0.0),
             }
@@ -2410,14 +2438,24 @@ def page_projection(settings, conn) -> None:
             return None
 
     def _get_prev_analysis_row(current_row):
-        # Pega a análise imediatamente anterior na ordem (por created_at),
-        # mesmo que existam "buracos" por exclusões de IDs.
+        # Pega a análise anterior.
+        # Prioridade:
+        # - Se o `periodo` tiver dd/mm/aaaa, usa essa data para comparar (corrige casos em que
+        #   o servidor salva `created_at` em UTC e muda o "dia" da análise).
+        # - Senão, usa ordem por created_at como fallback.
         rows = list_analyses(conn, limit=200, owner_user_id=owner_id, include_all=is_admin)
         if not rows:
             return None
 
         cur_id = int(getattr(current_row, "id", 0) or 0)
         cur_dt = _parse_dt(getattr(current_row, "created_at", None))
+        try:
+            cur_date_key, _ = _extract_date_label_from_periodo(
+                str(getattr(current_row, "periodo", "") or ""),
+                str(getattr(current_row, "created_at", "") or ""),
+            )
+        except Exception:
+            cur_date_key = "0000-00-00"
 
         def _is_perf_row(rr) -> bool:
             try:
@@ -2430,6 +2468,42 @@ def page_projection(settings, conn) -> None:
             if kind.startswith("sala_gestao_"):
                 return False
             return bool(parse_sellers(payload_r))
+
+        # Se tiver uma data "real" no período (dd/mm/aaaa), pega a anterior por data_key.
+        if cur_date_key and cur_date_key != "0000-00-00":
+            best = None
+            best_key = None
+            best_dt = None
+            for rr in rows:
+                rid = int(getattr(rr, "id", 0) or 0)
+                if rid == cur_id:
+                    continue
+                if not _is_perf_row(rr):
+                    continue
+                try:
+                    rk, _ = _extract_date_label_from_periodo(
+                        str(getattr(rr, "periodo", "") or ""),
+                        str(getattr(rr, "created_at", "") or ""),
+                    )
+                except Exception:
+                    rk = "0000-00-00"
+                if not rk or rk == "0000-00-00" or rk >= cur_date_key:
+                    continue
+                rdt = _parse_dt(getattr(rr, "created_at", None))
+                if best_key is None or rk > best_key:
+                    best, best_key, best_dt = rr, rk, rdt
+                elif rk == best_key:
+                    # desempate: maior created_at (ou maior id se não parsear)
+                    if best_dt is None and rdt is not None:
+                        best, best_dt = rr, rdt
+                    elif best_dt is not None and rdt is not None and rdt > best_dt:
+                        best, best_dt = rr, rdt
+                    elif best_dt is None and rdt is None:
+                        bid = int(getattr(best, "id", 0) or 0) if best is not None else 0
+                        if rid > bid:
+                            best = rr
+            if best is not None:
+                return best
 
         if cur_dt is not None:
             best = None
@@ -3156,7 +3230,7 @@ def page_star(settings, conn) -> None:
         conn, r.nome, owner_user_id=owner_id, include_all=is_admin
     )
     if prior:
-        reg = str(prior.get("created_at") or "").replace("T", " ")[:16]
+        reg = _fmt_created_at_local(prior.get("created_at"))
         st.caption(
             f"Evolução: último feedback **salvo** deste vendedor — análise **{prior.get('analysis_id') or '—'}**, "
             f"período **{prior.get('periodo_analise') or '—'}** (registrado {reg or '—'}). "
@@ -3261,7 +3335,14 @@ def page_star(settings, conn) -> None:
         if not fb:
             st.caption("Nenhum feedback gerado ainda.")
         else:
-            st.dataframe(pd.DataFrame(fb)[["created_at", "seller_name", "provider_used", "model_used"]], use_container_width=True, hide_index=True)
+            fbd = pd.DataFrame(fb)
+            if not fbd.empty and "created_at" in fbd.columns:
+                fbd["created_at"] = fbd["created_at"].apply(_fmt_created_at_local)
+            st.dataframe(
+                fbd[["created_at", "seller_name", "provider_used", "model_used"]],
+                use_container_width=True,
+                hide_index=True,
+            )
 
 
 def page_history(settings, conn) -> None:
@@ -3291,7 +3372,10 @@ def page_history(settings, conn) -> None:
         if not rows_base:
             st.info("Sem histórico de vendedores neste usuário.")
         else:
-            options = {f"#{r.id} · {r.periodo} · {r.created_at} · R$ {r.total_bonus:,.2f}": r.id for r in rows_base}
+            options = {
+                f"#{r.id} · {r.periodo} · {_fmt_created_at_local(getattr(r, 'created_at', None))} · R$ {r.total_bonus:,.2f}": r.id
+                for r in rows_base
+            }
             selected = st.selectbox("Selecione uma análise", options=list(options.keys()), key="hist_base_pick")
             selected_id = int(options[selected])
 
@@ -3351,7 +3435,10 @@ def page_history(settings, conn) -> None:
             else:
                 st.info("Ainda não existe análise de **Orçamentos** salva.")
         else:
-            options2 = {f"#{r.id} · {r.periodo} · {r.created_at}": r.id for r in rows_orc}
+            options2 = {
+                f"#{r.id} · {r.periodo} · {_fmt_created_at_local(getattr(r, 'created_at', None))}": r.id
+                for r in rows_orc
+            }
             selected2 = st.selectbox("Selecione uma análise (Orçamentos)", options=list(options2.keys()), key="hist_orc_pick")
             selected_id2 = int(options2[selected2])
 

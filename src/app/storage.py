@@ -348,7 +348,17 @@ def backfill_owner_user_id(conn: Any, *, admin_user_id: int) -> None:
 
 
 def now_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%S")
+    """
+    Timestamp para histórico (created_at).
+
+    Importante: o app é usado com horário local de Fortaleza/CE.
+    Para não depender do timezone do servidor (que pode ser UTC),
+    gravamos com offset fixo -03:00 (sem DST).
+    """
+    from datetime import datetime, timedelta, timezone
+
+    tz = timezone(timedelta(hours=-3))
+    return datetime.now(tz).isoformat(timespec="seconds")
 
 
 def save_analysis(
