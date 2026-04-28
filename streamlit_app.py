@@ -7471,6 +7471,8 @@ def page_orcamentos(settings, conn) -> None:
     _orc_section_header("Volume total (filtro atual)", "Soma pendentes + finalizados", pill="Σ", accent="#a78bfa")
     df_all_scope = pd.concat([x for x in (dfp, dff) if x is not None and len(x)], ignore_index=True) if (len(dfp) or len(dff)) else pd.DataFrame()
     q_pf, v_pf, q_pj, v_pj = _tipo_stats(df_all_scope)
+    ticket_pf = (v_pf / float(q_pf)) if q_pf else 0.0
+    ticket_pj = (v_pj / float(q_pj)) if q_pj else 0.0
     gt1, gt2, gt3, gt4 = st.columns(4)
     with gt1:
         _orc_modern_kpi(
@@ -7494,7 +7496,7 @@ def page_orcamentos(settings, conn) -> None:
             f"{q_pf} ({_pct_part(q_pf, tot_q_scope)})",
             icon="👤",
             accent="#93c5fd",
-            subtitle=f"R$ {v_pf:,.2f} ({_pct_part(v_pf, tot_v_scope)}) do valor total",
+            subtitle=f"R$ {v_pf:,.2f} ({_pct_part(v_pf, tot_v_scope)}) · Ticket médio: R$ {ticket_pf:,.2f}",
         )
     with gt4:
         _orc_modern_kpi(
@@ -7502,7 +7504,7 @@ def page_orcamentos(settings, conn) -> None:
             f"{q_pj} ({_pct_part(q_pj, tot_q_scope)})",
             icon="🏢",
             accent="#6EE7B7",
-            subtitle=f"R$ {v_pj:,.2f} ({_pct_part(v_pj, tot_v_scope)}) do valor total",
+            subtitle=f"R$ {v_pj:,.2f} ({_pct_part(v_pj, tot_v_scope)}) · Ticket médio: R$ {ticket_pj:,.2f}",
         )
 
     _orc_section_header("Conversão", "Pendente → finalizado (por cruzamento do nº Orçamento)", pill="Histórico", accent="#FBBF24")
