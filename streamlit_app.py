@@ -88,6 +88,11 @@ def _norm_person_name(s: object) -> str:
     import unicodedata
 
     txt = str(s or "").strip().lower()
+    # remove sufixos tipo "(2)" comuns em exports
+    txt = txt.replace("_", " ")
+    txt = re.sub(r"\(\s*\d+\s*\)", "", txt).strip()
+    # remove sujeiras comuns que podem aparecer junto do nome
+    txt = re.sub(r"r\$\s*[\d\.,]+", "", txt, flags=re.IGNORECASE).strip()
     txt = unicodedata.normalize("NFKD", txt)
     txt = "".join(ch for ch in txt if not unicodedata.combining(ch))
     txt = re.sub(r"[^a-z0-9\\s]+", " ", txt)
@@ -1149,12 +1154,31 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                                 except Exception:
                                     base_payload = None
                                 if isinstance(base_payload, dict):
-                                    # Heurística: se o novo faturamento_total vier "menor" que o atual, trate como delta diário.
+                                    # Heurística robusta:
+                                    # - Se o upload parece "delta do dia" (menor que o acumulado atual), acumula.
+                                    # - Se não houver totais, tenta pela soma de faturamento por vendedor.
                                     bt = base_payload.get("totais") if isinstance(base_payload.get("totais"), dict) else {}
                                     dt = res.payload.get("totais") if isinstance(res.payload.get("totais"), dict) else {}
                                     base_f = _as_float(bt.get("faturamento_total"))
                                     delta_f = _as_float(dt.get("faturamento_total"))
-                                    if delta_f is not None and (base_f is None or delta_f <= base_f):
+                                    should_acc = False
+                                    if delta_f is not None:
+                                        should_acc = (base_f is None) or (delta_f <= base_f)
+                                    else:
+                                        try:
+                                            bsum = 0.0
+                                            dsum = 0.0
+                                            for vv in (base_payload.get("vendedores") or []):
+                                                if isinstance(vv, dict):
+                                                    bsum += float(_as_float(vv.get("faturamento")) or 0.0)
+                                            for vv in (res.payload.get("vendedores") or []):
+                                                if isinstance(vv, dict):
+                                                    dsum += float(_as_float(vv.get("faturamento")) or 0.0)
+                                            if dsum > 0:
+                                                should_acc = (bsum <= 0) or (dsum <= bsum)
+                                        except Exception:
+                                            should_acc = False
+                                    if should_acc:
                                         res.payload = _accumulate_payload(base_payload, res.payload)
                     except Exception:
                         pass
