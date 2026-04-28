@@ -7899,6 +7899,70 @@ def main() -> None:
                             )
                         except Exception as e:
                             st.caption(f"Não foi possível gerar o backup agora: {e}")
+
+            with st.expander("🧾 Histórico completo (listar/apagar)", expanded=False):
+                st.caption("Mostra tudo que existe no banco atual (inclui registros auxiliares com `_kind`).")
+                user = st.session_state.get("user") or {}
+                owner_id = int(user.get("id") or 0) or None
+                is_admin = str(user.get("role") or "").lower() == "admin"
+
+                show_all = st.checkbox("Mostrar tudo (todos os usuários)", value=True, key="adm_hist_show_all")
+                include_aux = st.checkbox("Incluir auxiliares (_kind)", value=True, key="adm_hist_include_aux")
+                limit = st.number_input("Limite", min_value=50, max_value=5000, value=500, step=50, key="adm_hist_limit")
+
+                rows = list_analyses(conn, limit=int(limit), owner_user_id=(None if show_all else owner_id), include_all=bool(show_all))
+                out_rows: list[dict] = []
+                for r in rows:
+                    try:
+                        p0 = json.loads(getattr(r, "payload_json", "") or "")
+                    except Exception:
+                        p0 = None
+                    kind = p0.get("_kind") if isinstance(p0, dict) else None
+                    if (not include_aux) and kind:
+                        continue
+                    out_rows.append(
+                        {
+                            "id": int(getattr(r, "id", 0) or 0),
+                            "created_at": _fmt_created_at_local(getattr(r, "created_at", None)),
+                            "periodo": str(getattr(r, "periodo", "")),
+                            "kind": str(kind or ""),
+                            "owner_user_id": int(getattr(r, "owner_user_id", 0) or 0) if getattr(r, "owner_user_id", None) is not None else None,
+                            "provider": str(getattr(r, "provider_used", "")),
+                            "model": str(getattr(r, "model_used", "")),
+                            "total_bonus": float(getattr(r, "total_bonus", 0.0) or 0.0),
+                        }
+                    )
+                df_hist_all = pd.DataFrame(out_rows)
+                st.dataframe(df_hist_all, use_container_width=True, hide_index=True)
+
+                st.markdown("**Apagar por ID (permanente)**")
+                ids_txt = st.text_input("IDs (separados por vírgula)", value="", key="adm_hist_delete_ids")
+                confirm = st.text_input("Digite APAGAR para confirmar", value="", key="adm_hist_delete_confirm")
+                if st.button("🗑️ Apagar IDs", use_container_width=True, key="adm_hist_delete_btn"):
+                    if str(confirm).strip().upper() != "APAGAR":
+                        st.error("Confirmação inválida. Digite APAGAR.")
+                    else:
+                        ids: list[int] = []
+                        for part in str(ids_txt).replace(";", ",").split(","):
+                            part = part.strip()
+                            if not part:
+                                continue
+                            try:
+                                ids.append(int(part))
+                            except Exception:
+                                pass
+                        if not ids:
+                            st.error("Nenhum ID válido.")
+                        else:
+                            ok = 0
+                            for i in ids:
+                                try:
+                                    delete_analysis(conn, int(i), owner_user_id=None if show_all else owner_id, include_all=bool(show_all))
+                                    ok += 1
+                                except Exception:
+                                    pass
+                            st.success(f"Apagadas: {ok} / {len(ids)}. Recarregue para atualizar a lista.")
+                            st.rerun()
             with st.expander("Convites (cadastro)", expanded=False):
                 c1, c2 = st.columns([1, 1])
                 with c1:
