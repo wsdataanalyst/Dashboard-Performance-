@@ -1070,6 +1070,22 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
     with right:
         st.caption("Dica: algo como `Abril/2026` ou `Abril (até 15/04)`.")
 
+    # Controle explícito de acúmulo diário (aplica no momento de salvar).
+    try:
+        import re as _re
+
+        has_day_in_periodo = bool(_re.search(r"(?<!\d)\d{2}/\d{2}/\d{4}(?!\d)", str(periodo or "").strip()))
+    except Exception:
+        has_day_in_periodo = False
+    active_id_for_acc = st.session_state.get("active_analysis_id")
+    if has_day_in_periodo and active_id_for_acc is not None:
+        st.checkbox(
+            "Somar este período no acumulado da análise ativa ao salvar (delta do dia)",
+            value=True,
+            key="upload_do_accumulate_on_save",
+            help="Marque quando você está importando apenas o resultado do dia (ex.: 27/04/2026) e quer somar no acumulado já existente no histórico.",
+        )
+
     st.markdown("### 📄 Importar Excel (mais confiável que OCR)")
     excel_files = st.file_uploader(
         "Envie os **7 arquivos de performance** e, se quiser, **+2 de orçamentos** (pendentes e finalizados) **no mesmo lote** — até **9** arquivos. "
@@ -1569,6 +1585,39 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
             # Vincular bases auxiliares (Sala de Gestão) à análise salva:
             # evita ficar dependente do "cache da sessão" ao trocar a análise ativa.
             payload_to_save = dict(payload)
+            # Se for um "dia" específico, pode ser delta do dia: soma no acumulado salvo da análise ativa.
+            try:
+                import re as _re
+
+                do_acc_save = bool(st.session_state.get("upload_do_accumulate_on_save") is True)
+                has_day_save = bool(_re.search(r"(?<!\d)\d{2}/\d{2}/\d{4}(?!\d)", str(periodo_final or "").strip()))
+                active_id = st.session_state.get("active_analysis_id")
+                is_admin = str(user.get("role") or "").lower() == "admin"
+                if do_acc_save and has_day_save and active_id is not None:
+                    base_row = get_analysis(conn, int(active_id), owner_user_id=owner_id, include_all=is_admin)
+                    if base_row:
+                        try:
+                            base_payload = json.loads(base_row.payload_json)
+                        except Exception:
+                            base_payload = None
+                        if isinstance(base_payload, dict):
+                            bt0 = base_payload.get("totais") if isinstance(base_payload.get("totais"), dict) else {}
+                            dt0 = payload_to_save.get("totais") if isinstance(payload_to_save.get("totais"), dict) else {}
+                            base_f0 = _as_float(bt0.get("faturamento_total"))
+                            delta_f0 = _as_float(dt0.get("faturamento_total"))
+                            payload_to_save = _accumulate_payload(base_payload, payload_to_save)
+                            rt0 = payload_to_save.get("totais") if isinstance(payload_to_save.get("totais"), dict) else {}
+                            res_f0 = _as_float(rt0.get("faturamento_total"))
+                            st.session_state["_save_acc_diag"] = {
+                                "aplicou": True,
+                                "active_id": int(active_id),
+                                "periodo": str(periodo_final or ""),
+                                "base_faturamento_total": base_f0,
+                                "delta_faturamento_total": delta_f0,
+                                "resultado_faturamento_total": res_f0,
+                            }
+            except Exception:
+                pass
             try:
                 daily_df = st.session_state.get("sg_daily_df")
                 daily_meta = st.session_state.get("sg_daily_meta") if isinstance(st.session_state.get("sg_daily_meta"), dict) else None
@@ -1623,6 +1672,19 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                 )
 
             st.success(f"Análise salva com ID **{analysis_id}**.")
+            diag2 = st.session_state.get("_save_acc_diag")
+            if isinstance(diag2, dict) and diag2.get("aplicou"):
+                try:
+                    bf = diag2.get("base_faturamento_total")
+                    df0 = diag2.get("delta_faturamento_total")
+                    rf = diag2.get("resultado_faturamento_total")
+                    st.caption(
+                        f"Acúmulo aplicado ao salvar — base: {('R$ ' + format(float(bf), ',.2f')) if bf is not None else '—'} · "
+                        f"delta: {('R$ ' + format(float(df0), ',.2f')) if df0 is not None else '—'} · "
+                        f"resultado: {('R$ ' + format(float(rf), ',.2f')) if rf is not None else '—'}"
+                    )
+                except Exception:
+                    pass
             st.session_state["active_analysis_id"] = analysis_id
             # Se o upload estiver embutido no topo, fecha o expander para voltar à visão
             st.session_state["show_upload"] = False
