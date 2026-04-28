@@ -6646,21 +6646,31 @@ def page_orcamentos(settings, conn) -> None:
             unsafe_allow_html=True,
         )
 
-    def _render_faixa_card(fx: str, tot_q: int, tot_v: float, by_tipo: dict[str, tuple[int, float]]) -> None:
+    def _render_faixa_card(
+        fx: str,
+        tot_q: int,
+        tot_v: float,
+        *,
+        pct_q_scope: float,
+        pct_v_scope: float,
+        by_tipo: dict[str, tuple[int, float, float, float]],
+    ) -> None:
+        """by_tipo: tipo -> (qtd, valor, %q global, %v global)."""
         pills = []
         for tk in ("F", "J", ""):
             if tk not in by_tipo:
                 continue
-            qq, vv = by_tipo[tk]
+            qq, vv, pq, pv = by_tipo[tk]
             lab = tk if tk else "—"
             pills.append(
                 f'<span class="dp-pill" style="background:rgba(255,255,255,.03);border-color:rgba(255,255,255,.10);">'
-                f"<b>{html.escape(lab)}</b> · {qq} orç. · <b>R$ {vv:,.2f}</b></span>"
+                f"<b>{html.escape(lab)}</b> · {qq} orç. ({pq:.1f}% qtd) · "
+                f"<b>R$ {vv:,.2f}</b> ({pv:.1f}% valor)</span>"
             )
         pills_html = " ".join(pills) if pills else '<span style="color:#64748b;font-size:0.82rem;">Sem tipo</span>'
         st.markdown(
             f"""
-<div class="dp-card" style="padding:14px 14px;min-height:168px;display:flex;flex-direction:column;justify-content:space-between;">
+<div class="dp-card" style="padding:14px 14px;min-height:188px;display:flex;flex-direction:column;justify-content:space-between;">
   <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
     <div>
       <div style="color:#94A3B8;font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:800;">Faixa de valor</div>
@@ -6668,8 +6678,8 @@ def page_orcamentos(settings, conn) -> None:
     </div>
     <div style="width:28px;height:28px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);font-size:0.95rem;color:#C4B5FD;">◫</div>
   </div>
-  <div class="dp-kpi-value" style="font-size:1.25rem;color:#93c5fd;">R$ {tot_v:,.2f}</div>
-  <div style="margin-top:6px;color:#94a3b8;font-size:0.84rem;font-weight:650;">{tot_q} orçamento(s) nesta faixa</div>
+  <div class="dp-kpi-value" style="font-size:1.25rem;color:#93c5fd;">R$ {tot_v:,.2f} <span style="font-size:0.82rem;color:#94a3b8;font-weight:700;">({pct_v_scope:.1f}% do valor total)</span></div>
+  <div style="margin-top:6px;color:#94a3b8;font-size:0.84rem;font-weight:650;">{tot_q} orç. · <b>{pct_q_scope:.1f}%</b> das quantidades no escopo</div>
   <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">{pills_html}</div>
 </div>
 """,
@@ -6758,10 +6768,30 @@ def page_orcamentos(settings, conn) -> None:
         s = s.replace("nan", "")
         return int(s.ne("").sum())
 
+    def _norm_orc_df(df: pd.DataFrame) -> pd.DataFrame:
+        """Prepara colunas de faixa e tipo para agrupamentos."""
+        if df is None or len(df) == 0:
+            return pd.DataFrame()
+        out = df.copy()
+        out["_valor_num"] = pd.to_numeric(out.get("_valor"), errors="coerce").fillna(0.0)
+        out["faixa"] = out["_valor_num"].apply(lambda x: _faixa(float(x or 0.0)))
+        if "_tipo_cliente" in out.columns:
+            out["tipo"] = out["_tipo_cliente"].astype(str).str.upper().replace({"PF": "F", "PJ": "J"})
+        else:
+            out["tipo"] = ""
+        return out
+
     pend_q = _count_orc(dfp)
     pend_v = _sum_val(dfp)
     fin_q = _count_orc(dff)
     fin_v = _sum_val(dff)
+    tot_q_scope = int(pend_q + fin_q)
+    tot_v_scope = float(pend_v + fin_v)
+
+    def _pct_part(n: float, d: float) -> str:
+        if d and d > 0:
+            return f"{100.0 * float(n) / float(d):.1f}%"
+        return "—"
 
     periodo_lbl = str(getattr(row, "periodo", "") or "").strip()
     if periodo_lbl:
@@ -6770,13 +6800,56 @@ def page_orcamentos(settings, conn) -> None:
     _orc_section_header("Resumo executivo", "Orçamentos no escopo atual", pill="Pend × Fin", accent="#93c5fd")
     k1, k2, k3, k4 = st.columns(4)
     with k1:
-        _orc_modern_kpi("Pendentes (qtd)", str(pend_q), icon="📋", accent="#93c5fd", subtitle="linhas no arquivo filtrado")
+        _orc_modern_kpi(
+            "Pendentes (qtd)",
+            str(pend_q),
+            icon="📋",
+            accent="#93c5fd",
+            subtitle=f"{_pct_part(pend_q, tot_q_scope)} do total de orçamentos · linhas filtradas",
+        )
     with k2:
-        _orc_modern_kpi("Pendentes (valor)", f"R$ {pend_v:,.2f}", icon="💰", accent="#FBBF24")
+        _orc_modern_kpi(
+            "Pendentes (valor)",
+            f"R$ {pend_v:,.2f}",
+            icon="💰",
+            accent="#FBBF24",
+            subtitle=f"{_pct_part(pend_v, tot_v_scope)} do valor total (pend+fin)",
+        )
     with k3:
-        _orc_modern_kpi("Finalizados (qtd)", str(fin_q), icon="✅", accent="#6EE7B7")
+        _orc_modern_kpi(
+            "Finalizados (qtd)",
+            str(fin_q),
+            icon="✅",
+            accent="#6EE7B7",
+            subtitle=f"{_pct_part(fin_q, tot_q_scope)} do total de orçamentos",
+        )
     with k4:
-        _orc_modern_kpi("Finalizados (valor)", f"R$ {fin_v:,.2f}", icon="📈", accent="#C4B5FD")
+        _orc_modern_kpi(
+            "Finalizados (valor)",
+            f"R$ {fin_v:,.2f}",
+            icon="📈",
+            accent="#C4B5FD",
+            subtitle=f"{_pct_part(fin_v, tot_v_scope)} do valor total (pend+fin)",
+        )
+
+    _orc_section_header("Volume total (filtro atual)", "Soma pendentes + finalizados", pill="Σ", accent="#a78bfa")
+    gt1, gt2 = st.columns(2)
+    with gt1:
+        _orc_modern_kpi(
+            "Total orçamentos (qtd)",
+            str(tot_q_scope),
+            icon="➕",
+            accent="#e9d5ff",
+            subtitle="pendentes + finalizados no escopo (100% da base deste bloco)",
+        )
+    with gt2:
+        _orc_modern_kpi(
+            "Total valores (R$)",
+            f"R$ {tot_v_scope:,.2f}",
+            icon="💎",
+            accent="#fcd34d",
+            subtitle="soma dos valores nos dois arquivos (mesmos filtros)",
+        )
 
     _orc_section_header("Conversão", "Pendente → finalizado (por cruzamento do nº Orçamento)", pill="Histórico", accent="#FBBF24")
     st.caption(
@@ -6830,31 +6903,33 @@ def page_orcamentos(settings, conn) -> None:
     except Exception:
         pct_conv = None
 
-    base_fin = dff.copy()
-    conv_note = ""
-    if conv_ids and "_orcamento" in base_fin.columns:
-        base_fin = base_fin[base_fin["_orcamento"].astype(str).str.strip().isin(conv_ids)].copy()
-        conv_note = "**Somente convertidos** (pendentes da análise anterior que apareceram como finalizados agora)."
-    else:
-        conv_note = "**Finalizados desta importação** — não há análise anterior comparável ou não houve interseção."
-
-    base_fin["_valor_num"] = pd.to_numeric(base_fin.get("_valor"), errors="coerce").fillna(0.0)
-    base_fin["faixa"] = base_fin["_valor_num"].apply(lambda x: _faixa(float(x or 0.0)))
-    base_fin["tipo"] = base_fin.get("_tipo_cliente", "").astype(str).str.upper().replace({"PF": "F", "PJ": "J"})
-
-    conv_plain = conv_note.replace("**", "")
     cnv1, cnv2, cnv3 = st.columns(3)
+    conv_val_hint = (
+        "Somatório na base de pendentes (análise anterior), só nos nº convertidos."
+        if conv_ids
+        else "Sem cruzamento pendente→finalizado com a análise anterior."
+    )
     with cnv1:
+        sub_cq = (
+            f"{100.0 * len(conv_ids) / float(prev_pend_q_scope):.1f}% dos {prev_pend_q_scope} pendente(s) na análise anterior"
+            if prev_pend_q_scope and conv_ids
+            else ("Sem base anterior para %" if not prev_pend_q_scope else "Nenhum convertido neste cruzamento")
+        )
         _orc_modern_kpi(
             "Convertidos (qtd)",
             str(len(conv_ids)),
             icon="✅",
             accent="#34d399",
-            subtitle="interseção pendente→finalizado",
+            subtitle=sub_cq,
         )
     with cnv2:
-        sub_v = conv_plain[:96] + "…" if len(conv_plain) > 96 else conv_plain
-        _orc_modern_kpi("Convertidos (valor)", f"R$ {conv_val:,.2f}", icon="🏷", accent="#FBBF24", subtitle=sub_v)
+        _orc_modern_kpi(
+            "Convertidos (valor)",
+            f"R$ {conv_val:,.2f}",
+            icon="🏷",
+            accent="#FBBF24",
+            subtitle=conv_val_hint[:140] + ("…" if len(conv_val_hint) > 140 else ""),
+        )
     with cnv3:
         pct_txt = f"{pct_conv:.1f}%" if pct_conv is not None else "—"
         sub_pct = (
@@ -6864,19 +6939,51 @@ def page_orcamentos(settings, conn) -> None:
         )
         _orc_modern_kpi("Taxa de conversão", pct_txt, icon="🔁", accent="#C4B5FD", subtitle=sub_pct)
 
+    faixa_fonte = st.radio(
+        "Base das faixas",
+        options=[
+            "Todos (pendentes + finalizados)",
+            "Apenas pendentes",
+            "Apenas finalizados",
+        ],
+        horizontal=True,
+        key="orc_faixa_fonte",
+        help="Altera o conjunto de linhas usado nos cards de faixa e nos percentuais de representatividade.",
+    )
+
+    if str(faixa_fonte).startswith("Todos"):
+        _fx_parts: list[pd.DataFrame] = []
+        if len(dfp):
+            _fx_parts.append(dfp)
+        if len(dff):
+            _fx_parts.append(dff)
+        df_faixas = _norm_orc_df(pd.concat(_fx_parts, ignore_index=True)) if _fx_parts else pd.DataFrame()
+        faixa_caption = (
+            "Faixas sobre **pendentes e finalizados** somados (linhas dos dois arquivos no filtro). "
+            "Os % são sobre o total deste conjunto."
+        )
+    elif str(faixa_fonte).startswith("Apenas pend"):
+        df_faixas = _norm_orc_df(dfp)
+        faixa_caption = "Faixas só no arquivo de **pendentes**. Percentuais sobre o total de pendentes filtrados."
+    else:
+        df_faixas = _norm_orc_df(dff)
+        faixa_caption = "Faixas só no arquivo de **finalizados**. Percentuais sobre o total de finalizados filtrados."
+
     _orc_section_header("Faixas de valor", "Distribuição por faixa e tipo F/J", pill="Cards", accent="#6EE7B7")
-    st.caption(conv_note)
+    st.caption(faixa_caption)
 
     g_fx = (
-        base_fin.groupby(["faixa", "tipo"], as_index=False)
+        df_faixas.groupby(["faixa", "tipo"], as_index=False)
         .agg(qtd=("_orcamento", "count"), valor=("_valor_num", "sum"))
-        if len(base_fin)
+        if len(df_faixas)
         else pd.DataFrame(columns=["faixa", "tipo", "qtd", "valor"])
     )
+    grand_q_fx = int(g_fx["qtd"].sum()) if len(g_fx) else 0
+    grand_v_fx = float(g_fx["valor"].sum()) if len(g_fx) else 0.0
     faixas_sorted = sorted({str(x) for x in g_fx["faixa"].unique()}, key=_faixa_rank) if len(g_fx) else []
 
     if not faixas_sorted:
-        st.info("Sem dados de finalizados para montar faixas no escopo atual.")
+        st.info("Sem dados para montar faixas neste escopo — ajuste filtros ou troque a base acima (pendentes/finalizados).")
     else:
         cols_per_row = 3
         for i in range(0, len(faixas_sorted), cols_per_row):
@@ -6884,16 +6991,29 @@ def page_orcamentos(settings, conn) -> None:
             cols = st.columns(len(chunk))
             for j, fx in enumerate(chunk):
                 sub = g_fx[g_fx["faixa"].astype(str) == fx]
-                by_tipo: dict[str, tuple[int, float]] = {}
-                tot_q = int(sub["qtd"].sum())
-                tot_v = float(sub["valor"].sum())
+                tot_q_f = int(sub["qtd"].sum())
+                tot_v_f = float(sub["valor"].sum())
+                pq_scope = (100.0 * tot_q_f / grand_q_fx) if grand_q_fx else 0.0
+                pv_scope = (100.0 * tot_v_f / grand_v_fx) if grand_v_fx else 0.0
+                by_tipo: dict[str, tuple[int, float, float, float]] = {}
                 for _, rr in sub.iterrows():
                     tk = str(rr.get("tipo") or "").strip().upper()
                     if tk not in {"F", "J"}:
                         tk = ""
-                    by_tipo[tk] = (int(rr["qtd"]), float(rr["valor"]))
+                    qq = int(rr["qtd"])
+                    vv = float(rr["valor"])
+                    pq = (100.0 * qq / grand_q_fx) if grand_q_fx else 0.0
+                    pv = (100.0 * vv / grand_v_fx) if grand_v_fx else 0.0
+                    by_tipo[tk] = (qq, vv, pq, pv)
                 with cols[j]:
-                    _render_faixa_card(fx, tot_q, tot_v, by_tipo)
+                    _render_faixa_card(
+                        fx,
+                        tot_q_f,
+                        tot_v_f,
+                        pct_q_scope=pq_scope,
+                        pct_v_scope=pv_scope,
+                        by_tipo=by_tipo,
+                    )
 
     with st.expander("Tabelas detalhadas (setor / consultor / busca)", expanded=False):
         tab1, tab2, tab3 = st.tabs(["Setor", "Consultor", "Busca"])
@@ -6905,8 +7025,8 @@ def page_orcamentos(settings, conn) -> None:
                 st.caption("Sem linhas.")
         with tab2:
             st.markdown("### Consultor (por faixa e tipo)")
-            if "_consultor" in base_fin.columns:
-                g2 = base_fin.groupby(["_consultor", "faixa", "tipo"], as_index=False).agg(
+            if "_consultor" in df_faixas.columns:
+                g2 = df_faixas.groupby(["_consultor", "faixa", "tipo"], as_index=False).agg(
                     qtd=("_orcamento", "count"), valor=("_valor_num", "sum")
                 )
                 st.dataframe(g2.sort_values(["_consultor", "faixa", "tipo"]), use_container_width=True, hide_index=True)
