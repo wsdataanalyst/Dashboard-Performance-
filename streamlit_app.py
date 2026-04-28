@@ -83,6 +83,127 @@ def _fmt_created_at_local(created_at: object) -> str:
     return dt.strftime("%d/%m/%Y %H:%M")
 
 
+def _norm_person_name(s: object) -> str:
+    import re
+    import unicodedata
+
+    txt = str(s or "").strip().lower()
+    txt = unicodedata.normalize("NFKD", txt)
+    txt = "".join(ch for ch in txt if not unicodedata.combining(ch))
+    txt = re.sub(r"[^a-z0-9\\s]+", " ", txt)
+    txt = re.sub(r"\\s{2,}", " ", txt).strip()
+    return txt
+
+
+def _as_float(x: object) -> float | None:
+    try:
+        if x is None:
+            return None
+        v = float(x)
+        if pd.isna(v):
+            return None
+        return v
+    except Exception:
+        return None
+
+
+def _as_int(x: object) -> int | None:
+    try:
+        if x is None:
+            return None
+        v = int(float(x))
+        return v
+    except Exception:
+        return None
+
+
+def _accumulate_payload(base_payload: dict, delta_payload: dict) -> dict:
+    """
+    Soma campos numéricos (dia -> acumulado) preservando percentuais/metas.
+    Usado quando o usuário envia apenas o resultado de um dia (ex.: 27/04) e quer
+    somar no acumulado já existente.
+    """
+    out = dict(base_payload or {})
+    base_v = out.get("vendedores") if isinstance(out.get("vendedores"), list) else []
+    delta_v = delta_payload.get("vendedores") if isinstance(delta_payload.get("vendedores"), list) else []
+
+    by_name: dict[str, dict] = {}
+    for it in base_v:
+        if isinstance(it, dict) and it.get("nome"):
+            by_name[_norm_person_name(it.get("nome"))] = dict(it)
+
+    numeric_sum_fields = {
+        "faturamento",
+        "qtd_faturadas",
+        "chamadas",
+        "iniciados",
+        "recebidos",
+        "finalizados",
+        "desconto_valor",
+        "qtd_desconto",
+    }
+    numeric_max_fields = {
+        "meta_faturamento",
+        "alcance_pct",
+        "alcance_projetado_pct",
+        "margem_pct",
+        "prazo_medio",
+        "tme_minutos",
+        "desconto_pct",
+        "qtd_desconto_pct",
+        "interacoes",
+    }
+
+    for it in delta_v:
+        if not isinstance(it, dict):
+            continue
+        nm = _norm_person_name(it.get("nome"))
+        if not nm:
+            continue
+        cur = by_name.get(nm) or {"nome": it.get("nome")}
+        # soma (acumulável)
+        for k in numeric_sum_fields:
+            dv = _as_float(it.get(k))
+            if dv is None:
+                continue
+            cv = _as_float(cur.get(k)) or 0.0
+            cur[k] = float(cv) + float(dv)
+        # preserva/atualiza por "melhor esforço" (não soma %)
+        for k in numeric_max_fields:
+            if it.get(k) is None:
+                continue
+            # meta_faturamento: manter a maior
+            if k in {"meta_faturamento"}:
+                cv = _as_float(cur.get(k))
+                dv = _as_float(it.get(k))
+                if dv is not None and (cv is None or dv >= cv):
+                    cur[k] = dv
+                continue
+            # demais: se não existe, preenche; senão mantém o existente (evita trocar % acumulada por % do dia)
+            if cur.get(k) is None:
+                cur[k] = it.get(k)
+        by_name[nm] = cur
+
+    out["vendedores"] = list(by_name.values())
+
+    # Totais do time: soma faturamento_total e preserva meta_total (meta não é diária).
+    bt = out.get("totais") if isinstance(out.get("totais"), dict) else {}
+    dt = delta_payload.get("totais") if isinstance(delta_payload.get("totais"), dict) else {}
+    bt = dict(bt) if isinstance(bt, dict) else {}
+    fat_b = _as_float(bt.get("faturamento_total")) or 0.0
+    fat_d = _as_float(dt.get("faturamento_total")) or 0.0
+    if fat_d:
+        bt["faturamento_total"] = float(fat_b) + float(fat_d)
+    # meta_total: se delta tiver meta_total e base não, usa; se base já tem, preserva
+    if bt.get("meta_total") in (None, 0, 0.0):
+        mt = _as_float(dt.get("meta_total"))
+        if mt is not None and mt > 0:
+            bt["meta_total"] = float(mt)
+    if bt:
+        out["totais"] = bt
+    return out
+
+
 def _pdf_safe_text(s: object) -> str:
     """
     FPDF (Helvetica) não suporta unicode completo. Normaliza para ASCII/latin-1 seguro.
@@ -1008,6 +1129,35 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
 
                     # 2) Importa Performance SOMENTE com arquivos de vendedores (prints 1–5)
                     res = import_5_files_to_payload(perf_files)
+
+                    # 2.1) Se o usuário estiver importando apenas o resultado de um dia (ex.: 27/04/2026),
+                    # some no acumulado da análise ativa para atualizar KPIs e médias.
+                    try:
+                        import re as _re
+
+                        ptxt = str(periodo or "").strip()
+                        has_day = bool(_re.search(r"(?<!\\d)\\d{2}/\\d{2}/\\d{4}(?!\\d)", ptxt))
+                        user = st.session_state.get("user") or {}
+                        owner_id = int(user.get("id") or 0) or None
+                        is_admin = str(user.get("role") or "").lower() == "admin"
+                        active_id = st.session_state.get("active_analysis_id")
+                        if has_day and active_id is not None and isinstance(res.payload, dict):
+                            base_row = get_analysis(conn, int(active_id), owner_user_id=owner_id, include_all=is_admin)
+                            if base_row:
+                                try:
+                                    base_payload = json.loads(base_row.payload_json)
+                                except Exception:
+                                    base_payload = None
+                                if isinstance(base_payload, dict):
+                                    # Heurística: se o novo faturamento_total vier "menor" que o atual, trate como delta diário.
+                                    bt = base_payload.get("totais") if isinstance(base_payload.get("totais"), dict) else {}
+                                    dt = res.payload.get("totais") if isinstance(res.payload.get("totais"), dict) else {}
+                                    base_f = _as_float(bt.get("faturamento_total"))
+                                    delta_f = _as_float(dt.get("faturamento_total"))
+                                    if delta_f is not None and (base_f is None or delta_f <= base_f):
+                                        res.payload = _accumulate_payload(base_payload, res.payload)
+                    except Exception:
+                        pass
 
                     # 3) Cache: departamentos (apenas arquivos classificados como dept)
                     if dept_files:
