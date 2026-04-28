@@ -6463,7 +6463,10 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
 
 
 def page_orcamentos(settings, conn) -> None:
-    render_header("Orçamento x Conversão", "Pendentes vs Finalizados, conversão por faixa e tipo de cliente.")
+    render_header(
+        "Orçamento x Conversão",
+        "Visão do time ou por consultor — cards no estilo Projeção/Simulação, com faixas de valor e tipo F/J.",
+    )
 
     user = st.session_state.get("user") or {}
     owner_id = int(user.get("id") or 0) or None
@@ -6502,6 +6505,130 @@ def page_orcamentos(settings, conn) -> None:
     df_p = pd.DataFrame(pend_rows)
     df_f = pd.DataFrame(fin_rows)
 
+    _FAIXA_ORDER = [
+        "0,00–500",
+        "500,01–1000",
+        "1001,01–2000",
+        "2000,01–5000",
+        "5000,01–10000",
+        "10000,01–30000",
+        "30000,01+",
+    ]
+
+    def _faixa(v: float) -> str:
+        if v <= 500:
+            return "0,00–500"
+        if v <= 1000:
+            return "500,01–1000"
+        if v <= 2000:
+            return "1001,01–2000"
+        if v <= 5000:
+            return "2000,01–5000"
+        if v <= 10000:
+            return "5000,01–10000"
+        if v <= 30000:
+            return "10000,01–30000"
+        return "30000,01+"
+
+    def _faixa_rank(label: str) -> int:
+        try:
+            return _FAIXA_ORDER.index(str(label))
+        except ValueError:
+            return 999
+
+    def _orc_section_header(title: str, subtitle: str, *, pill: str, accent: str) -> None:
+        st.markdown(
+            f"""
+<div class="dp-card" style="
+  padding:14px 16px;
+  border-color: rgba(59,130,246,.18);
+  background:
+    radial-gradient(900px 220px at 12% 0%, rgba(59,130,246,.18), transparent 60%),
+    radial-gradient(900px 220px at 88% 12%, rgba(110,231,183,.10), transparent 55%),
+    linear-gradient(180deg, rgba(17,26,46,.92), rgba(11,18,32,.94));
+">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+    <div>
+      <div style="color:#94A3B8;font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:800;">
+        {html.escape(subtitle)}
+      </div>
+      <div style="color:#E5E7EB;font-size:1.22rem;font-weight:950;margin-top:6px;line-height:1.2;">
+        {html.escape(title)}
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+      <span class="dp-pill" style="
+        border-color: rgba(255,255,255,.12);
+        background: rgba(255,255,255,.03);
+        color: {accent};
+        font-weight:850;
+      ">{html.escape(pill)}</span>
+    </div>
+  </div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    def _orc_modern_kpi(title: str, value: str, *, icon: str, accent: str, subtitle: str | None = None) -> None:
+        sub = subtitle or ""
+        st.markdown(
+            f"""
+<div class="dp-card" style="
+  padding:14px 14px;
+  min-height: 132px;
+  display:flex;
+  flex-direction:column;
+  justify-content:space-between;
+">
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+    <div class="dp-kpi-label">{html.escape(title)}</div>
+    <div style="
+      width:28px;height:28px;border-radius:10px;
+      display:flex;align-items:center;justify-content:center;
+      background: rgba(255,255,255,.04);
+      border: 1px solid rgba(255,255,255,.10);
+      font-size: 0.95rem;
+      color: {accent};
+    ">{html.escape(icon)}</div>
+  </div>
+  <div class="dp-kpi-value" style="font-size:1.35rem;color:{accent};text-shadow:0 0 24px rgba(59,130,246,.18);">{html.escape(value)}</div>
+  <div style="margin-top:8px;color:#94a3b8;font-weight:650;font-size:0.84rem;">{html.escape(sub) if sub else ""}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    def _render_faixa_card(fx: str, tot_q: int, tot_v: float, by_tipo: dict[str, tuple[int, float]]) -> None:
+        pills = []
+        for tk in ("F", "J", ""):
+            if tk not in by_tipo:
+                continue
+            qq, vv = by_tipo[tk]
+            lab = tk if tk else "—"
+            pills.append(
+                f'<span class="dp-pill" style="background:rgba(255,255,255,.03);border-color:rgba(255,255,255,.10);">'
+                f"<b>{html.escape(lab)}</b> · {qq} orç. · <b>R$ {vv:,.2f}</b></span>"
+            )
+        pills_html = " ".join(pills) if pills else '<span style="color:#64748b;font-size:0.82rem;">Sem tipo</span>'
+        st.markdown(
+            f"""
+<div class="dp-card" style="padding:14px 14px;min-height:168px;display:flex;flex-direction:column;justify-content:space-between;">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
+    <div>
+      <div style="color:#94A3B8;font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;font-weight:800;">Faixa de valor</div>
+      <div style="color:#E5E7EB;font-size:1.05rem;font-weight:900;margin-top:6px;">{html.escape(fx)}</div>
+    </div>
+    <div style="width:28px;height:28px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);font-size:0.95rem;color:#C4B5FD;">◫</div>
+  </div>
+  <div class="dp-kpi-value" style="font-size:1.25rem;color:#93c5fd;">R$ {tot_v:,.2f}</div>
+  <div style="margin-top:6px;color:#94a3b8;font-size:0.84rem;font-weight:650;">{tot_q} orçamento(s) nesta faixa</div>
+  <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">{pills_html}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
     st.markdown("### Filtros")
     f1, f2, f3 = st.columns([1.2, 1.4, 1.0])
     with f1:
@@ -6523,6 +6650,31 @@ def page_orcamentos(settings, conn) -> None:
 
     search = st.text_input("Buscar nº Orçamento", value="", placeholder="ex.: 458585")
 
+    consultores_opts: list[str] = []
+    has_consultor = "_consultor" in df_p.columns
+    if has_consultor:
+        raw_c = (
+            df_p["_consultor"].astype(str).str.strip()
+            .replace({"nan": "", "None": ""})
+        )
+        consultores_opts = sorted({x for x in raw_c.unique().tolist() if x})
+
+    rmodo1, rmodo2 = st.columns([1.1, 1.4])
+    with rmodo1:
+        modo_orc = st.selectbox(
+            "Escopo da análise",
+            options=["Time (consolidado)", "Por consultor"],
+            key="orc_escopo",
+            help="Igual à Simulação / Projeções: primeiro o time; depois detalhe por consultor.",
+        )
+    with rmodo2:
+        consultor_sel = None
+        if modo_orc == "Por consultor":
+            if consultores_opts:
+                consultor_sel = st.selectbox("Consultor", options=consultores_opts, key="orc_consultor_pick")
+            else:
+                st.warning("Coluna de consultor não encontrada nos dados — use **Time (consolidado)**.")
+
     def _apply_filters(df_in: pd.DataFrame) -> pd.DataFrame:
         df = df_in.copy()
         if filial_pick and "_filial" in df.columns:
@@ -6538,8 +6690,15 @@ def page_orcamentos(settings, conn) -> None:
             df = df[em.notna() & (em.dt.date >= a) & (em.dt.date <= b)]
         return df
 
-    dfp = _apply_filters(df_p)
-    dff = _apply_filters(df_f)
+    def _scope_cons(df_in: pd.DataFrame) -> pd.DataFrame:
+        df = df_in.copy()
+        if modo_orc == "Por consultor" and consultor_sel and "_consultor" in df.columns:
+            m = df["_consultor"].astype(str).str.strip().str.lower() == str(consultor_sel).strip().lower()
+            df = df[m]
+        return df
+
+    dfp = _scope_cons(_apply_filters(df_p))
+    dff = _scope_cons(_apply_filters(df_f))
 
     def _sum_val(df: pd.DataFrame) -> float:
         v = pd.to_numeric(df.get("_valor"), errors="coerce").fillna(0.0) if "_valor" in df.columns else pd.Series([0.0])
@@ -6557,22 +6716,27 @@ def page_orcamentos(settings, conn) -> None:
     fin_q = _count_orc(dff)
     fin_v = _sum_val(dff)
 
-    st.markdown("### Resumo")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.metric("Pendentes (qtd)", str(pend_q))
-        st.metric("Pendentes (valor)", f"R$ {pend_v:,.2f}")
-    with c2:
-        st.metric("Finalizados (qtd)", str(fin_q))
-        st.metric("Finalizados (valor)", f"R$ {fin_v:,.2f}")
-    with c3:
-        st.metric("Total (qtd)", str(int(pend_q + fin_q)))
-        st.metric("Total (valor)", f"R$ {float(pend_v + fin_v):,.2f}")
+    periodo_lbl = str(getattr(row, "periodo", "") or "").strip()
+    if periodo_lbl:
+        st.caption(f"Período da análise ativa: **{periodo_lbl}** · ID **{int(active_id)}**")
 
-    st.markdown("### Conversão (pendente → finalizado)")
-    st.caption("Validação sempre por cruzamento do campo **Orçamento** entre análises.")
+    _orc_section_header("Resumo executivo", "Orçamentos no escopo atual", pill="Pend × Fin", accent="#93c5fd")
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        _orc_modern_kpi("Pendentes (qtd)", str(pend_q), icon="📋", accent="#93c5fd", subtitle="linhas no arquivo filtrado")
+    with k2:
+        _orc_modern_kpi("Pendentes (valor)", f"R$ {pend_v:,.2f}", icon="💰", accent="#FBBF24")
+    with k3:
+        _orc_modern_kpi("Finalizados (qtd)", str(fin_q), icon="✅", accent="#6EE7B7")
+    with k4:
+        _orc_modern_kpi("Finalizados (valor)", f"R$ {fin_v:,.2f}", icon="📈", accent="#C4B5FD")
 
-    # Busca análise anterior do mesmo tipo (para calcular convertidos)
+    _orc_section_header("Conversão", "Pendente → finalizado (por cruzamento do nº Orçamento)", pill="Histórico", accent="#FBBF24")
+    st.caption(
+        "Validação pelo campo **Orçamento** entre esta análise e a **anterior** do mesmo tipo. "
+        "No modo **consultor**, o cruzamento usa apenas linhas desse consultor nas duas bases."
+    )
+
     prev_payload = None
     try:
         rows_prev = list_analyses(conn, limit=300, owner_user_id=owner_id, include_all=is_admin)
@@ -6595,68 +6759,121 @@ def page_orcamentos(settings, conn) -> None:
 
     conv_ids: set[str] = set()
     conv_val = 0.0
+    prev_pend_q_scope = 0
     if isinstance(prev_payload, dict):
         prev_p = pd.DataFrame(((prev_payload.get("pendentes") or {}).get("rows")) or [])
         now_f = pd.DataFrame(((payload.get("finalizados") or {}).get("rows")) or [])
+        if modo_orc == "Por consultor" and consultor_sel and "_consultor" in prev_p.columns:
+            prev_p = prev_p[prev_p["_consultor"].astype(str).str.strip().str.lower() == str(consultor_sel).strip().lower()]
+        if modo_orc == "Por consultor" and consultor_sel and "_consultor" in now_f.columns:
+            now_f = now_f[now_f["_consultor"].astype(str).str.strip().str.lower() == str(consultor_sel).strip().lower()]
         if "_orcamento" in prev_p.columns and "_orcamento" in now_f.columns:
             prev_pending = set(prev_p["_orcamento"].astype(str).str.strip().tolist())
             now_final = set(now_f["_orcamento"].astype(str).str.strip().tolist())
             conv_ids = {x for x in prev_pending.intersection(now_final) if x and x.lower() != "nan"}
+            prev_pend_q_scope = _count_orc(prev_p)
             if conv_ids and "_valor" in prev_p.columns:
                 vv = pd.to_numeric(prev_p["_valor"], errors="coerce").fillna(0.0)
                 conv_val = float(vv[prev_p["_orcamento"].astype(str).str.strip().isin(conv_ids)].sum())
 
-    cc1, cc2 = st.columns(2)
-    cc1.metric("Convertidos (qtd)", str(len(conv_ids)))
-    cc2.metric("Convertidos (valor)", f"R$ {conv_val:,.2f}")
-
-    def _faixa(v: float) -> str:
-        if v <= 500:
-            return "0,00–500"
-        if v <= 1000:
-            return "500,01–1000"
-        if v <= 2000:
-            return "1001,01–2000"
-        if v <= 5000:
-            return "2000,01–5000"
-        if v <= 10000:
-            return "5000,01–10000"
-        if v <= 30000:
-            return "10000,01–30000"
-        return "30000,01+"
+    pct_conv = None
+    try:
+        if prev_pend_q_scope > 0:
+            pct_conv = (len(conv_ids) / float(prev_pend_q_scope)) * 100.0
+    except Exception:
+        pct_conv = None
 
     base_fin = dff.copy()
+    conv_note = ""
     if conv_ids and "_orcamento" in base_fin.columns:
         base_fin = base_fin[base_fin["_orcamento"].astype(str).str.strip().isin(conv_ids)].copy()
-        st.caption("As tabelas abaixo consideram **somente os convertidos** (comparando com a análise anterior).")
+        conv_note = "**Somente convertidos** (pendentes da análise anterior que apareceram como finalizados agora)."
     else:
-        st.caption("Sem análise anterior detectada: as tabelas abaixo consideram **finalizados do arquivo atual**.")
+        conv_note = "**Finalizados desta importação** — não há análise anterior comparável ou não houve interseção."
 
     base_fin["_valor_num"] = pd.to_numeric(base_fin.get("_valor"), errors="coerce").fillna(0.0)
     base_fin["faixa"] = base_fin["_valor_num"].apply(lambda x: _faixa(float(x or 0.0)))
     base_fin["tipo"] = base_fin.get("_tipo_cliente", "").astype(str).str.upper().replace({"PF": "F", "PJ": "J"})
 
-    tab1, tab2, tab3 = st.tabs(["Setor", "Consultor", "Busca"])
-    with tab1:
-        st.markdown("### Setor (por faixa e tipo)")
-        g = base_fin.groupby(["faixa", "tipo"], as_index=False).agg(qtd=("_orcamento", "count"), valor=("_valor_num", "sum"))
-        st.dataframe(g.sort_values(["faixa", "tipo"]), use_container_width=True, hide_index=True)
-    with tab2:
-        st.markdown("### Consultor (por faixa e tipo)")
-        if "_consultor" in base_fin.columns:
-            g2 = base_fin.groupby(["_consultor", "faixa", "tipo"], as_index=False).agg(qtd=("_orcamento", "count"), valor=("_valor_num", "sum"))
-            st.dataframe(g2.sort_values(["_consultor", "faixa", "tipo"]), use_container_width=True, hide_index=True)
-        else:
-            st.info("Coluna de consultor/vendedor não detectada.")
-    with tab3:
-        st.markdown("### Detalhe por nº do orçamento")
-        if not search.strip():
-            st.caption("Digite um número (ou parte dele) em **Buscar nº Orçamento**.")
-        else:
-            st.write("Pendentes (filtrados)")
-            st.dataframe(dfp, use_container_width=True, hide_index=True)
-            st.write("Finalizados (filtrados)")
-            st.dataframe(dff, use_container_width=True, hide_index=True)
+    conv_plain = conv_note.replace("**", "")
+    cnv1, cnv2, cnv3 = st.columns(3)
+    with cnv1:
+        _orc_modern_kpi(
+            "Convertidos (qtd)",
+            str(len(conv_ids)),
+            icon="✅",
+            accent="#34d399",
+            subtitle="interseção pendente→finalizado",
+        )
+    with cnv2:
+        sub_v = conv_plain[:96] + "…" if len(conv_plain) > 96 else conv_plain
+        _orc_modern_kpi("Convertidos (valor)", f"R$ {conv_val:,.2f}", icon="🏷", accent="#FBBF24", subtitle=sub_v)
+    with cnv3:
+        pct_txt = f"{pct_conv:.1f}%" if pct_conv is not None else "—"
+        sub_pct = (
+            f"sobre {prev_pend_q_scope} pendente(s) na análise anterior (mesmo escopo)"
+            if prev_pend_q_scope
+            else "sem pendências na análise anterior para calcular %"
+        )
+        _orc_modern_kpi("Taxa de conversão", pct_txt, icon="🔁", accent="#C4B5FD", subtitle=sub_pct)
+
+    _orc_section_header("Faixas de valor", "Distribuição por faixa e tipo F/J", pill="Cards", accent="#6EE7B7")
+    st.caption(conv_note)
+
+    g_fx = (
+        base_fin.groupby(["faixa", "tipo"], as_index=False)
+        .agg(qtd=("_orcamento", "count"), valor=("_valor_num", "sum"))
+        if len(base_fin)
+        else pd.DataFrame(columns=["faixa", "tipo", "qtd", "valor"])
+    )
+    faixas_sorted = sorted({str(x) for x in g_fx["faixa"].unique()}, key=_faixa_rank) if len(g_fx) else []
+
+    if not faixas_sorted:
+        st.info("Sem dados de finalizados para montar faixas no escopo atual.")
+    else:
+        cols_per_row = 3
+        for i in range(0, len(faixas_sorted), cols_per_row):
+            chunk = faixas_sorted[i : i + cols_per_row]
+            cols = st.columns(len(chunk))
+            for j, fx in enumerate(chunk):
+                sub = g_fx[g_fx["faixa"].astype(str) == fx]
+                by_tipo: dict[str, tuple[int, float]] = {}
+                tot_q = int(sub["qtd"].sum())
+                tot_v = float(sub["valor"].sum())
+                for _, rr in sub.iterrows():
+                    tk = str(rr.get("tipo") or "").strip().upper()
+                    if tk not in {"F", "J"}:
+                        tk = ""
+                    by_tipo[tk] = (int(rr["qtd"]), float(rr["valor"]))
+                with cols[j]:
+                    _render_faixa_card(fx, tot_q, tot_v, by_tipo)
+
+    with st.expander("Tabelas detalhadas (setor / consultor / busca)", expanded=False):
+        tab1, tab2, tab3 = st.tabs(["Setor", "Consultor", "Busca"])
+        with tab1:
+            st.markdown("### Setor (por faixa e tipo)")
+            if len(g_fx):
+                st.dataframe(g_fx.sort_values(["faixa", "tipo"]), use_container_width=True, hide_index=True)
+            else:
+                st.caption("Sem linhas.")
+        with tab2:
+            st.markdown("### Consultor (por faixa e tipo)")
+            if "_consultor" in base_fin.columns:
+                g2 = base_fin.groupby(["_consultor", "faixa", "tipo"], as_index=False).agg(
+                    qtd=("_orcamento", "count"), valor=("_valor_num", "sum")
+                )
+                st.dataframe(g2.sort_values(["_consultor", "faixa", "tipo"]), use_container_width=True, hide_index=True)
+            else:
+                st.info("Coluna de consultor/vendedor não detectada.")
+        with tab3:
+            st.markdown("### Detalhe por nº do orçamento")
+            if not search.strip():
+                st.caption("Digite um número (ou parte dele) em **Buscar nº Orçamento**.")
+            else:
+                st.write("Pendentes (filtrados)")
+                st.dataframe(dfp, use_container_width=True, hide_index=True)
+                st.write("Finalizados (filtrados)")
+                st.dataframe(dff, use_container_width=True, hide_index=True)
 
 
 def main() -> None:
