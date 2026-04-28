@@ -51,7 +51,7 @@ from src.app.kpi_import import import_faturamento_atendidos_daily_df, import_fat
 from src.app.ocr_fallback import extract_payload_from_prints_ocr
 from src.app.projection import projetar_resultados
 from src.app.calendar_utils import compute_calendar_info
-from src.app.budget_import import parse_orcamentos
+from src.app.budget_import import is_orcamento_workbook, parse_orcamentos, resolve_orcamentos_pend_fin_bytes
 
 
 def _pdf_safe_text(s: object) -> str:
@@ -839,7 +839,7 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
             "<div class='dp-card' style='padding:12px 14px;margin: 6px 0 10px 0;'>"
             "<div style='display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;'>"
             "<div style='color:#E5E7EB;font-weight:900'>+ Nova análise</div>"
-            "<div style='color:#94A3B8;font-size:.86rem'>Upload dos 7 arquivos → validar → salvar no histórico</div>"
+            "<div style='color:#94A3B8;font-size:.86rem'>Upload dos arquivos (até 9) → validar → salvar no histórico</div>"
             "</div></div>",
             unsafe_allow_html=True,
         )
@@ -917,20 +917,21 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
 
     st.markdown("### 📄 Importar Excel (mais confiável que OCR)")
     excel_files = st.file_uploader(
-        "Envie os **7 arquivos** de uma vez (aceita .xlsx / .xls, incluindo export HTML). "
-        "O app reconhece automaticamente: Performance (prints 1–5), **Faturamento e Atendidos** (dia a dia) e **Departamentos**.",
+        "Envie os **7 arquivos de performance** e, se quiser, **+2 de orçamentos** (pendentes e finalizados) **no mesmo lote** — até **9** arquivos. "
+        "Aceita .xlsx / .xls (incluindo export HTML). O app reconhece: Performance (prints 1–5), **Faturamento e Atendidos**, **Departamentos** e **Orçamentos** (por colunas ou por nomes com *pendente* / *finalizado*).",
         type=["xlsx", "xls"],
         accept_multiple_files=True,
         key="excel_upload",
     )
     if excel_files:
-        if st.button("📥 Importar arquivos (Excel/HTML)", use_container_width=True):
+        if st.button("📥 Importar arquivos (Excel/HTML + Orçamentos)", use_container_width=True):
             try:
                 with st.spinner("Importando arquivos..."):
                     files_bytes = [(f.name, f.read()) for f in excel_files]
                     # 1) Classifica arquivos para não misturar "Departamentos" com "Vendedores"
                     perf_files: list[tuple[str, bytes]] = []
                     dept_files: list[tuple[str, bytes]] = []
+                    orc_files: list[tuple[str, bytes]] = []
 
                     # Cache: evolução diária (Faturamento e Atendidos)
                     daily_ok = False
@@ -969,6 +970,11 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                         except Exception:
                             pass
 
+                        # Orçamentos (pendentes + finalizados): não passa pelo import dos prints
+                        if is_orcamento_workbook(b, file_name=fname):
+                            orc_files.append((fname, b))
+                            continue
+
                         perf_files.append((fname, b))
 
                     # 2) Importa Performance SOMENTE com arquivos de vendedores (prints 1–5)
@@ -1001,6 +1007,7 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                 st.session_state["extraction_meta"] = res.meta
                 # Avisos consolidados
                 combined_warnings: list[str] = []
+                orc_saved_msg: str | None = None
                 try:
                     combined_warnings.extend(list(res.warnings or []))
                 except Exception:
@@ -1010,59 +1017,62 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                         "Não encontrei o arquivo 'Faturamento e Atendidos' neste lote (aba Evolução dia a dia ficará sem base até importar)."
                     )
 
+                if len(orc_files) == 1:
+                    combined_warnings.append(
+                        "Há **1** planilha de orçamentos neste lote; para gravar conversão são necessárias **duas** (pendentes e finalizados)."
+                    )
+                elif len(orc_files) > 2:
+                    combined_warnings.append(
+                        f"Foram reconhecidas **{len(orc_files)}** planilhas de orçamentos; envie no máximo **2** (pendentes e finalizados) no mesmo lote. "
+                        "Orçamentos **não foram gravados** — ajuste os arquivos e importe de novo."
+                    )
+                elif len(orc_files) == 2:
+                    try:
+                        pend_b, fin_b = resolve_orcamentos_pend_fin_bytes(orc_files)
+                        parsed = parse_orcamentos(pend_b, fin_b)
+                        payload_o = {
+                            "_kind": "orcamentos",
+                            "pendentes": {
+                                "rows": parsed.pendentes_df.fillna("").to_dict(orient="records"),
+                            },
+                            "finalizados": {
+                                "rows": parsed.finalizados_df.fillna("").to_dict(orient="records"),
+                            },
+                            "meta": parsed.meta,
+                        }
+                        import datetime as _dt
+
+                        periodo_orc = _dt.date.today().strftime("%d/%m/%Y") + " - Orçamentos"
+                        user = st.session_state.get("user") or {}
+                        owner_id = int(user.get("id") or 0) or None
+                        analysis_id = save_analysis(
+                            conn,
+                            periodo=periodo_orc,
+                            provider_used="orcamentos",
+                            model_used="pandas",
+                            parent_analysis_id=None,
+                            owner_user_id=owner_id,
+                            payload=payload_o,
+                            total_bonus=0.0,
+                        )
+                        st.session_state["active_orcamentos_analysis_id"] = int(analysis_id)
+                        orc_saved_msg = f"Orçamentos gravados no histórico como análise **#{analysis_id}**."
+                    except Exception as e_orc:
+                        combined_warnings.append(f"Orçamentos não gravados: {e_orc}")
+
                 if combined_warnings:
                     st.warning("Importação concluída com avisos.")
                     for w in combined_warnings:
                         st.caption(w)
+                    if orc_saved_msg:
+                        st.success(orc_saved_msg)
                 else:
-                    st.success("Importação concluída.")
+                    if orc_saved_msg:
+                        st.success("Importação concluída. " + orc_saved_msg)
+                    else:
+                        st.success("Importação concluída.")
             except Exception as e:
                 st.error("Falha ao importar Excel/HTML.")
-                st.caption(str(e))
-
-    st.markdown("---")
-    st.markdown("### 📑 Orçamentos (Pendentes + Finalizados)")
-    st.caption("Envie as 2 planilhas para calcular conversão (pendente → finalizado) por número do **Orçamento**.")
-    colA, colB = st.columns(2)
-    with colA:
-        f_pend = st.file_uploader("Orçamentos pendentes", type=["xlsx", "xls"], key="orc_pend_upload")
-    with colB:
-        f_fin = st.file_uploader("Orçamentos finalizados", type=["xlsx", "xls"], key="orc_fin_upload")
-    if f_pend and f_fin:
-        if st.button("💾 Salvar análise (Orçamentos)", use_container_width=True, key="btn_save_orcamentos"):
-            try:
-                with st.spinner("Processando orçamentos..."):
-                    parsed = parse_orcamentos(f_pend.read(), f_fin.read())
-                    payload = {
-                        "_kind": "orcamentos",
-                        "pendentes": {
-                            "rows": parsed.pendentes_df.fillna("").to_dict(orient="records"),
-                        },
-                        "finalizados": {
-                            "rows": parsed.finalizados_df.fillna("").to_dict(orient="records"),
-                        },
-                        "meta": parsed.meta,
-                    }
-                    import datetime as _dt
-
-                    periodo_orc = _dt.date.today().strftime("%d/%m/%Y") + " - Orçamentos"
-                    user = st.session_state.get("user") or {}
-                    owner_id = int(user.get("id") or 0) or None
-                    analysis_id = save_analysis(
-                        conn,
-                        periodo=periodo_orc,
-                        provider_used="orcamentos",
-                        model_used="pandas",
-                        parent_analysis_id=None,
-                        owner_user_id=owner_id,
-                        payload=payload,
-                        total_bonus=0.0,
-                    )
-                    st.session_state["active_orcamentos_analysis_id"] = int(analysis_id)
-                    st.success(f"Orçamentos salvos como análise **#{analysis_id}**.")
-                    st.rerun()
-            except Exception as e:
-                st.error("Falha ao processar orçamentos.")
                 st.caption(str(e))
 
     b1, b2, b3 = st.columns([1, 1, 1])

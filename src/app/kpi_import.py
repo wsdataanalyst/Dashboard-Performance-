@@ -7,6 +7,8 @@ from typing import Any
 
 import pandas as pd
 
+from .spreadsheet_bytes import assert_excel_or_html_bytes
+
 
 @dataclass(frozen=True)
 class KpiImportResult:
@@ -28,6 +30,7 @@ def _read_faturamento_atendidos_sheet(file_bytes: bytes) -> tuple[pd.DataFrame, 
     - warnings
     - meta (header_row, colunas detectadas, etc.)
     """
+    assert_excel_or_html_bytes("Faturamento e Atendidos", file_bytes)
     warnings: list[str] = []
     # Alguns exports vêm como .xls/HTML (precisa xlrd). Tenta openpyxl e cai para xlrd.
     try:

@@ -4,11 +4,12 @@ import io
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 
 from .percent_norm import to_float
+from .spreadsheet_bytes import assert_excel_or_html_bytes
 
 
 def _norm_col(c: Any) -> str:
@@ -25,11 +26,12 @@ def _looks_like_html(b: bytes) -> bool:
     return head.startswith(b"<") or b"<html" in head or b"<table" in head or b"<style" in head
 
 
-def _read_excel_any(file_bytes: bytes) -> pd.DataFrame:
+def _read_excel_any(file_bytes: bytes, *, file_name: str = "planilha") -> pd.DataFrame:
     if _looks_like_html(file_bytes):
         html = file_bytes.decode("utf-8", errors="ignore")
         tables = pd.read_html(io.StringIO(html))
         return tables[0] if tables else pd.DataFrame()
+    assert_excel_or_html_bytes(file_name, file_bytes)
     # tenta openpyxl e cai para xlrd
     try:
         return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl", header=None)
@@ -51,8 +53,8 @@ def _detect_header_row(df0: pd.DataFrame) -> int:
     return 0
 
 
-def _read_budget_df(file_bytes: bytes) -> pd.DataFrame:
-    df0 = _read_excel_any(file_bytes)
+def _read_budget_df(file_bytes: bytes, *, file_name: str = "planilha de orçamentos") -> pd.DataFrame:
+    df0 = _read_excel_any(file_bytes, file_name=file_name)
     if df0.empty:
         return pd.DataFrame()
     header_row = _detect_header_row(df0)
@@ -73,6 +75,84 @@ def _read_budget_df(file_bytes: bytes) -> pd.DataFrame:
     if drop:
         df = df.drop(columns=drop)
     return df
+
+
+def is_orcamento_workbook(file_bytes: bytes, *, file_name: str) -> bool:
+    try:
+        assert_excel_or_html_bytes(file_name, file_bytes)
+    except ValueError:
+        return False
+    try:
+        df = _read_budget_df(file_bytes, file_name=file_name)
+    except Exception:
+        return False
+    if df.empty:
+        return False
+    col_orc = _pick_col(df, "orc", "orçamento", "orcamento")
+    if not col_orc:
+        return False
+    return bool(_pick_col(df, "emiss") or _pick_col(df, "filial"))
+
+
+def _finaliz_date_fill_ratio(df: pd.DataFrame) -> float:
+    c = _pick_col(df, "dt finaliz", "finaliz", "data finaliz")
+    if not c or df.empty:
+        return 0.0
+    ser = pd.to_datetime(df[c], errors="coerce", dayfirst=True)
+    return float(ser.notna().mean())
+
+
+def classify_orcamento_workbook(file_name: str, file_bytes: bytes) -> Literal["pendentes", "finalizados"] | None:
+    """
+    Distingue export de orçamentos pendentes vs finalizados (nome do arquivo ou coluna de data de finalização).
+    """
+    if not is_orcamento_workbook(file_bytes, file_name=file_name):
+        return None
+    df = _read_budget_df(file_bytes, file_name=file_name)
+    fn = (file_name or "").lower()
+    if "pendent" in fn or "pendencia" in fn or "pendência" in fn:
+        return "pendentes"
+    if "finaliz" in fn or "conclu" in fn:
+        return "finalizados"
+    col_f = _pick_col(df, "dt finaliz", "finaliz", "data finaliz")
+    if col_f:
+        ratio = _finaliz_date_fill_ratio(df)
+        if ratio >= 0.12:
+            return "finalizados"
+    return "pendentes"
+
+
+def resolve_orcamentos_pend_fin_bytes(pairs: list[tuple[str, bytes]]) -> tuple[bytes, bytes]:
+    """
+    Recebe exatamente dois (nome, bytes) de planilhas de orçamento.
+    Devolve (bytes_pendentes, bytes_finalizados).
+    """
+    if len(pairs) != 2:
+        raise ValueError("Para orçamentos são necessários exatamente 2 arquivos (pendentes e finalizados).")
+    (n1, b1), (n2, b2) = pairs[0], pairs[1]
+    if not is_orcamento_workbook(b1, file_name=n1) or not is_orcamento_workbook(b2, file_name=n2):
+        raise ValueError("Um dos arquivos não parece planilha de orçamentos (colunas Orçamento + Emissão/Filial).")
+
+    r1 = classify_orcamento_workbook(n1, b1)
+    r2 = classify_orcamento_workbook(n2, b2)
+    if r1 is None or r2 is None:
+        raise ValueError("Não foi possível classificar os arquivos de orçamentos.")
+
+    if r1 != r2:
+        pend_b, fin_b = (b1, b2) if r1 == "pendentes" else (b2, b1)
+        return (pend_b, fin_b)
+
+    df1 = _read_budget_df(b1, file_name=n1)
+    df2 = _read_budget_df(b2, file_name=n2)
+    s1, s2 = _finaliz_date_fill_ratio(df1), _finaliz_date_fill_ratio(df2)
+    if abs(s1 - s2) < 1e-9:
+        raise ValueError(
+            "Não consegui distinguir pendentes vs finalizados. Use nomes com **pendente** e **finalizado** no arquivo "
+            "ou confirme que a base de finalizados tem a coluna de data de finalização preenchida na maioria das linhas."
+        )
+    if s1 > s2:
+        return (b2, b1)
+    return (b1, b2)
 
 
 def _pick_col(df: pd.DataFrame, *needles: str) -> str | None:
@@ -113,8 +193,8 @@ class OrcamentosParsed:
 
 
 def parse_orcamentos(pend_bytes: bytes, fin_bytes: bytes) -> OrcamentosParsed:
-    pend = _read_budget_df(pend_bytes)
-    fin = _read_budget_df(fin_bytes)
+    pend = _read_budget_df(pend_bytes, file_name="Orçamentos pendentes")
+    fin = _read_budget_df(fin_bytes, file_name="Orçamentos finalizados")
 
     # mapeamento de colunas (flexível)
     col_orc_p = _pick_col(pend, "orc", "orçamento", "orcamento") if not pend.empty else None

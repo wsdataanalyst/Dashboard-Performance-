@@ -11,6 +11,7 @@ from typing import Any
 import pandas as pd
 
 from .domain import filter_excluded_sellers_from_payload, is_excluded_seller_name
+from .spreadsheet_bytes import assert_excel_or_html_bytes
 from .percent_norm import normalize_alcance_projetado, normalize_small_excel_percent
 
 
@@ -32,6 +33,8 @@ def _read_excel_or_html(file_name: str, b: bytes) -> list[pd.DataFrame]:
     if _looks_like_html(b):
         html = b.decode("utf-8", errors="ignore")
         return list(pd.read_html(io.StringIO(html)))
+
+    assert_excel_or_html_bytes(file_name, b)
 
     # Excel (robusto): alguns exports vêm com extensão errada (.xlsx mas é .xls, etc.).
     ext = Path(file_name).suffix.lower()
