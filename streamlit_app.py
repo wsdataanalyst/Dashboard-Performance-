@@ -7411,6 +7411,19 @@ def page_orcamentos(settings, conn) -> None:
     tot_q_scope = int(pend_q + fin_q)
     tot_v_scope = float(pend_v + fin_v)
 
+    def _tipo_stats(df: pd.DataFrame) -> tuple[int, float, int, float]:
+        """Retorna (q_pf, v_pf, q_pj, v_pj) no escopo já filtrado."""
+        if df is None or len(df) == 0:
+            return 0, 0.0, 0, 0.0
+        t = df.get("_tipo_cliente")
+        if t is None:
+            return 0, 0.0, 0, 0.0
+        tipo = t.astype(str).str.strip().str.upper().replace({"PF": "F", "PJ": "J"})
+        v = pd.to_numeric(df.get("_valor"), errors="coerce").fillna(0.0) if "_valor" in df.columns else pd.Series([0.0] * len(df))
+        m_pf = tipo == "F"
+        m_pj = tipo == "J"
+        return int(m_pf.sum()), float(v[m_pf].sum()), int(m_pj.sum()), float(v[m_pj].sum())
+
     def _pct_part(n: float, d: float) -> str:
         if d and d > 0:
             return f"{100.0 * float(n) / float(d):.1f}%"
@@ -7456,7 +7469,9 @@ def page_orcamentos(settings, conn) -> None:
         )
 
     _orc_section_header("Volume total (filtro atual)", "Soma pendentes + finalizados", pill="Σ", accent="#a78bfa")
-    gt1, gt2 = st.columns(2)
+    df_all_scope = pd.concat([x for x in (dfp, dff) if x is not None and len(x)], ignore_index=True) if (len(dfp) or len(dff)) else pd.DataFrame()
+    q_pf, v_pf, q_pj, v_pj = _tipo_stats(df_all_scope)
+    gt1, gt2, gt3, gt4 = st.columns(4)
     with gt1:
         _orc_modern_kpi(
             "Total orçamentos (qtd)",
@@ -7472,6 +7487,22 @@ def page_orcamentos(settings, conn) -> None:
             icon="💎",
             accent="#fcd34d",
             subtitle="soma dos valores nos dois arquivos (mesmos filtros)",
+        )
+    with gt3:
+        _orc_modern_kpi(
+            "PF (clientes)",
+            f"{q_pf} ({_pct_part(q_pf, tot_q_scope)})",
+            icon="👤",
+            accent="#93c5fd",
+            subtitle=f"R$ {v_pf:,.2f} ({_pct_part(v_pf, tot_v_scope)}) do valor total",
+        )
+    with gt4:
+        _orc_modern_kpi(
+            "PJ (clientes)",
+            f"{q_pj} ({_pct_part(q_pj, tot_q_scope)})",
+            icon="🏢",
+            accent="#6EE7B7",
+            subtitle=f"R$ {v_pj:,.2f} ({_pct_part(v_pj, tot_v_scope)}) do valor total",
         )
 
     _orc_section_header("Conversão", "Pendente → finalizado (por cruzamento do nº Orçamento)", pill="Histórico", accent="#FBBF24")
