@@ -1501,6 +1501,59 @@ def page_dashboard(settings, conn) -> None:
             return None
         cur_id = int(getattr(row, "id", 0) or 0)
         cur_dt = _parse_dt(getattr(row, "created_at", None))
+        try:
+            cur_date_key, _ = _extract_date_label_from_periodo(
+                str(getattr(row, "periodo", "") or ""),
+                str(getattr(row, "created_at", "") or ""),
+            )
+        except Exception:
+            cur_date_key = "0000-00-00"
+
+        # Preferir "dia anterior" baseado na data presente no `periodo` (dd/mm/aaaa),
+        # para não depender de UTC/created_at quando o usuário carrega uma base de um dia específico.
+        if cur_date_key and cur_date_key != "0000-00-00":
+            best = None
+            best_key = None
+            best_dt = None
+            for rr in rows:
+                rid = int(getattr(rr, "id", 0) or 0)
+                if rid == cur_id:
+                    continue
+                try:
+                    p = json.loads(getattr(rr, "payload_json", "") or "")
+                except Exception:
+                    continue
+                if not isinstance(p, dict):
+                    continue
+                kind = str(p.get("_kind") or "")
+                if kind.startswith("sala_gestao_"):
+                    continue
+                if not parse_sellers(p):
+                    continue
+                try:
+                    rk, _ = _extract_date_label_from_periodo(
+                        str(getattr(rr, "periodo", "") or ""),
+                        str(getattr(rr, "created_at", "") or ""),
+                    )
+                except Exception:
+                    rk = "0000-00-00"
+                if not rk or rk == "0000-00-00" or rk >= cur_date_key:
+                    continue
+                rdt = _parse_dt(getattr(rr, "created_at", None))
+                if best_key is None or rk > best_key:
+                    best, best_key, best_dt = p, rk, rdt
+                elif rk == best_key:
+                    # desempate: maior created_at (ou maior id se não parsear)
+                    if best_dt is None and rdt is not None:
+                        best, best_dt = p, rdt
+                    elif best_dt is not None and rdt is not None and rdt > best_dt:
+                        best, best_dt = p, rdt
+                    elif best_dt is None and rdt is None:
+                        bid = int(getattr(best, "id", 0) or 0) if best is not None else 0
+                        if rid > bid:
+                            best = p
+            if best is not None:
+                return best
 
         best = None
         best_dt = None
