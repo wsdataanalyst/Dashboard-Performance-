@@ -202,6 +202,7 @@ CREATE TABLE IF NOT EXISTS uploads (
   content_type TEXT,
   sha256 TEXT NOT NULL,
   rel_path TEXT NOT NULL,
+  blob_bytes BYTEA,
   created_at TEXT NOT NULL,
   CONSTRAINT uploads_fk
     FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
@@ -304,11 +305,20 @@ CREATE TABLE IF NOT EXISTS uploads (
   content_type TEXT,
   sha256 TEXT NOT NULL,
   rel_path TEXT NOT NULL,
+  blob_bytes BLOB,
   created_at TEXT NOT NULL,
   FOREIGN KEY (analysis_id) REFERENCES analyses(id) ON DELETE CASCADE
 );
 """
     )
+    # migração leve: garantir coluna blob_bytes em bases antigas
+    try:
+        cols_u = [r["name"] for r in conn.execute("PRAGMA table_info(uploads)").fetchall()]
+        if "blob_bytes" not in cols_u:
+            conn.execute("ALTER TABLE uploads ADD COLUMN blob_bytes BLOB")
+            conn.commit()
+    except Exception:
+        pass
 
     conn.execute(
         """
@@ -746,13 +756,16 @@ def save_upload_file(
     content_type: str | None,
     sha256: str,
     rel_path: str,
+    blob_bytes: bytes | None = None,
 ) -> None:
+    # Preferir guardar o binário no banco quando disponível (Postgres/Cloud).
+    # Em SQLite/local, também aceitamos blob para permitir migração completa.
     conn.execute(
         """
-INSERT INTO uploads(analysis_id, filename, content_type, sha256, rel_path, created_at)
-VALUES(?,?,?,?,?,?)
+INSERT INTO uploads(analysis_id, filename, content_type, sha256, rel_path, blob_bytes, created_at)
+VALUES(?,?,?,?,?,?,?)
 """,
-        (int(analysis_id), filename, content_type, sha256, rel_path, now_iso()),
+        (int(analysis_id), filename, content_type, sha256, rel_path, blob_bytes, now_iso()),
     )
     conn.commit()
 
@@ -760,7 +773,8 @@ VALUES(?,?,?,?,?,?)
 def list_uploads(conn: Any, analysis_id: int) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
-SELECT id, filename, content_type, sha256, rel_path, created_at
+SELECT id, filename, content_type, sha256, rel_path, created_at,
+       CASE WHEN blob_bytes IS NULL THEN 0 ELSE LENGTH(blob_bytes) END AS blob_size
 FROM uploads
 WHERE analysis_id = ?
 ORDER BY id ASC
@@ -768,6 +782,17 @@ ORDER BY id ASC
         (int(analysis_id),),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_upload_blob_bytes(conn: Any, upload_id: int) -> bytes | None:
+    r = conn.execute(
+        "SELECT blob_bytes FROM uploads WHERE id = ?",
+        (int(upload_id),),
+    ).fetchone()
+    if not r:
+        return None
+    b = r["blob_bytes"]
+    return bytes(b) if b is not None else None
 
 
 def save_feedback(

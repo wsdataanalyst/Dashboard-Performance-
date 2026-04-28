@@ -216,6 +216,7 @@ def main() -> int:
                 content_type=None,
                 sha256=digest,
                 rel_path=rel_path,
+                blob_bytes=b,
             )
 
     # Arquiva os originais (opcional)

@@ -35,6 +35,7 @@ from src.app.storage import (
     save_analysis,
     save_feedback,
     save_upload_file,
+    get_upload_blob_bytes,
     update_analysis_periodo,
 )
 from src.app.theme import inject_styles, render_header
@@ -1051,6 +1052,28 @@ def _uploads_dir(settings) -> Path:
     return p
 
 
+def _load_upload_bytes(settings, conn, upload_row: dict) -> bytes | None:
+    # 1) tenta do banco (Postgres ou SQLite com blob)
+    try:
+        uid = int(upload_row.get("id") or 0)
+        if uid:
+            b = get_upload_blob_bytes(conn, uid)
+            if b:
+                return b
+    except Exception:
+        pass
+    # 2) fallback disco
+    rel = str(upload_row.get("rel_path") or "")
+    if not rel:
+        return None
+    base = Path(settings.data_dir)
+    p = base / Path(rel)
+    try:
+        return p.read_bytes()
+    except Exception:
+        return None
+
+
 def page_upload(settings, conn, *, embedded: bool = False) -> None:
     if not embedded:
         render_header(
@@ -1777,7 +1800,12 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                 safe_name = "".join(ch for ch in n if ch.isalnum() or ch in (" ", "-", "_")).strip().replace(" ", "_")
                 filename = f"{safe_name}_{digest[:10]}.png"
                 rel_path = str(Path("uploads") / str(owner_id or "anon") / str(analysis_id) / filename)
-                (up_dir / filename).write_bytes(b)
+                # Em Cloud, o disco pode ser efêmero; ainda tentamos salvar localmente por compat,
+                # mas o binário também é guardado no banco para migração/persistência.
+                try:
+                    (up_dir / filename).write_bytes(b)
+                except Exception:
+                    pass
                 save_upload_file(
                     conn,
                     analysis_id=analysis_id,
@@ -1785,6 +1813,7 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                     content_type=ctype,
                     sha256=digest,
                     rel_path=rel_path,
+                    blob_bytes=b,
                 )
 
             st.success(f"Análise salva com ID **{analysis_id}**.")
@@ -7785,6 +7814,21 @@ def main() -> None:
             st.session_state.pop("user", None)
             st.session_state.pop("active_analysis_id", None)
             st.rerun()
+        # Diagnóstico rápido: versão do app + fonte do banco
+        try:
+            import subprocess
+            from pathlib import Path as _P
+
+            repo_root = str(_P(__file__).resolve().parent)
+            rev = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=repo_root).decode().strip()
+        except Exception:
+            rev = "unknown"
+        try:
+            db_mode = "Postgres (DATABASE_URL)" if getattr(settings, "uses_postgres", False) else "SQLite (arquivo local)"
+        except Exception:
+            db_mode = "unknown"
+        st.caption(f"Versão do app: `{rev}`")
+        st.caption(f"Banco em uso: **{db_mode}**")
         st.markdown("---")
         # Admin: geração de convites
         if str((st.session_state.get("user") or {}).get("role") or "").lower() == "admin":
