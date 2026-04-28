@@ -209,6 +209,20 @@ def _accumulate_payload(base_payload: dict, delta_payload: dict) -> dict:
     return out
 
 
+def _text_has_date_token(txt: object) -> bool:
+    """Detecta datas comuns no campo Período (dd/mm, dd/mm/aa, dd/mm/aaaa, yyyy-mm-dd)."""
+    import re
+
+    s = str(txt or "").strip()
+    if not s:
+        return False
+    if re.search(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)", s):
+        return True
+    if re.search(r"(?<!\d)\d{2}/\d{2}(?:/\d{2,4})?(?!\d)", s):
+        return True
+    return False
+
+
 def _pdf_safe_text(s: object) -> str:
     """
     FPDF (Helvetica) não suporta unicode completo. Normaliza para ASCII/latin-1 seguro.
@@ -1071,12 +1085,7 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
         st.caption("Dica: algo como `Abril/2026` ou `Abril (até 15/04)`.")
 
     # Controle explícito de acúmulo diário (aplica no momento de salvar).
-    try:
-        import re as _re
-
-        has_day_in_periodo = bool(_re.search(r"(?<!\d)\d{2}/\d{2}/\d{4}(?!\d)", str(periodo or "").strip()))
-    except Exception:
-        has_day_in_periodo = False
+    has_day_in_periodo = _text_has_date_token(periodo)
     active_id_for_acc = st.session_state.get("active_analysis_id")
     if has_day_in_periodo and active_id_for_acc is not None:
         st.checkbox(
@@ -1587,10 +1596,8 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
             payload_to_save = dict(payload)
             # Se for um "dia" específico, pode ser delta do dia: soma no acumulado salvo da análise ativa.
             try:
-                import re as _re
-
                 do_acc_save = bool(st.session_state.get("upload_do_accumulate_on_save") is True)
-                has_day_save = bool(_re.search(r"(?<!\d)\d{2}/\d{2}/\d{4}(?!\d)", str(periodo_final or "").strip()))
+                has_day_save = _text_has_date_token(periodo_final)
                 active_id = st.session_state.get("active_analysis_id")
                 is_admin = str(user.get("role") or "").lower() == "admin"
                 if do_acc_save and has_day_save and active_id is not None:
