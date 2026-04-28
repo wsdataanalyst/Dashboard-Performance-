@@ -6781,6 +6781,81 @@ def page_orcamentos(settings, conn) -> None:
             out["tipo"] = ""
         return out
 
+    def _orcamento_ids(df: pd.DataFrame) -> set[str]:
+        if "_orcamento" not in df.columns or len(df) == 0:
+            return set()
+        return {
+            str(x).strip()
+            for x in df["_orcamento"].tolist()
+            if str(x).strip() and str(x).strip().lower() not in {"nan", "none"}
+        }
+
+    def _conversion_rates_per_faixa(
+        *,
+        prev_p_df: pd.DataFrame,
+        conv_ids_set: set[str],
+        dfp_cur: pd.DataFrame,
+        dff_cur: pd.DataFrame,
+    ) -> tuple[list[tuple[str, float, int, int]], str]:
+        rows: list[tuple[str, float, int, int]] = []
+        note = ""
+        if len(prev_p_df) and conv_ids_set and "_orcamento" in prev_p_df.columns:
+            pn = _norm_orc_df(prev_p_df)
+            if len(pn):
+                for fx in sorted(pn["faixa"].unique().tolist(), key=_faixa_rank):
+                    sub = pn[pn["faixa"].astype(str) == str(fx)]
+                    ids = _orcamento_ids(sub)
+                    if not ids:
+                        continue
+                    cnv = sum(1 for x in ids if x in conv_ids_set)
+                    rows.append((str(fx), 100.0 * cnv / len(ids), int(cnv), len(ids)))
+            note = (
+                "Taxa por faixa = convertidos no cruzamento com a análise anterior ÷ "
+                "pendentes da mesma faixa na análise anterior."
+            )
+        elif len(dfp_cur) and len(dff_cur) and "_orcamento" in dfp_cur.columns and "_orcamento" in dff_cur.columns:
+            pn = _norm_orc_df(dfp_cur)
+            fin_ids = _orcamento_ids(dff_cur)
+            if len(pn):
+                for fx in sorted(pn["faixa"].unique().tolist(), key=_faixa_rank):
+                    sub = pn[pn["faixa"].astype(str) == str(fx)]
+                    ids = _orcamento_ids(sub)
+                    if not ids:
+                        continue
+                    cnv = sum(1 for x in ids if x in fin_ids)
+                    rows.append((str(fx), 100.0 * cnv / len(ids), int(cnv), len(ids)))
+            note = (
+                "Taxa por faixa = pendentes da faixa que também constam em finalizados (import atual; sem análise anterior)."
+            )
+        else:
+            note = "Sem dados para taxa por faixa."
+        return rows, note
+
+    def _best_worst_conv(rates: list[tuple[str, float, int, int]]) -> tuple[
+        str | None,
+        float | None,
+        int | None,
+        int | None,
+        str | None,
+        float | None,
+        int | None,
+        int | None,
+    ]:
+        if not rates:
+            return None, None, None, None, None, None, None, None
+        best = max(rates, key=lambda t: (t[1], t[2]))
+        worst = min(rates, key=lambda t: (t[1], t[3]))
+        return (
+            best[0],
+            float(best[1]),
+            int(best[2]),
+            int(best[3]),
+            worst[0],
+            float(worst[1]),
+            int(worst[2]),
+            int(worst[3]),
+        )
+
     pend_q = _count_orc(dfp)
     pend_v = _sum_val(dfp)
     fin_q = _count_orc(dff)
@@ -6880,6 +6955,7 @@ def page_orcamentos(settings, conn) -> None:
     conv_ids: set[str] = set()
     conv_val = 0.0
     prev_pend_q_scope = 0
+    prev_p_scoped = pd.DataFrame()
     if isinstance(prev_payload, dict):
         prev_p = pd.DataFrame(((prev_payload.get("pendentes") or {}).get("rows")) or [])
         now_f = pd.DataFrame(((payload.get("finalizados") or {}).get("rows")) or [])
@@ -6887,6 +6963,7 @@ def page_orcamentos(settings, conn) -> None:
             prev_p = prev_p[prev_p["_consultor"].astype(str).str.strip().str.lower() == str(consultor_sel).strip().lower()]
         if modo_orc == "Por consultor" and consultor_sel and "_consultor" in now_f.columns:
             now_f = now_f[now_f["_consultor"].astype(str).str.strip().str.lower() == str(consultor_sel).strip().lower()]
+        prev_p_scoped = prev_p
         if "_orcamento" in prev_p.columns and "_orcamento" in now_f.columns:
             prev_pending = set(prev_p["_orcamento"].astype(str).str.strip().tolist())
             now_final = set(now_f["_orcamento"].astype(str).str.strip().tolist())
@@ -6981,6 +7058,68 @@ def page_orcamentos(settings, conn) -> None:
     grand_q_fx = int(g_fx["qtd"].sum()) if len(g_fx) else 0
     grand_v_fx = float(g_fx["valor"].sum()) if len(g_fx) else 0.0
     faixas_sorted = sorted({str(x) for x in g_fx["faixa"].unique()}, key=_faixa_rank) if len(g_fx) else []
+
+    fx_sum = (
+        g_fx.groupby("faixa", as_index=False).agg(qtd=("qtd", "sum"), valor=("valor", "sum"))
+        if len(g_fx)
+        else pd.DataFrame(columns=["faixa", "qtd", "valor"])
+    )
+    conv_rates_list, conv_faixa_note = _conversion_rates_per_faixa(
+        prev_p_df=prev_p_scoped,
+        conv_ids_set=conv_ids,
+        dfp_cur=dfp,
+        dff_cur=dff,
+    )
+    bf, br, bc, bd, wf, wr, wc, wd = _best_worst_conv(conv_rates_list)
+
+    if len(fx_sum):
+        iq = int(fx_sum["qtd"].idxmax())
+        iv = int(fx_sum["valor"].idxmax())
+        fq = str(fx_sum.iloc[iq]["faixa"])
+        fv_lbl = str(fx_sum.iloc[iv]["faixa"])
+        q_q = int(fx_sum.iloc[iq]["qtd"])
+        q_v = float(fx_sum.iloc[iv]["valor"])
+        pq = (100.0 * q_q / grand_q_fx) if grand_q_fx else 0.0
+        pv = (100.0 * q_v / grand_v_fx) if grand_v_fx else 0.0
+        ins1, ins2, ins3 = st.columns(3)
+        with ins1:
+            _orc_modern_kpi(
+                "Maior concentração · qtd",
+                fq,
+                icon="📊",
+                accent="#93c5fd",
+                subtitle=f"{q_q} orçamentos · {pq:.1f}% de todas as quantidades (escopo das faixas)",
+            )
+        with ins2:
+            _orc_modern_kpi(
+                "Maior concentração · valor",
+                fv_lbl,
+                icon="💎",
+                accent="#fcd34d",
+                subtitle=f"R$ {q_v:,.2f} · {pv:.1f}% de todo o valor (escopo das faixas)",
+            )
+        with ins3:
+            if bf is not None and wf is not None:
+                _orc_modern_kpi(
+                    "Conversão por faixa (mais vs menos)",
+                    f"↑ {bf} / ↓ {wf}",
+                    icon="🔁",
+                    accent="#6EE7B7",
+                    subtitle=(
+                        f"Melhor taxa: {br:.1f}% ({bc}/{bd} na base da faixa) · "
+                        f"pior: {wr:.1f}% ({wc}/{wd}). {conv_faixa_note[:100]}"
+                        + ("…" if len(conv_faixa_note) > 100 else "")
+                    ),
+                )
+            else:
+                _orc_modern_kpi(
+                    "Conversão por faixa",
+                    "—",
+                    icon="🔁",
+                    accent="#64748b",
+                    subtitle=conv_faixa_note[:180] + ("…" if len(conv_faixa_note) > 180 else ""),
+                )
+        st.caption(conv_faixa_note)
 
     if not faixas_sorted:
         st.info("Sem dados para montar faixas neste escopo — ajuste filtros ou troque a base acima (pendentes/finalizados).")
