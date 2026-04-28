@@ -9,7 +9,7 @@ import streamlit as st
 
 from src.app.bonus import calcular_time
 from src.app.config import load_settings
-from src.app.domain import parse_sellers
+from src.app.domain import parse_sellers, refresh_payload_totais_from_vendedores
 from src.app.auth import hash_password, new_invite_code, verify_password
 from src.app.security import sha256_hex
 from src.app.storage import (
@@ -1735,6 +1735,12 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                     acc: dict = {"vendedores": [], "totais": {}}
                     for _, dp in deltas:
                         acc = _accumulate_payload(acc, dp)
+                    # Garante KPIs consistentes mesmo se deltas não trouxerem `totais`:
+                    # recalcula `totais.faturamento_total` e `totais.meta_total` a partir dos vendedores.
+                    try:
+                        refresh_payload_totais_from_vendedores(acc)
+                    except Exception:
+                        pass
                     acc["periodo"] = f"Acumulado até {_iso_to_br(ref_date)}"
                     acc["_ledger"] = {"through": str(ref_date), "n_deltas": int(len(deltas))}
 
@@ -7963,6 +7969,89 @@ def main() -> None:
                                     pass
                             st.success(f"Apagadas: {ok} / {len(ids)}. Recarregue para atualizar a lista.")
                             st.rerun()
+
+            with st.expander("✅ Teste de acúmulo (ledger por data)", expanded=False):
+                st.caption("Valida que deltas diários acumulam corretamente e que KPIs batem no acumulado materializado.")
+                user = st.session_state.get("user") or {}
+                owner_id = int(user.get("id") or 0) or None
+                is_admin = str(user.get("role") or "").lower() == "admin"
+
+                d1 = st.text_input("Data 1 (dd/mm/aaaa)", value="26/04/2026", key="ledger_test_d1")
+                d2 = st.text_input("Data 2 (dd/mm/aaaa)", value="27/04/2026", key="ledger_test_d2")
+                if st.button("Rodar teste", use_container_width=True, key="ledger_test_run"):
+                    rd1 = _extract_ref_date_iso_from_periodo(d1)
+                    rd2 = _extract_ref_date_iso_from_periodo(d2)
+                    if not rd1 or not rd2:
+                        st.error("Não consegui interpretar as datas. Use dd/mm/aaaa.")
+                    else:
+                        # carrega deltas
+                        rows_all = list_analyses(conn, limit=8000, owner_user_id=owner_id, include_all=is_admin)
+                        deltas_map: dict[str, dict] = {}
+                        for rr in rows_all:
+                            try:
+                                p0 = json.loads(getattr(rr, "payload_json", "") or "")
+                            except Exception:
+                                continue
+                            if not isinstance(p0, dict):
+                                continue
+                            if str(p0.get("_kind") or "") != "daily_delta":
+                                continue
+                            rk = str(p0.get("ref_date") or "")
+                            if rk:
+                                deltas_map[rk] = p0
+
+                        if rd1 not in deltas_map:
+                            st.error(f"Não achei delta do dia {rd1} (Período {d1}). Salve uma análise com essa data primeiro.")
+                        elif rd2 not in deltas_map:
+                            st.error(f"Não achei delta do dia {rd2} (Período {d2}). Salve uma análise com essa data primeiro.")
+                        else:
+                            base = {"vendedores": [], "totais": {}}
+                            acc_1 = _accumulate_payload(base, deltas_map[rd1])
+                            acc_2 = _accumulate_payload(acc_1, deltas_map[rd2])
+                            try:
+                                refresh_payload_totais_from_vendedores(acc_2)
+                            except Exception:
+                                pass
+
+                            # KPIs a validar (time)
+                            t = acc_2.get("totais") if isinstance(acc_2.get("totais"), dict) else {}
+                            fat = float(t.get("faturamento_total") or 0.0)
+                            meta = float(t.get("meta_total") or 0.0)
+                            st.success("OK: acumulado calculado (delta 1 + delta 2).")
+                            st.caption(f"Faturamento total acumulado: **R$ {fat:,.2f}**")
+                            st.caption(f"Meta total: **R$ {meta:,.2f}**")
+
+                            # Confere se existe uma análise materializada "Acumulado até d2"
+                            want_periodo = f"Acumulado até {_iso_to_br(rd2)}"
+                            mat_row = None
+                            for rr in rows_all:
+                                if str(getattr(rr, "periodo", "")) == want_periodo:
+                                    mat_row = rr
+                                    break
+                            if not mat_row:
+                                st.warning(f"Não encontrei análise materializada com período '{want_periodo}'.")
+                            else:
+                                try:
+                                    mp = json.loads(getattr(mat_row, "payload_json", "") or "")
+                                except Exception:
+                                    mp = None
+                                if isinstance(mp, dict):
+                                    try:
+                                        refresh_payload_totais_from_vendedores(mp)
+                                    except Exception:
+                                        pass
+                                    mt = mp.get("totais") if isinstance(mp.get("totais"), dict) else {}
+                                    m_fat = float(mt.get("faturamento_total") or 0.0)
+                                    m_meta = float(mt.get("meta_total") or 0.0)
+                                    ok1 = abs(m_fat - fat) < 0.01
+                                    ok2 = abs(m_meta - meta) < 0.01
+                                    if ok1 and ok2:
+                                        st.success(f"PASS: materializado (#{int(getattr(mat_row,'id',0))}) bate com acumulado calculado.")
+                                    else:
+                                        st.error(
+                                            f"FAIL: materializado (#{int(getattr(mat_row,'id',0))}) difere. "
+                                            f"fat_calc={fat:,.2f} vs fat_mat={m_fat:,.2f} | meta_calc={meta:,.2f} vs meta_mat={m_meta:,.2f}"
+                                        )
             with st.expander("Convites (cadastro)", expanded=False):
                 c1, c2 = st.columns([1, 1])
                 with c1:
