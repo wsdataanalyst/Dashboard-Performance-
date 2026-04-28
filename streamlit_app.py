@@ -1147,6 +1147,14 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                         is_admin = str(user.get("role") or "").lower() == "admin"
                         active_id = st.session_state.get("active_analysis_id")
                         if has_day and active_id is not None and isinstance(res.payload, dict):
+                            # Controle explícito: quando o período tem data, é comum importar "resultado do dia" para somar
+                            # no acumulado já salvo. Deixa o usuário decidir (default: somar).
+                            do_acc = st.checkbox(
+                                "Somar este upload no acumulado da análise ativa (delta do dia)",
+                                value=True,
+                                help="Use quando você está importando apenas o resultado de um dia (ex.: 27/04/2026) e quer somar no acumulado já existente.",
+                                key="upload_do_accumulate",
+                            )
                             base_row = get_analysis(conn, int(active_id), owner_user_id=owner_id, include_all=is_admin)
                             if base_row:
                                 try:
@@ -1154,32 +1162,26 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                                 except Exception:
                                     base_payload = None
                                 if isinstance(base_payload, dict):
-                                    # Heurística robusta:
-                                    # - Se o upload parece "delta do dia" (menor que o acumulado atual), acumula.
-                                    # - Se não houver totais, tenta pela soma de faturamento por vendedor.
-                                    bt = base_payload.get("totais") if isinstance(base_payload.get("totais"), dict) else {}
-                                    dt = res.payload.get("totais") if isinstance(res.payload.get("totais"), dict) else {}
-                                    base_f = _as_float(bt.get("faturamento_total"))
-                                    delta_f = _as_float(dt.get("faturamento_total"))
-                                    should_acc = False
-                                    if delta_f is not None:
-                                        should_acc = (base_f is None) or (delta_f <= base_f)
-                                    else:
-                                        try:
-                                            bsum = 0.0
-                                            dsum = 0.0
-                                            for vv in (base_payload.get("vendedores") or []):
-                                                if isinstance(vv, dict):
-                                                    bsum += float(_as_float(vv.get("faturamento")) or 0.0)
-                                            for vv in (res.payload.get("vendedores") or []):
-                                                if isinstance(vv, dict):
-                                                    dsum += float(_as_float(vv.get("faturamento")) or 0.0)
-                                            if dsum > 0:
-                                                should_acc = (bsum <= 0) or (dsum <= bsum)
-                                        except Exception:
-                                            should_acc = False
-                                    if should_acc:
+                                    # Diagnóstico (antes)
+                                    bt0 = base_payload.get("totais") if isinstance(base_payload.get("totais"), dict) else {}
+                                    dt0 = res.payload.get("totais") if isinstance(res.payload.get("totais"), dict) else {}
+                                    base_f0 = _as_float(bt0.get("faturamento_total"))
+                                    delta_f0 = _as_float(dt0.get("faturamento_total"))
+
+                                    if do_acc:
                                         res.payload = _accumulate_payload(base_payload, res.payload)
+
+                                    # Diagnóstico (depois)
+                                    rt0 = res.payload.get("totais") if isinstance(res.payload.get("totais"), dict) else {}
+                                    res_f0 = _as_float(rt0.get("faturamento_total"))
+                                    st.session_state["_upload_acc_diag"] = {
+                                        "aplicou": bool(do_acc),
+                                        "active_id": int(active_id),
+                                        "periodo": ptxt,
+                                        "base_faturamento_total": base_f0,
+                                        "delta_faturamento_total": delta_f0,
+                                        "resultado_faturamento_total": res_f0,
+                                    }
                     except Exception:
                         pass
 
@@ -1274,6 +1276,25 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                         st.success("Importação concluída. " + orc_saved_msg)
                     else:
                         st.success("Importação concluída.")
+
+                # Diagnóstico do acúmulo (quando aplicável)
+                diag = st.session_state.get("_upload_acc_diag")
+                if isinstance(diag, dict) and diag.get("periodo"):
+                    try:
+                        st.markdown("### Diagnóstico do acúmulo (importação)")
+                        st.caption(
+                            f"Período: **{diag.get('periodo')}** · análise ativa: **#{diag.get('active_id')}** · acumulou: **{('SIM' if diag.get('aplicou') else 'NÃO')}**"
+                        )
+                        bf = diag.get("base_faturamento_total")
+                        df0 = diag.get("delta_faturamento_total")
+                        rf = diag.get("resultado_faturamento_total")
+                        st.caption(
+                            f"Faturamento total — base: **{('R$ ' + format(float(bf), ',.2f')) if bf is not None else '—'}** · "
+                            f"delta: **{('R$ ' + format(float(df0), ',.2f')) if df0 is not None else '—'}** · "
+                            f"resultado: **{('R$ ' + format(float(rf), ',.2f')) if rf is not None else '—'}**"
+                        )
+                    except Exception:
+                        pass
             except Exception as e:
                 st.error("Falha ao importar Excel/HTML.")
                 st.caption(str(e))
