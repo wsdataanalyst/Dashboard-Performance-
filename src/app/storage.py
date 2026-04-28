@@ -209,6 +209,27 @@ CREATE TABLE IF NOT EXISTS uploads (
 );
 """
     )
+    # migração leve (Postgres): garantir colunas em bases antigas
+    try:
+        cols_u = _pg_table_column_names(conn, "uploads")
+        if cols_u:
+            if "content_type" not in cols_u:
+                conn.execute("ALTER TABLE uploads ADD COLUMN content_type TEXT")
+                conn.commit()
+            if "sha256" not in cols_u:
+                conn.execute("ALTER TABLE uploads ADD COLUMN sha256 TEXT")
+                conn.commit()
+            if "rel_path" not in cols_u:
+                conn.execute("ALTER TABLE uploads ADD COLUMN rel_path TEXT")
+                conn.commit()
+            if "blob_bytes" not in cols_u:
+                conn.execute("ALTER TABLE uploads ADD COLUMN blob_bytes BYTEA")
+                conn.commit()
+            if "created_at" not in cols_u:
+                conn.execute("ALTER TABLE uploads ADD COLUMN created_at TEXT")
+                conn.commit()
+    except Exception:
+        pass
     conn.execute(
         """
 CREATE TABLE IF NOT EXISTS feedbacks (
