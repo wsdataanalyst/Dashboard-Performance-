@@ -7299,13 +7299,28 @@ def page_orcamentos(settings, conn) -> None:
             unsafe_allow_html=True,
         )
 
-    def _orc_modern_kpi(title: str, value: str, *, icon: str, accent: str, subtitle: str | None = None) -> None:
+    def _orc_modern_kpi(
+        title: str,
+        value: str,
+        *,
+        icon: str,
+        accent: str,
+        subtitle: str | None = None,
+        subtitle_extra: str | None = None,
+    ) -> None:
         sub = subtitle or ""
+        sub2 = subtitle_extra or ""
+        extra_block = ""
+        if sub2:
+            extra_block = (
+                f'<div style="margin-top:6px;color:#CBD5E1;font-weight:600;font-size:0.78rem;line-height:1.45;">'
+                f"{html.escape(sub2)}</div>"
+            )
         st.markdown(
             f"""
 <div class="dp-card" style="
   padding:14px 14px;
-  min-height: 132px;
+  min-height: 158px;
   display:flex;
   flex-direction:column;
   justify-content:space-between;
@@ -7323,6 +7338,7 @@ def page_orcamentos(settings, conn) -> None:
   </div>
   <div class="dp-kpi-value" style="font-size:1.35rem;color:{accent};text-shadow:0 0 24px rgba(59,130,246,.18);">{html.escape(value)}</div>
   <div style="margin-top:8px;color:#94a3b8;font-weight:650;font-size:0.84rem;">{html.escape(sub) if sub else ""}</div>
+  {extra_block}
 </div>
 """,
             unsafe_allow_html=True,
@@ -7563,6 +7579,18 @@ def page_orcamentos(settings, conn) -> None:
             return f"{100.0 * float(n) / float(d):.1f}%"
         return "—"
 
+    fin_q_pf, fin_v_pf, fin_q_pj, fin_v_pj = _tipo_stats(dff)
+    fin_extra_q = (
+        f"PF {_pct_part(fin_q_pf, fin_q)} · {fin_q_pf} orç. · "
+        f"PJ {_pct_part(fin_q_pj, fin_q)} · {fin_q_pj} orç. "
+        f"(sobre finalizados filtrados)"
+    )
+    fin_extra_v = (
+        f"PF {_pct_part(fin_v_pf, fin_v)} · R$ {fin_v_pf:,.2f} · "
+        f"PJ {_pct_part(fin_v_pj, fin_v)} · R$ {fin_v_pj:,.2f} "
+        f"(sobre valor finalizado)"
+    )
+
     periodo_lbl = str(getattr(row, "periodo", "") or "").strip()
     if periodo_lbl:
         st.caption(f"Período da análise ativa: **{periodo_lbl}** · ID **{int(active_id)}**")
@@ -7591,7 +7619,8 @@ def page_orcamentos(settings, conn) -> None:
             str(fin_q),
             icon="✅",
             accent="#6EE7B7",
-            subtitle=f"{_pct_part(fin_q, tot_q_scope)} do total de orçamentos",
+            subtitle=f"{_pct_part(fin_q, tot_q_scope)} do total de orçamentos · linhas filtradas",
+            subtitle_extra=fin_extra_q,
         )
     with k4:
         _orc_modern_kpi(
@@ -7600,6 +7629,7 @@ def page_orcamentos(settings, conn) -> None:
             icon="📈",
             accent="#C4B5FD",
             subtitle=f"{_pct_part(fin_v, tot_v_scope)} do valor total (pend+fin)",
+            subtitle_extra=fin_extra_v,
         )
 
     _orc_section_header("Volume total (filtro atual)", "Soma pendentes + finalizados", pill="Σ", accent="#a78bfa")
