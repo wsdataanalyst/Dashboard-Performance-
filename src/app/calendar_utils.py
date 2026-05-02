@@ -72,11 +72,17 @@ def compute_calendar_info(
     try:
         import holidays  # type: ignore
 
+        # IMPORTANTE: `holidays` é lazy. Se não passarmos `years`, iterar pode retornar vazio.
+        # Fixamos explicitamente o ano corrente da análise para garantir que 01/05 (Dia do Trabalho)
+        # e outros feriados entrem no cálculo.
         if subdiv:
-            h = holidays.country_holidays(country, subdiv=subdiv)  # type: ignore[arg-type]
+            h = holidays.country_holidays(country, subdiv=subdiv, years=[int(ano)])  # type: ignore[arg-type]
         else:
-            h = holidays.country_holidays(country)  # type: ignore[arg-type]
-        feriados = {d for d in h if isinstance(d, date)}
+            h = holidays.country_holidays(country, years=[int(ano)])  # type: ignore[arg-type]
+        try:
+            feriados = {d for d in h.keys() if isinstance(d, date)}
+        except Exception:
+            feriados = {d for d in h if isinstance(d, date)}
     except Exception:
         feriados = set()
 

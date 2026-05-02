@@ -7832,6 +7832,243 @@ def page_orcamentos(settings, conn) -> None:
                 st.dataframe(dff, use_container_width=True, hide_index=True)
 
 
+def _parse_month_periodo_to_key(periodo: object) -> tuple[str | None, str | None]:
+    """
+    Aceita `MM/AAAA` (ou `MM-AAAA`) e retorna:
+    - month_key: `YYYY-MM` (para ordenar)
+    - month_label: `MM/AAAA` (para exibir)
+    """
+    import re
+
+    s = str(periodo or "").strip()
+    if not s:
+        return None, None
+    m = re.search(r"(?<!\d)(\d{2})\s*[/\-]\s*(\d{4})(?!\d)", s)
+    if not m:
+        return None, None
+    mm = int(m.group(1))
+    yy = int(m.group(2))
+    if not (1 <= mm <= 12 and yy >= 2000):
+        return None, None
+    return f"{yy:04d}-{mm:02d}", f"{mm:02d}/{yy:04d}"
+
+
+def _monthly_rows_chronological(conn: object, *, owner_user_id: int | None, include_all: bool, limit: int = 240) -> list[object]:
+    try:
+        rows = list_analyses(conn, limit=int(limit), owner_user_id=owner_user_id, include_all=include_all)
+    except Exception:
+        return []
+    tmp: list[tuple[str, int, object]] = []
+    for r in rows:
+        try:
+            p = json.loads(getattr(r, "payload_json", "") or "")
+        except Exception:
+            continue
+        if not isinstance(p, dict):
+            continue
+        if str(p.get("_kind") or "") != "monthly_snapshot":
+            continue
+        mk, _ml = _parse_month_periodo_to_key(getattr(r, "periodo", ""))
+        if not mk:
+            continue
+        tmp.append((str(mk), int(getattr(r, "id", 0) or 0), r))
+    tmp.sort(key=lambda x: (x[0], x[1]))
+    return [x[2] for x in tmp]
+
+
+def page_analise_historica(settings, conn) -> None:
+    render_header("Análise Histórica", "Comparação mensal (meses fechados) — separado do diário.")
+    user = st.session_state.get("user") or {}
+    owner_id = int(user.get("id") or 0) or None
+    is_admin = str(user.get("role") or "").lower() == "admin"
+
+    tab_up, tab_dash = st.tabs(["Upload mensal", "Dashboard mensal"])
+
+    with tab_up:
+        st.markdown("### Salvar mês fechado (MM/AAAA)")
+        periodo_mes = st.text_input("Mês/Ano", value="", placeholder="ex.: 01/2026", key="hist_month_periodo")
+        month_key, month_label = _parse_month_periodo_to_key(periodo_mes)
+        if not month_key:
+            st.info("Informe o mês no formato **MM/AAAA** (ex.: `01/2026`).")
+
+        files = st.file_uploader(
+            "Envie os **6 arquivos de performance** e, se quiser, **+2 de orçamentos** (pendentes e finalizados) — até **8** arquivos.",
+            type=["xlsx", "xls"],
+            accept_multiple_files=True,
+            key="hist_month_upload_files",
+        )
+
+        if files and st.button("📥 Importar (mensal)", use_container_width=True, key="hist_month_import_btn"):
+            try:
+                with st.spinner("Importando arquivos do mês..."):
+                    files_bytes = [(f.name, f.read()) for f in files]
+                    perf_files: list[tuple[str, bytes]] = []
+                    dept_files: list[tuple[str, bytes]] = []
+                    orc_files: list[tuple[str, bytes]] = []
+
+                    for fname, b in files_bytes:
+                        # Departamentos
+                        try:
+                            dpt1 = import_departamentos([(fname, b)])
+                            dept_rows = (dpt1.payload or {}).get("departamentos") if isinstance(dpt1.payload, dict) else None
+                            if isinstance(dept_rows, list) and len(dept_rows) > 0:
+                                dept_files.append((fname, b))
+                                continue
+                        except Exception:
+                            pass
+                        # Orçamentos
+                        if is_orcamento_workbook(b, file_name=fname):
+                            orc_files.append((fname, b))
+                            continue
+                        perf_files.append((fname, b))
+
+                    res = import_5_files_to_payload(perf_files)
+                    payload = dict(res.payload or {})
+                    payload["_kind"] = "monthly_snapshot"
+                    payload["periodo"] = str(month_label or periodo_mes)
+                    payload["_month_key"] = str(month_key or "")
+
+                    # vincular deptos, se houver
+                    try:
+                        if dept_files:
+                            dpt = import_departamentos(dept_files)
+                            if isinstance(dpt.payload, dict) and isinstance(dpt.payload.get("departamentos"), list) and dpt.payload.get("departamentos"):
+                                payload["_sg_dept"] = {
+                                    "departamentos": dpt.payload.get("departamentos"),
+                                    "meta": dpt.meta if isinstance(dpt.meta, dict) else {},
+                                    "source": [n for (n, _) in dept_files],
+                                }
+                    except Exception:
+                        pass
+
+                    # orçamentos (opcional)
+                    try:
+                        if len(orc_files) == 2:
+                            pend_b, fin_b = resolve_orcamentos_pend_fin_bytes(orc_files)
+                            parsed = parse_orcamentos(pend_b, fin_b)
+                            payload["_orcamentos"] = {
+                                "pendentes": {"rows": parsed.pendentes_df.fillna("").to_dict(orient="records")},
+                                "finalizados": {"rows": parsed.finalizados_df.fillna("").to_dict(orient="records")},
+                                "meta": parsed.meta,
+                            }
+                    except Exception:
+                        pass
+
+                    st.session_state["hist_month_payload_preview"] = payload
+                    st.session_state["hist_month_meta"] = res.meta
+                    st.session_state["hist_month_warnings"] = res.warnings
+
+                if res.warnings:
+                    st.warning("Importação concluída com avisos.")
+                    for w in res.warnings:
+                        st.caption(w)
+                else:
+                    st.success("Importação concluída.")
+            except Exception as e:
+                st.error("Falha ao importar o mês.")
+                st.caption(str(e))
+
+        prev = st.session_state.get("hist_month_payload_preview")
+        if isinstance(prev, dict) and prev.get("vendedores"):
+            st.markdown("### Prévia (mês fechado)")
+            try:
+                sellers = parse_sellers(prev)
+                results, _total_bonus = calcular_time(sellers) if sellers else ([], 0.0)
+                st.dataframe(pd.DataFrame([r.__dict__ for r in results]), use_container_width=True, hide_index=True)
+            except Exception:
+                pass
+
+            if st.button("💾 Salvar mês no histórico", use_container_width=True, key="hist_month_save_btn"):
+                if not month_key:
+                    st.error("Informe `MM/AAAA` válido antes de salvar.")
+                    st.stop()
+                rows = _monthly_rows_chronological(conn, owner_user_id=owner_id, include_all=is_admin, limit=240)
+                last_key = None
+                last_label = None
+                if rows:
+                    last_label = str(getattr(rows[-1], "periodo", "") or "")
+                    try:
+                        last_key, _ = _parse_month_periodo_to_key(last_label)
+                    except Exception:
+                        last_key = None
+                if last_key and str(month_key) <= str(last_key):
+                    st.error(f"Mês fora de sequência. Último mês salvo: **{last_label or '—'}**.")
+                    st.stop()
+                aid = save_analysis(
+                    conn,
+                    periodo=str(month_label or periodo_mes),
+                    provider_used="monthly_excel",
+                    model_used="pandas",
+                    parent_analysis_id=None,
+                    owner_user_id=owner_id,
+                    payload=prev,
+                    total_bonus=0.0,
+                )
+                st.success(f"Mês salvo como análise **#{aid}**.")
+                st.session_state.pop("hist_month_payload_preview", None)
+
+    with tab_dash:
+        st.markdown("### Filtro de meses")
+        rows = _monthly_rows_chronological(conn, owner_user_id=owner_id, include_all=is_admin, limit=240)
+        if not rows:
+            st.info("Nenhum mês salvo ainda. Use a aba **Upload mensal** para salvar `01/2026`, `02/2026`, etc.")
+            return
+        months = [str(getattr(r, "periodo", "") or "") for r in rows]
+        pick = st.multiselect("Selecione 1+ meses (vazio = todos)", options=months, default=[], key="hist_month_pick")
+        use_rows = [r for r in rows if (not pick or str(getattr(r, 'periodo', '') or '') in set(pick))]
+
+        hist: list[dict] = []
+        for r in use_rows:
+            try:
+                p = json.loads(getattr(r, "payload_json", "") or "")
+            except Exception:
+                continue
+            if not isinstance(p, dict):
+                continue
+            base = _extract_perf_summary_from_payload(str(getattr(r, "periodo", "") or ""), p)
+            mk, ml = _parse_month_periodo_to_key(str(getattr(r, "periodo", "") or ""))
+            hist.append(
+                base
+                | {
+                    "id": int(getattr(r, "id", 0) or 0),
+                    "month_key": mk or "",
+                    "month_label": ml or str(getattr(r, "periodo", "") or ""),
+                }
+            )
+        hdf = pd.DataFrame(hist)
+        if hdf.empty:
+            st.info("Não consegui montar o consolidado mensal.")
+            return
+        hdf = hdf.sort_values(["month_key", "id"]).reset_index(drop=True)
+
+        st.markdown("### KPIs do mês (consolidado)")
+        last = hdf.iloc[-1]
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Mês", str(last.get("month_label") or "—"))
+        c2.metric("Faturamento (time)", f"R$ {float(last.get('fat_total') or 0.0):,.2f}")
+        c3.metric("Meta (time)", f"R$ {float(last.get('meta_total') or 0.0):,.2f}" if float(last.get("meta_total") or 0.0) > 0 else "—")
+        c4.metric("Margem média", f"{float(last.get('media_margem') or 0.0):.1f}%")
+
+        st.markdown("### Tendência mensal")
+        try:
+            import plotly.express as px
+
+            g1, g2 = st.columns(2)
+            with g1:
+                fig = px.line(hdf, x="month_label", y="fat_total", markers=True, title="Faturamento (time)")
+                fig.update_layout(height=320)
+                st.plotly_chart(fig, use_container_width=True, key="hist_month_trend_fat")
+            with g2:
+                fig = px.line(hdf, x="month_label", y="media_margem", markers=True, title="Margem média (%)")
+                fig.update_layout(height=320)
+                st.plotly_chart(fig, use_container_width=True, key="hist_month_trend_margem")
+        except Exception as e:
+            st.caption(f"Gráficos indisponíveis: {e}")
+
+        st.markdown("### Tabela consolidada (meses)")
+        st.dataframe(hdf, use_container_width=True, hide_index=True)
+
+
 def main() -> None:
     st.set_page_config(page_title="Dashboard Performance", page_icon="📊", layout="wide")
     # Perfil de layout (Mobile / Tablet / Desktop)
@@ -8407,6 +8644,7 @@ def main() -> None:
         "Dashboard de Performance",
         "Sala de Gestão",
         "Orçamento x Conversão",
+        "Análise Histórica",
     }:
         st.session_state["dash_selector"] = "Sala de Gestão"
 
@@ -8510,6 +8748,18 @@ def main() -> None:
         st.markdown("<p class='dp-dash-sub'>Pendentes, finalizados e conversão</p></div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
+    # Segunda linha: Análise Histórica (mensal) — separado para não apertar o layout
+    st.markdown("<div class='dp-dash-select' style='margin-top:10px;'>", unsafe_allow_html=True)
+    st.markdown(
+        "<div class='dp-dash-selected dp-dash-perf'>" if dash == "Análise Histórica" else "<div class='dp-dash-perf'>",
+        unsafe_allow_html=True,
+    )
+    if st.button("🗂️ Análise Histórica", use_container_width=True, key="dash_pick_hist_month"):
+        st.session_state["dash_selector"] = "Análise Histórica"
+        st.rerun()
+    st.markdown("<p class='dp-dash-sub'>Comparação mensal (MM/AAAA) — meses fechados</p></div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
     dash = str(st.session_state.get("dash_selector"))
 
     if dash == "Dashboard de Bônus":
@@ -8552,6 +8802,8 @@ def main() -> None:
             page_history(settings, conn)
     elif dash == "Orçamento x Conversão":
         page_orcamentos(settings, conn)
+    elif dash == "Análise Histórica":
+        page_analise_historica(settings, conn)
     else:
         # Header aqui é redundante com os cards de seleção acima
         page_sala_gestao(settings, conn, show_header=False)
