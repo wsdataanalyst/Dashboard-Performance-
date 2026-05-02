@@ -4660,6 +4660,87 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
     owner_id = int(user.get("id") or 0) or None
     is_admin = str(user.get("role") or "").lower() == "admin"
 
+    # --- Departamentos (Sala de Gestão): helpers compartilhados entre abas ---
+    def _dept_norm(name: object) -> str:
+        s = str(name or "").strip().lower()
+        s = (
+            s.replace("á", "a")
+            .replace("ã", "a")
+            .replace("â", "a")
+            .replace("à", "a")
+            .replace("é", "e")
+            .replace("ê", "e")
+            .replace("è", "e")
+            .replace("í", "i")
+            .replace("ì", "i")
+            .replace("ó", "o")
+            .replace("ô", "o")
+            .replace("õ", "o")
+            .replace("ò", "o")
+            .replace("ú", "u")
+            .replace("ù", "u")
+            .replace("ç", "c")
+        )
+        s = " ".join(s.split())
+        return s
+
+    def _dept_ok(name: object) -> bool:
+        s = _dept_norm(name)
+        if not s:
+            return False
+        if s.startswith("filtros aplicados") or "filtros aplicados" in s:
+            return False
+        if s == "nan":
+            return False
+        if s == "outros":
+            return False
+        if s.startswith("paineis eletric") or s.startswith("painel eletric"):
+            return False
+        return True
+
+    def _ensure_participacao_pct(df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty:
+            return df
+        if "participacao_pct" in df.columns and pd.to_numeric(df["participacao_pct"], errors="coerce").notna().any():
+            return df
+        if "faturamento" not in df.columns:
+            return df
+        fat_s = pd.to_numeric(df.get("faturamento"), errors="coerce")
+        total = float(fat_s.dropna().sum() or 0.0)
+        if total <= 0:
+            return df
+        out = df.copy()
+        out["participacao_pct"] = (fat_s / total) * 100.0
+        return out
+
+    def _dept_fingerprint(p: dict) -> tuple[int, float]:
+        try:
+            rows = p.get("departamentos") or []
+            dfp = pd.DataFrame([d for d in rows if _dept_ok((d or {}).get("departamento"))])
+            if dfp.empty:
+                return (0, 0.0)
+            fat = pd.to_numeric(dfp.get("faturamento"), errors="coerce")
+            return (int(len(dfp)), float(fat.dropna().sum() or 0.0))
+        except Exception:
+            return (0, 0.0)
+
+    def _pick_prev_dept_payload(current: dict | None) -> dict | None:
+        if not isinstance(current, dict):
+            return None
+        cur_fp = _dept_fingerprint(current)
+        rows = list_analyses(conn, limit=140, owner_user_id=owner_id, include_all=is_admin)
+        for r in rows:
+            try:
+                p = json.loads(r.payload_json)
+            except Exception:
+                continue
+            if not (isinstance(p, dict) and p.get("_kind") == "sala_gestao_departamentos"):
+                continue
+            if _dept_fingerprint(p) == cur_fp:
+                continue
+            return p
+        return None
+
     cal = st.session_state.get("calendar_info") or {}
     dias_restantes = int(cal.get("dias_uteis_restantes") or 0)
 
@@ -4749,33 +4830,6 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                         deps2 = p2.get("departamentos")
                         if isinstance(deps2, list) and deps2:
                             st.session_state["dept_payload"] = {"departamentos": deps2}
-        except Exception:
-            pass
-
-        # Fallback moderno: se a análise ativa não trouxe `_sg_dept`,
-        # reutilizar a última base de departamentos disponível no histórico.
-        # Isso evita "sumir" a Margem entregue vs abaixo quando o usuário troca a análise ativa.
-        try:
-            if st.session_state.get("dept_payload") is None:
-                rows2 = list_analyses(conn, limit=120, owner_user_id=owner_id, include_all=is_admin)
-                for rr in rows2:
-                    try:
-                        pp = json.loads(rr.payload_json)
-                    except Exception:
-                        continue
-                    if not isinstance(pp, dict):
-                        continue
-                    dd2 = pp.get("_sg_dept")
-                    if not isinstance(dd2, dict):
-                        continue
-                    deps3 = dd2.get("departamentos")
-                    if isinstance(deps3, list) and deps3:
-                        st.session_state["dept_payload"] = {"departamentos": deps3}
-                        if isinstance(dd2.get("meta"), dict):
-                            st.session_state["dept_meta"] = dd2.get("meta")
-                        if dd2.get("source"):
-                            st.session_state["dept_source_name"] = dd2.get("source")
-                        break
         except Exception:
             pass
 
@@ -5356,95 +5410,15 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
         with vc3:
             _sg_kpi_card("Alcance <80%", str(abaixo_80), icon="🔴", accent="#fb7185", delta=None)
 
-        # Departamentos (comparativo)
-        st.markdown("### Comparativo vs dia anterior (por departamento)")
+        # Departamentos (sempre a partir da análise ativa / sessão; comparativo Δ só se houver snapshot anterior)
+        st.markdown("### Departamentos (análise ativa)")
+        st.caption(
+            "Os números abaixo vêm dos departamentos ligados a esta análise. "
+            "Colunas **Δ** só aparecem quando existe outro salvamento de departamentos no histórico para comparar."
+        )
         dept_payload = st.session_state.get("dept_payload")
-        def _dept_norm(name: object) -> str:
-            s = str(name or "").strip().lower()
-            s = (
-                s.replace("á", "a")
-                .replace("ã", "a")
-                .replace("â", "a")
-                .replace("à", "a")
-                .replace("é", "e")
-                .replace("ê", "e")
-                .replace("è", "e")
-                .replace("í", "i")
-                .replace("ì", "i")
-                .replace("ó", "o")
-                .replace("ô", "o")
-                .replace("õ", "o")
-                .replace("ò", "o")
-                .replace("ú", "u")
-                .replace("ù", "u")
-                .replace("ç", "c")
-            )
-            s = " ".join(s.split())
-            return s
-
-        def _dept_ok(name: object) -> bool:
-            s = _dept_norm(name)
-            if not s:
-                return False
-            # linhas de metadados exportadas (ex.: "Filtros aplicados: Mês ...")
-            if s.startswith("filtros aplicados") or "filtros aplicados" in s:
-                return False
-            if s == "nan":
-                return False
-            if s == "outros":
-                return False
-            # Excluir qualquer variação de "Painéis Elétricos" / "Paineis Eletricos"
-            if s.startswith("paineis eletric") or s.startswith("painel eletric"):
-                return False
-            return True
-
-        def _ensure_participacao_pct(df: pd.DataFrame) -> pd.DataFrame:
-            if df is None or df.empty:
-                return df
-            if "participacao_pct" in df.columns and pd.to_numeric(df["participacao_pct"], errors="coerce").notna().any():
-                return df
-            if "faturamento" not in df.columns:
-                return df
-            fat_s = pd.to_numeric(df.get("faturamento"), errors="coerce")
-            total = float(fat_s.dropna().sum() or 0.0)
-            if total <= 0:
-                return df
-            out = df.copy()
-            out["participacao_pct"] = (fat_s / total) * 100.0
-            return out
-
-        def _dept_fingerprint(p: dict) -> tuple[int, float]:
-            """Usa contagem + soma de faturamento como assinatura leve."""
-            try:
-                rows = p.get("departamentos") or []
-                dfp = pd.DataFrame([d for d in rows if _dept_ok((d or {}).get("departamento"))])
-                if dfp.empty:
-                    return (0, 0.0)
-                fat = pd.to_numeric(dfp.get("faturamento"), errors="coerce")
-                return (int(len(dfp)), float(fat.dropna().sum() or 0.0))
-            except Exception:
-                return (0, 0.0)
-
-        def _pick_prev_dept_payload(current: dict | None) -> dict | None:
-            if not isinstance(current, dict):
-                return None
-            cur_fp = _dept_fingerprint(current)
-            rows = list_analyses(conn, limit=140, owner_user_id=owner_id, include_all=is_admin)
-            for r in rows:
-                try:
-                    p = json.loads(r.payload_json)
-                except Exception:
-                    continue
-                if not (isinstance(p, dict) and p.get("_kind") == "sala_gestao_departamentos"):
-                    continue
-                # pula se for "igual" ao payload atual (caso atual já tenha sido salvo)
-                if _dept_fingerprint(p) == cur_fp:
-                    continue
-                return p
-            return None
-
         if not (isinstance(dept_payload, dict) and isinstance(dept_payload.get("departamentos"), list)):
-            st.caption("Nenhuma base de departamentos carregada ainda.")
+            st.caption("Nenhuma base de departamentos na análise ativa. Inclua o Excel em **Nova análise** e salve.")
         else:
             df_today = pd.DataFrame([d for d in (dept_payload.get("departamentos") or []) if _dept_ok((d or {}).get("departamento"))])
             df_today = _ensure_participacao_pct(df_today) if not df_today.empty else df_today
@@ -5457,8 +5431,6 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
 
             if df_today.empty:
                 st.caption("Base de departamentos vazia.")
-            elif df_yday.empty:
-                st.info("Para ver o comparativo, salve Departamentos em pelo menos 2 dias (ou carregue e salve).")
             else:
                 cal2 = st.session_state.get("calendar_info") if isinstance(st.session_state.get("calendar_info"), dict) else {}
                 du_total = int(cal2.get("dias_uteis_total") or 0)
@@ -5526,7 +5498,11 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                     )
 
                 df_today2 = _add_alcance_real(_add_falta_meta_to_date(df_today))
-                df_yday2 = _add_alcance_real(_add_falta_meta_to_date(df_yday))
+                df_yday2: pd.DataFrame | None = None
+                if not df_yday.empty:
+                    df_yday2 = _add_alcance_real(_add_falta_meta_to_date(df_yday))
+                if df_yday2 is None or df_yday2.empty:
+                    st.caption("Não há outro snapshot de departamentos no histórico para comparar — abaixo, só a situação desta análise.")
 
                 key = "departamento"
                 keep_cols = [
@@ -5538,17 +5514,17 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                     "alcance_projetado_pct",
                     "falta_meta",
                 ]
-                keep_cols = [c for c in keep_cols if c in df_today2.columns and c in df_yday2.columns]
-
-                t = df_today2[[key] + keep_cols].copy()
-                y = df_yday2[[key] + keep_cols].copy()
-                for c in keep_cols:
-                    t[c] = pd.to_numeric(t[c], errors="coerce")
-                    y[c] = pd.to_numeric(y[c], errors="coerce")
-
-                merged = t.merge(y, on=key, how="outer", suffixes=("_hoje", "_ontem"))
-                for c in keep_cols:
-                    merged[f"Δ {c}"] = merged[f"{c}_hoje"] - merged[f"{c}_ontem"]
+                merged: pd.DataFrame | None = None
+                if df_yday2 is not None and not df_yday2.empty:
+                    keep_cols_m = [c for c in keep_cols if c in df_today2.columns and c in df_yday2.columns]
+                    t = df_today2[[key] + keep_cols_m].copy()
+                    y = df_yday2[[key] + keep_cols_m].copy()
+                    for c in keep_cols_m:
+                        t[c] = pd.to_numeric(t[c], errors="coerce")
+                        y[c] = pd.to_numeric(y[c], errors="coerce")
+                    merged = t.merge(y, on=key, how="outer", suffixes=("_hoje", "_ontem"))
+                    for c in keep_cols_m:
+                        merged[f"Δ {c}"] = merged[f"{c}_hoje"] - merged[f"{c}_ontem"]
 
                 # Cards por faixas de Alcance Real
                 try:
@@ -5690,51 +5666,6 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                         return f"{arrow} {abs(x):.2f} pp"
                     return f"{arrow} {abs(x):.0f}"
 
-                show = pd.DataFrame()
-                show["Departamento"] = merged[key].astype(str)
-                show["Departamento"] = show["Departamento"].astype(str).str.strip()
-                show = show[(show["Departamento"] != "") & (show["Departamento"].str.lower() != "nan")].copy()
-                if "faturamento_hoje" in merged.columns:
-                    show["Faturamento"] = merged["faturamento_hoje"]
-                    show["Δ Faturamento"] = merged["Δ faturamento"].apply(lambda x: _arrow(x, "money"))
-                if "falta_meta_hoje" in merged.columns:
-                    show["Falta meta"] = merged["falta_meta_hoje"]
-                    show["Δ Falta meta"] = merged["Δ falta_meta"].apply(lambda x: _arrow(x, "money"))
-                if "alcance_real_pct_hoje" in merged.columns:
-                    show["Alc. Real"] = merged["alcance_real_pct_hoje"]
-                    show["Δ Alc. Real"] = merged["Δ alcance_real_pct"].apply(lambda x: _arrow(x, "pct"))
-                if "alcance_projetado_pct_hoje" in merged.columns:
-                    show["Alc. Proj."] = merged["alcance_projetado_pct_hoje"]
-                    show["Δ Alc. Proj."] = merged["Δ alcance_projetado_pct"].apply(lambda x: _arrow(x, "pct"))
-                if "participacao_pct_hoje" in merged.columns:
-                    show["% Part."] = merged["participacao_pct_hoje"]
-                    show["Δ % Part."] = merged["Δ participacao_pct"].apply(lambda x: _arrow(x, "pct"))
-                if "margem_pct_hoje" in merged.columns:
-                    show["% Margem"] = merged["margem_pct_hoje"]
-                    show["Δ % Margem"] = merged["Δ margem_pct"].apply(lambda x: _arrow(x, "pct"))
-                if "meta_margem_pct_hoje" in merged.columns:
-                    show["Meta Margem"] = merged["meta_margem_pct_hoje"]
-                    show["Δ Meta Margem"] = merged["Δ meta_margem_pct"].apply(lambda x: _arrow(x, "pct"))
-
-                preferred = [
-                    "Departamento",
-                    "Faturamento",
-                    "Δ Faturamento",
-                    "Falta meta",
-                    "Δ Falta meta",
-                    "Alc. Real",
-                    "Δ Alc. Real",
-                    "Alc. Proj.",
-                    "Δ Alc. Proj.",
-                    "% Part.",
-                    "Δ % Part.",
-                    "% Margem",
-                    "Δ % Margem",
-                    "Meta Margem",
-                    "Δ Meta Margem",
-                ]
-                show = show[[c for c in preferred if c in show.columns]].copy()
-
                 def _delta_color_series(s: pd.Series) -> list[str]:
                     out2 = []
                     for v in s.astype(str).fillna("—").tolist():
@@ -5764,30 +5695,113 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                             out3.append("background-color: rgba(251,113,133,.14); color:#fecdd3; font-weight:900;")
                     return out3
 
-                fmt: dict[str, object] = {}
-                if "Faturamento" in show.columns:
-                    fmt["Faturamento"] = lambda x: f"R$ {float(x):,.2f}" if pd.notna(x) else "—"
-                if "% Part." in show.columns:
-                    fmt["% Part."] = lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—"
-                if "% Margem" in show.columns:
-                    fmt["% Margem"] = lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—"
-                if "Meta Margem" in show.columns:
-                    fmt["Meta Margem"] = lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—"
-                if "Alc. Proj." in show.columns:
-                    fmt["Alc. Proj."] = lambda x: f"{float(x):.1f}%" if pd.notna(x) else "—"
-                if "Alc. Real" in show.columns:
-                    fmt["Alc. Real"] = lambda x: f"{float(x):.1f}%" if pd.notna(x) else "—"
-                if "Falta meta" in show.columns:
-                    fmt["Falta meta"] = lambda x: f"R$ {float(x):,.2f}" if pd.notna(x) else "—"
+                if merged is not None and not merged.empty:
+                    show = pd.DataFrame()
+                    show["Departamento"] = merged[key].astype(str)
+                    show["Departamento"] = show["Departamento"].astype(str).str.strip()
+                    show = show[(show["Departamento"] != "") & (show["Departamento"].str.lower() != "nan")].copy()
+                    if "faturamento_hoje" in merged.columns:
+                        show["Faturamento"] = merged["faturamento_hoje"]
+                        show["Δ Faturamento"] = merged["Δ faturamento"].apply(lambda x: _arrow(x, "money"))
+                    if "falta_meta_hoje" in merged.columns:
+                        show["Falta meta"] = merged["falta_meta_hoje"]
+                        show["Δ Falta meta"] = merged["Δ falta_meta"].apply(lambda x: _arrow(x, "money"))
+                    if "alcance_real_pct_hoje" in merged.columns:
+                        show["Alc. Real"] = merged["alcance_real_pct_hoje"]
+                        show["Δ Alc. Real"] = merged["Δ alcance_real_pct"].apply(lambda x: _arrow(x, "pct"))
+                    if "alcance_projetado_pct_hoje" in merged.columns:
+                        show["Alc. Proj."] = merged["alcance_projetado_pct_hoje"]
+                        show["Δ Alc. Proj."] = merged["Δ alcance_projetado_pct"].apply(lambda x: _arrow(x, "pct"))
+                    if "participacao_pct_hoje" in merged.columns:
+                        show["% Part."] = merged["participacao_pct_hoje"]
+                        show["Δ % Part."] = merged["Δ participacao_pct"].apply(lambda x: _arrow(x, "pct"))
+                    if "margem_pct_hoje" in merged.columns:
+                        show["% Margem"] = merged["margem_pct_hoje"]
+                        show["Δ % Margem"] = merged["Δ margem_pct"].apply(lambda x: _arrow(x, "pct"))
+                    if "meta_margem_pct_hoje" in merged.columns:
+                        show["Meta Margem"] = merged["meta_margem_pct_hoje"]
+                        show["Δ Meta Margem"] = merged["Δ meta_margem_pct"].apply(lambda x: _arrow(x, "pct"))
 
-                styled = show.style.format(fmt, na_rep="—")
-                if "Alc. Proj." in show.columns:
-                    styled = styled.apply(_alc_bucket_style, subset=["Alc. Proj."])
-                if "Alc. Real" in show.columns:
-                    styled = styled.apply(_alc_bucket_style, subset=["Alc. Real"])
-                for c in [c for c in show.columns if c.startswith("Δ ")]:
-                    styled = styled.apply(_delta_color_series, subset=[c])
-                st.dataframe(styled, use_container_width=True, hide_index=True)
+                    preferred = [
+                        "Departamento",
+                        "Faturamento",
+                        "Δ Faturamento",
+                        "Falta meta",
+                        "Δ Falta meta",
+                        "Alc. Real",
+                        "Δ Alc. Real",
+                        "Alc. Proj.",
+                        "Δ Alc. Proj.",
+                        "% Part.",
+                        "Δ % Part.",
+                        "% Margem",
+                        "Δ % Margem",
+                        "Meta Margem",
+                        "Δ Meta Margem",
+                    ]
+                    show = show[[c for c in preferred if c in show.columns]].copy()
+
+                    fmt: dict[str, object] = {}
+                    if "Faturamento" in show.columns:
+                        fmt["Faturamento"] = lambda x: f"R$ {float(x):,.2f}" if pd.notna(x) else "—"
+                    if "% Part." in show.columns:
+                        fmt["% Part."] = lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—"
+                    if "% Margem" in show.columns:
+                        fmt["% Margem"] = lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—"
+                    if "Meta Margem" in show.columns:
+                        fmt["Meta Margem"] = lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—"
+                    if "Alc. Proj." in show.columns:
+                        fmt["Alc. Proj."] = lambda x: f"{float(x):.1f}%" if pd.notna(x) else "—"
+                    if "Alc. Real" in show.columns:
+                        fmt["Alc. Real"] = lambda x: f"{float(x):.1f}%" if pd.notna(x) else "—"
+                    if "Falta meta" in show.columns:
+                        fmt["Falta meta"] = lambda x: f"R$ {float(x):,.2f}" if pd.notna(x) else "—"
+
+                    styled = show.style.format(fmt, na_rep="—")
+                    if "Alc. Proj." in show.columns:
+                        styled = styled.apply(_alc_bucket_style, subset=["Alc. Proj."])
+                    if "Alc. Real" in show.columns:
+                        styled = styled.apply(_alc_bucket_style, subset=["Alc. Real"])
+                    for c in [c for c in show.columns if c.startswith("Δ ")]:
+                        styled = styled.apply(_delta_color_series, subset=[c])
+                    st.dataframe(styled, use_container_width=True, hide_index=True)
+                else:
+                    snap = df_today2.copy()
+                    if key in snap.columns:
+                        snap = snap.rename(columns={key: "Departamento"})
+                    snap_cols = [
+                        c
+                        for c in [
+                            "Departamento",
+                            "faturamento",
+                            "falta_meta",
+                            "alcance_real_pct",
+                            "alcance_projetado_pct",
+                            "participacao_pct",
+                            "margem_pct",
+                            "meta_margem_pct",
+                        ]
+                        if c in snap.columns
+                    ]
+                    if snap_cols:
+                        fmt2: dict[str, object] = {}
+                        if "faturamento" in snap.columns:
+                            fmt2["faturamento"] = lambda x: f"R$ {float(x):,.2f}" if pd.notna(x) else "—"
+                        if "falta_meta" in snap.columns:
+                            fmt2["falta_meta"] = lambda x: f"R$ {float(x):,.2f}" if pd.notna(x) else "—"
+                        if "participacao_pct" in snap.columns:
+                            fmt2["participacao_pct"] = lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—"
+                        if "margem_pct" in snap.columns:
+                            fmt2["margem_pct"] = lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—"
+                        if "meta_margem_pct" in snap.columns:
+                            fmt2["meta_margem_pct"] = lambda x: f"{float(x):.2f}%" if pd.notna(x) else "—"
+                        if "alcance_projetado_pct" in snap.columns:
+                            fmt2["alcance_projetado_pct"] = lambda x: f"{float(x):.1f}%" if pd.notna(x) else "—"
+                        if "alcance_real_pct" in snap.columns:
+                            fmt2["alcance_real_pct"] = lambda x: f"{float(x):.1f}%" if pd.notna(x) else "—"
+                        st.dataframe(snap[snap_cols].style.format(fmt2, na_rep="—"), use_container_width=True, hide_index=True)
+                    else:
+                        st.dataframe(snap, use_container_width=True, hide_index=True)
 
         st.markdown("### Radar (manual)")
         radar = st.session_state.get("radar") or []
@@ -6309,15 +6323,18 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
         except Exception:
             pass
 
-        # Departamentos: últimos 2 salvos para comparativo
-        dept_prev = _last_payloads_of_kind("sala_gestao_departamentos", 2)
+        # Departamentos: análise ativa (`_sg_dept`); comparativo só se houver snapshot anterior no histórico
         dept_today_df = None
         dept_yday_df = None
         try:
-            if len(dept_prev) >= 1 and isinstance(dept_prev[0], dict):
-                dept_today_df = pd.DataFrame(dept_prev[0].get("departamentos") or [])
-            if len(dept_prev) >= 2 and isinstance(dept_prev[1], dict):
-                dept_yday_df = pd.DataFrame(dept_prev[1].get("departamentos") or [])
+            if isinstance(payload_base, dict) and isinstance(payload_base.get("_sg_dept"), dict):
+                dept_today_df = pd.DataFrame((payload_base.get("_sg_dept") or {}).get("departamentos") or [])
+            if isinstance(dept_today_df, pd.DataFrame) and not dept_today_df.empty:
+                prev_d = _pick_prev_dept_payload(
+                    {"departamentos": dept_today_df.to_dict(orient="records")}
+                )
+                if isinstance(prev_d, dict) and prev_d.get("departamentos"):
+                    dept_yday_df = pd.DataFrame(prev_d.get("departamentos") or [])
         except Exception:
             dept_today_df = None
             dept_yday_df = None
@@ -6386,7 +6403,7 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
             f"- **Alcance <80%**: {vend_counts.get('abaixo_80', 0)}\n"
         )
 
-        sec5 = "### 5) Departamentos (movimento vs dia anterior)\n"
+        sec5 = "### 5) Departamentos (análise ativa; Δ se houver snapshot anterior)\n"
         try:
             if isinstance(dept_today_df, pd.DataFrame) and not dept_today_df.empty and isinstance(dept_yday_df, pd.DataFrame) and not dept_yday_df.empty:
                 a = dept_today_df.copy()
@@ -6406,8 +6423,10 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                     sec5 += "- **Top 3 queda (faturamento)**: " + ", ".join([f"{k} ({_fmt_rs(v)})" for k, v in top_down.items()]) + "\n"
                 else:
                     sec5 += "- Sem coluna de faturamento para comparar.\n"
+            elif isinstance(dept_today_df, pd.DataFrame) and not dept_today_df.empty:
+                sec5 += "- Situação atual por departamento disponível na análise ativa (sem segundo snapshot para Δ).\n"
             else:
-                sec5 += "- Para comparar, salve Departamentos em pelo menos 2 dias.\n"
+                sec5 += "- Sem base de departamentos nesta análise (importe e salve com Excel de departamentos).\n"
         except Exception:
             sec5 += "- Não consegui montar o comparativo de departamentos.\n"
 
@@ -6778,13 +6797,15 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                 st.dataframe(ddf, use_container_width=True, hide_index=True)
 
                 st.markdown("### Comparativo vs dia anterior (por departamento)")
-                prevs = _last_payloads_of_kind("sala_gestao_departamentos", 2)
-                if len(prevs) < 2:
-                    st.info("Para ver o comparativo, salve Departamentos hoje e amanhã (ou carregue e salve por 2 dias).")
+                prev_pl = _pick_prev_dept_payload(dept_payload)
+                if prev_pl is None or not prev_pl.get("departamentos"):
+                    st.caption(
+                        "A tabela principal desta aba já reflete a **análise ativa**. "
+                        "O comparativo com Δ aparece quando existir outro snapshot de departamentos salvo no histórico (botão **Salvar Departamentos**)."
+                    )
                 else:
-                    # prevs[0] = mais recente salvo; prevs[1] = anterior
-                    p_today = prevs[0]
-                    p_yday = prevs[1]
+                    p_today = dept_payload
+                    p_yday = prev_pl
                     try:
                         df_today = pd.DataFrame([d for d in (p_today.get("departamentos") or []) if _dept_ok((d or {}).get("departamento"))])
                         df_yday = pd.DataFrame([d for d in (p_yday.get("departamentos") or []) if _dept_ok((d or {}).get("departamento"))])
