@@ -2368,45 +2368,15 @@ def page_dashboard(settings, conn) -> None:
             d_ideal=_delta_vs_ideal(cur, 200.0, direction=">=", digits=0),
         )
 
-    tab_resumo, tab_bonus = st.tabs(["Resumo completo", "Central de Vendas | Bônus"])
+    st.info(
+        "**Bônus SDR (Mayara Barros)** fica **logo abaixo** desta mensagem (antes das abas Resumo/Central). "
+        "É o bloco escuro estilo “Central de Vendas”. Preencha **% Participação em vendas** no campo numérico.",
+        icon="👤",
+    )
 
-    with tab_resumo:
-        st.markdown("### Resultado por vendedor")
-        st.dataframe(df, use_container_width=True, hide_index=True)
-
-        st.markdown("### Gráfico de bônus")
-        try:
-            import plotly.express as px
-
-            fig = px.bar(df, x="nome", y="bonus_total", title="Bônus por vendedor")
-            fig.update_layout(height=380)
-            st.plotly_chart(fig, use_container_width=True, key="bonus_chart_dashboard")
-        except Exception as e:
-            st.info(f"Não foi possível renderizar gráfico: {e}")
-
-        st.markdown("### Auditoria (uploads salvos)")
-        ups = list_uploads(conn, int(analysis_id))
-        if not ups:
-            st.caption("Sem uploads salvos para esta análise.")
-        else:
-            st.dataframe(pd.DataFrame(ups), use_container_width=True, hide_index=True)
-
-    with tab_bonus:
-        st.markdown(
-            render_bonus_central_panel_html(df, periodo=row.periodo, total=float(total)),
-            unsafe_allow_html=True,
-        )
-        st.caption(
-            "Detalhamento por coluna de R$ (margem, prazo, etc.) permanece na aba **Resumo completo**."
-        )
-
-    # Fora das abas: no Streamlit ≥1.36 o conteúdo da aba inativa pode não executar; o SDR ficaria “invisível”
-    # se você permanecesse só em **Resumo completo**. Assim o bloco SDR aparece sempre ao rolar o Dashboard.
-    st.divider()
-    st.subheader("Bônus SDR — Mayara Barros")
+    st.markdown("### Bônus SDR — Mayara Barros · Assistente Comercial")
     st.caption(
-        "Sempre visível neste Dashboard (role a página após as abas **Resumo** / **Central**). "
-        "Preencha a participação em vendas e confira o painel escuro abaixo."
+        "Mesmos critérios combinados: conversão/TME/margem = média do **time** desta análise; participação = **manual**."
     )
 
     def _mean_col_team(dfx: pd.DataFrame, col: str) -> float | None:
@@ -2494,6 +2464,39 @@ def page_dashboard(settings, conn) -> None:
         render_bonus_consolidated_footer_html(total_vendedores=float(total), total_sdr=sdr_total),
         unsafe_allow_html=True,
     )
+
+    st.divider()
+    tab_resumo, tab_bonus = st.tabs(["Resumo completo", "Central de Vendas | Bônus"])
+
+    with tab_resumo:
+        st.markdown("### Resultado por vendedor")
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+        st.markdown("### Gráfico de bônus")
+        try:
+            import plotly.express as px
+
+            fig = px.bar(df, x="nome", y="bonus_total", title="Bônus por vendedor")
+            fig.update_layout(height=380)
+            st.plotly_chart(fig, use_container_width=True, key="bonus_chart_dashboard")
+        except Exception as e:
+            st.info(f"Não foi possível renderizar gráfico: {e}")
+
+        st.markdown("### Auditoria (uploads salvos)")
+        ups = list_uploads(conn, int(analysis_id))
+        if not ups:
+            st.caption("Sem uploads salvos para esta análise.")
+        else:
+            st.dataframe(pd.DataFrame(ups), use_container_width=True, hide_index=True)
+
+    with tab_bonus:
+        st.markdown(
+            render_bonus_central_panel_html(df, periodo=row.periodo, total=float(total)),
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "Detalhamento por coluna de R$ (margem, prazo, etc.) permanece na aba **Resumo completo**."
+        )
 
 
 def page_evolution(settings, conn) -> None:
