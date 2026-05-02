@@ -101,6 +101,30 @@ def _norm_person_name(s: object) -> str:
     return txt
 
 
+def _quick_adjust_find_vendedores(raw_v: list, nome_editor: object) -> list[dict]:
+    """
+    Associa a linha do editor a entrada(s) em payload['vendedores'].
+    Tenta nome exato (strip); se não achar, usa o mesmo critério de normalização do acúmulo (_norm_person_name).
+    Atualiza todas as entradas que colidem (ex.: duplicata de nome no payload).
+    """
+    exact = str(nome_editor or "").strip()
+    matches: list[dict] = []
+    for item in raw_v:
+        if isinstance(item, dict) and str(item.get("nome") or "").strip() == exact:
+            matches.append(item)
+    if matches:
+        return matches
+    want = _norm_person_name(exact)
+    if not want:
+        return []
+    for item in raw_v:
+        if not isinstance(item, dict):
+            continue
+        if _norm_person_name(item.get("nome")) == want:
+            matches.append(item)
+    return matches
+
+
 def _as_float(x: object) -> float | None:
     try:
         if x is None:
@@ -1608,6 +1632,13 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                 hide_index=True,
                 num_rows="fixed",
                 key="preview_editor_vendedores",
+                column_config={
+                    "nome": st.column_config.TextColumn(
+                        "Vendedor",
+                        disabled=True,
+                        help="Nome vindo do import. Ajuste os números na mesma linha; não renomeie aqui.",
+                    ),
+                },
             )
 
             def _to_num(v: object) -> float | None:
@@ -1630,52 +1661,56 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                 try:
                     # Atualiza payload["vendedores"] com o que foi editado
                     raw_v = payload.get("vendedores") if isinstance(payload.get("vendedores"), list) else []
-                    v_by_name: dict[str, dict] = {}
-                    for item in raw_v:
-                        if isinstance(item, dict) and item.get("nome"):
-                            v_by_name[str(item.get("nome")).strip()] = item
 
                     edited_rows = edited.to_dict(orient="records") if hasattr(edited, "to_dict") else []
                     for r in edited_rows:
                         nome = str(r.get("nome") or "").strip()
                         if not nome:
                             continue
-                        tgt = v_by_name.get(nome)
-                        if tgt is None:
+                        targets = _quick_adjust_find_vendedores(raw_v, nome)
+                        if not targets:
                             tgt = {"nome": nome}
                             raw_v.append(tgt)
-                            v_by_name[nome] = tgt
+                            targets = [tgt]
 
                         # campos numéricos (mantém None quando vazio)
-                        for k in [
-                            "clientes_atendidos",
-                            "alcance_pct",
-                            "margem_pct",
-                            "prazo_medio",
-                            "conversao_pct",
-                            "tme_minutos",
-                            "interacoes",
-                            "chamadas",
-                            "qtd_faturadas",
-                            "faturamento",
-                            "meta_faturamento",
-                        ]:
-                            if k not in r:
-                                continue
-                            nv = _to_num(r.get(k))
-                            if nv is None:
-                                # não apaga campos existentes se usuário deixou vazio sem querer
-                                # (só seta None se o campo não existia)
-                                if k not in tgt:
-                                    tgt[k] = None
-                                continue
-                            # ints para campos naturalmente inteiros
-                            if k in {"prazo_medio", "interacoes", "chamadas", "qtd_faturadas", "clientes_atendidos"}:
-                                tgt[k] = int(round(float(nv)))
-                            else:
-                                tgt[k] = float(nv)
+                        for tgt in targets:
+                            for k in [
+                                "clientes_atendidos",
+                                "alcance_pct",
+                                "margem_pct",
+                                "prazo_medio",
+                                "conversao_pct",
+                                "tme_minutos",
+                                "interacoes",
+                                "chamadas",
+                                "qtd_faturadas",
+                                "faturamento",
+                                "meta_faturamento",
+                            ]:
+                                if k not in r:
+                                    continue
+                                nv = _to_num(r.get(k))
+                                if nv is None:
+                                    # não apaga campos existentes se usuário deixou vazio sem querer
+                                    # (só seta None se o campo não existia)
+                                    if k not in tgt:
+                                        tgt[k] = None
+                                    continue
+                                # ints para campos naturalmente inteiros
+                                if k in {"prazo_medio", "interacoes", "chamadas", "qtd_faturadas", "clientes_atendidos"}:
+                                    tgt[k] = int(round(float(nv)))
+                                else:
+                                    tgt[k] = float(nv)
+                                # Bônus e elegibilidade usam alcance_projetado_pct; o editor expõe alcance_pct (snapshot do resultado).
+                                if k == "alcance_pct":
+                                    tgt["alcance_projetado_pct"] = float(nv)
 
                     payload["vendedores"] = raw_v
+                    try:
+                        refresh_payload_totais_from_vendedores(payload)
+                    except Exception:
+                        pass
                     # Consolidação do total (time)
                     try:
                         tot = payload.get("totais") if isinstance(payload.get("totais"), dict) else {}

@@ -33,6 +33,9 @@ class BonusResult:
 
 
 def calc_interacoes(s: Seller) -> int | None:
+    # Valor explícito no payload (Ajuste rápido / export) tem prioridade.
+    if s.interacoes is not None:
+        return s.interacoes
     # Regra do projeto: Interações = Iniciados + Recebidos + Chamadas
     if s.iniciados is None and s.recebidos is None and s.chamadas is None:
         return None
@@ -74,7 +77,7 @@ def bate_meta(valor: object, meta: float, direcao: str) -> bool | None:
 
 def calcular_bonus(s: Seller) -> BonusResult:
     interacoes = calc_interacoes(s)
-    conversao = calc_conversao(s)
+    conversao = s.conversao_pct if s.conversao_pct is not None else calc_conversao(s)
 
     elegivel_margem = bool(
         s.alcance_projetado_pct is not None

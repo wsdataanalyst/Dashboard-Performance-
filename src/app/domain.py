@@ -12,6 +12,10 @@ class Seller:
     # % Alcance (real) = faturamento / meta * 100 (quando existir)
     alcance_pct: float | None = None
     alcance_projetado_pct: float | None = None
+    # Quando informado no payload (ex.: Ajuste rápido), substitui Iniciados+Recebidos+Chamadas.
+    interacoes: int | None = None
+    # Quando informado no payload (ex.: Ajuste rápido), substitui o cálculo faturadas/interações.
+    conversao_pct: float | None = None
     prazo_medio: int | None = None
     qtd_faturadas: int | None = None
     iniciados: int | None = None
@@ -177,6 +181,8 @@ def parse_sellers(payload: dict[str, Any]) -> list[Seller]:
                 margem_pct=_to_float(item.get("margem_pct")),
                 alcance_pct=_to_float(item.get("alcance_pct")),
                 alcance_projetado_pct=_to_float(item.get("alcance_projetado_pct")),
+                interacoes=_to_int(item.get("interacoes")),
+                conversao_pct=_to_float(item.get("conversao_pct")),
                 prazo_medio=_to_int(item.get("prazo_medio")),
                 qtd_faturadas=_to_int(item.get("qtd_faturadas")),
                 iniciados=_to_int(item.get("iniciados")),
