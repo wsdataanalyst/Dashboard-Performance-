@@ -775,6 +775,112 @@ def render_bonus_central_panel_html(df: pd.DataFrame, *, periodo: str, total: fl
 """
 
 
+def render_bonus_sdr_panel_html(
+    *,
+    periodo: str,
+    nome: str,
+    cargo: str,
+    indicadores: list[dict[str, object]],
+    total_sdr: float,
+) -> str:
+    """
+    Painel no mesmo estilo da Central de Bônus, para critérios SDR (metas do time + campo manual).
+    Cada item de `indicadores`: indicador, origem, entrega, meta, ok (bool|None), bonus (float).
+    """
+    periodo_esc = html.escape(str(periodo or "Período"))
+    nome_esc = html.escape(str(nome or ""))
+    cargo_esc = html.escape(str(cargo or ""))
+    rows_html: list[str] = []
+    for it in indicadores:
+        ind = html.escape(str(it.get("indicador", "")))
+        orig = html.escape(str(it.get("origem", "")))
+        ent = html.escape(str(it.get("entrega", "—")))
+        meta = html.escape(str(it.get("meta", "")))
+        ok = it.get("ok")
+        bonus = float(it.get("bonus") or 0.0)
+        rows_html.append(
+            "<tr>"
+            f'<td class="bonus-vendedor">{ind}</td>'
+            f'<td>{orig}</td>'
+            f'<td class="bonus-cell-num">{ent}</td>'
+            f'<td class="bonus-cell-num">{meta}</td>'
+            f"<td>{_icon_meta(ok)}</td>"
+            f'<td class="bonus-col-bonus">R$ {bonus:,.2f}</td>'
+            "</tr>"
+        )
+    rows_joined = "\n".join(rows_html)
+    return f"""
+<div class="bonus-panel-wrap" style="margin-top: 18px;">
+  <h2 class="bonus-panel-title" style="margin:0 0 6px 0;">Bônus SDR — {nome_esc}</h2>
+  <p class="bonus-panel-note" style="margin-top:0;">{cargo_esc} · Período: {periodo_esc}</p>
+  <p class="bonus-panel-note">
+    Conversão, TME e margem usam a <strong>média do time</strong> desta análise (mesma base do dashboard).
+    <strong>Participação em vendas</strong> é informada manualmente (não existe KPI automático).
+    Regras: conversão time ≥ 17% (R$ 150) · TME médio ≤ 5 min (R$ 150) · participação ≥ 20% (R$ 100) · margem média ≥ 26% (R$ 150).
+  </p>
+  <div class="bonus-metric-grid">
+    <div class="bonus-metric-card">
+      <div class="bonus-metric-label">Bônus SDR ({nome_esc})</div>
+      <div class="bonus-metric-value-row">
+        <span class="bonus-metric-value">R$ {total_sdr:,.2f}</span>
+        <span class="bonus-metric-arrow" aria-hidden="true">↑</span>
+      </div>
+      <div class="bonus-metric-sub">Soma das faixas atendidas na tabela abaixo.</div>
+    </div>
+  </div>
+  <div class="bonus-table-wrap">
+    <table class="bonus-table">
+      <thead>
+        <tr>
+          <th>Indicador</th>
+          <th>Origem do dado</th>
+          <th>Entrega</th>
+          <th>Meta</th>
+          <th>Bateu?</th>
+          <th class="bonus-col-bonus">Bônus (R$)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows_joined}
+      </tbody>
+    </table>
+  </div>
+  <p class="bonus-legend">✅ = somou bônus &nbsp;|&nbsp; ❌ = não somou &nbsp;|&nbsp; ◽ = sem dado</p>
+</div>
+"""
+
+
+def render_bonus_consolidated_footer_html(*, total_vendedores: float, total_sdr: float) -> str:
+    """Faixa final: subtotais + total consolidado (vendedores + SDR)."""
+    g = float(total_vendedores) + float(total_sdr)
+    return f"""
+<div class="bonus-panel-wrap" style="margin-top: 14px;">
+  <div class="bonus-metric-grid">
+    <div class="bonus-metric-card">
+      <div class="bonus-metric-label">Subtotal — vendedores (Central)</div>
+      <div class="bonus-metric-value-row">
+        <span class="bonus-metric-value">R$ {total_vendedores:,.2f}</span>
+      </div>
+    </div>
+    <div class="bonus-metric-card">
+      <div class="bonus-metric-label">Subtotal — SDR</div>
+      <div class="bonus-metric-value-row">
+        <span class="bonus-metric-value">R$ {total_sdr:,.2f}</span>
+      </div>
+    </div>
+    <div class="bonus-metric-card" style="border-color: rgba(110,231,183,.35);">
+      <div class="bonus-metric-label">Total consolidado (painel)</div>
+      <div class="bonus-metric-value-row">
+        <span class="bonus-metric-value" style="color:#6EE7B7;">R$ {g:,.2f}</span>
+        <span class="bonus-metric-arrow" aria-hidden="true">↑</span>
+      </div>
+      <div class="bonus-metric-sub">Vendedores + Mayara Barros (SDR).</div>
+    </div>
+  </div>
+</div>
+"""
+
+
 def _enrich_results_df_for_performance(results_df: pd.DataFrame, sellers: list) -> pd.DataFrame:
     """Enriquece df de BonusResult com dados brutos (NFs, faturamento, meta, ticket)."""
     if results_df.empty:
@@ -2292,6 +2398,92 @@ def page_dashboard(settings, conn) -> None:
         )
         st.caption(
             "Detalhamento por coluna de R$ (margem, prazo, etc.) permanece na aba **Resumo completo**."
+        )
+
+        def _mean_col_team(dfx: pd.DataFrame, col: str) -> float | None:
+            if col not in dfx.columns:
+                return None
+            s = pd.to_numeric(dfx[col], errors="coerce").dropna()
+            if s.empty:
+                return None
+            return float(s.mean())
+
+        sdr_name = "Mayara Barros"
+        sdr_role = "Assistente Comercial SDR — responde por no momento"
+        tc = _mean_col_team(df, "conversao_pct")
+        tt = _mean_col_team(df, "tme_minutos")
+        tm = _mean_col_team(df, "margem_pct")
+        part_key = "bonus_sdr_participacao_pct"
+        part_default = float(st.session_state.get(part_key, 0.0) or 0.0)
+        part_pct = st.number_input(
+            "% Participação em vendas (Mayara — preenchimento manual)",
+            min_value=0.0,
+            max_value=100.0,
+            step=0.1,
+            format="%.1f",
+            value=part_default,
+            key=part_key,
+            help="Indicador não calculado pela ferramenta; informe o percentual de participação para avaliar a meta de 20% (R$ 100).",
+        )
+
+        b_conv: bool | None = None if tc is None else bool(tc >= 17.0)
+        b_tme: bool | None = None if tt is None else bool(tt <= 5.0)
+        b_marg: bool | None = None if tm is None else bool(tm >= 26.0)
+        b_part: bool | None = bool(part_pct >= 20.0)
+
+        v_conv = 150.0 if b_conv is True else 0.0
+        v_tme = 150.0 if b_tme is True else 0.0
+        v_marg = 150.0 if b_marg is True else 0.0
+        v_part = 100.0 if b_part else 0.0
+
+        sdr_indicadores: list[dict[str, object]] = [
+            {
+                "indicador": "Conversão geral (time)",
+                "origem": "Média do time (ferramenta)",
+                "entrega": f"{tc:.1f}%" if tc is not None else "—",
+                "meta": "≥ 17%",
+                "ok": b_conv,
+                "bonus": v_conv,
+            },
+            {
+                "indicador": "TME (time)",
+                "origem": "Média do time (ferramenta)",
+                "entrega": f"{tt:.1f} min" if tt is not None else "—",
+                "meta": "≤ 5 min",
+                "ok": b_tme,
+                "bonus": v_tme,
+            },
+            {
+                "indicador": "Participação em vendas",
+                "origem": "Manual",
+                "entrega": f"{part_pct:.1f}%",
+                "meta": "≥ 20%",
+                "ok": b_part,
+                "bonus": v_part,
+            },
+            {
+                "indicador": "Margem (time)",
+                "origem": "Média do time (ferramenta)",
+                "entrega": f"{tm:.1f}%" if tm is not None else "—",
+                "meta": "≥ 26%",
+                "ok": b_marg,
+                "bonus": v_marg,
+            },
+        ]
+        sdr_total = float(v_conv + v_tme + v_part + v_marg)
+        st.markdown(
+            render_bonus_sdr_panel_html(
+                periodo=row.periodo,
+                nome=sdr_name,
+                cargo=sdr_role,
+                indicadores=sdr_indicadores,
+                total_sdr=sdr_total,
+            ),
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            render_bonus_consolidated_footer_html(total_vendedores=float(total), total_sdr=sdr_total),
+            unsafe_allow_html=True,
         )
 
 
