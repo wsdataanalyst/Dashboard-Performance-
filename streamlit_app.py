@@ -1476,6 +1476,7 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
         st.session_state.pop("sg_daily_df", None)
         st.session_state.pop("sg_daily_meta", None)
         st.session_state.pop("sg_daily_source_name", None)
+        st.session_state.pop("sg_daily_scope_id", None)
         st.session_state.pop("dept_payload", None)
         st.session_state.pop("dept_meta", None)
         st.session_state.pop("dept_source_names", None)
@@ -4787,7 +4788,8 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                 except Exception:
                     payload_base = None
 
-        # Se a análise ativa tiver base diária salva, usa ela (evita "travamento" ao trocar análise)
+        # Se a análise ativa tiver base diária salva, usa ela (evita "travamento" ao trocar análise).
+        # Sem `_sg_daily` no payload da análise ativa, não reaproveita série de outro histórico na sessão.
         try:
             if isinstance(payload_base, dict) and isinstance(payload_base.get("_sg_daily"), dict):
                 sd = payload_base.get("_sg_daily") or {}
@@ -4797,6 +4799,16 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                     st.session_state["sg_daily_meta"] = sd.get("meta") if isinstance(sd.get("meta"), dict) else {}
                     if sd.get("source"):
                         st.session_state["sg_daily_source_name"] = sd.get("source")
+                    if active_id is not None:
+                        try:
+                            st.session_state["sg_daily_scope_id"] = int(active_id)
+                        except Exception:
+                            pass
+            elif isinstance(payload_base, dict) and active_id is not None:
+                st.session_state.pop("sg_daily_df", None)
+                st.session_state.pop("sg_daily_meta", None)
+                st.session_state.pop("sg_daily_source_name", None)
+                st.session_state.pop("sg_daily_scope_id", None)
         except Exception:
             pass
 
@@ -4844,10 +4856,11 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
         # O Excel "Faturamento e Atendidos" serve para KPIs diários (dia anterior), não para meta geral.
         fat_atual = float(totais.get("faturamento_total") or 0.0)
         meta_total = float(totais.get("meta_total") or 0.0)
-        # Regra: acumulado considera TODOS os dias com resultado (inclui sábado, se existir).
-        # Já os indicadores de "dia anterior" devem sempre referenciar o último DIA ÚTIL (sexta quando houver sábado).
+        # Regra: acumulado soma todos os dias da base diária (inclui sábado, se existir).
+        # "Dia anterior" = último dia com movimento na ordem cronológica do arquivo; se não houver
+        # linha com fat/NFS/clientes > 0, usa o último dia do arquivo (ex.: fechamento em 28/04).
         sat_note = None
-        daily_roll = None  # {"acc_fat","acc_nf","acc_cli","last_bus":{...},"prev_bus":{...},"sat":{...}}
+        daily_roll = None  # {"acc_fat","acc_nf","acc_cli","last_bus":{...},"prev_bus":{...},"sat":{...},"df"}
         try:
             daily = st.session_state.get("sg_daily_df")
             meta_d = st.session_state.get("sg_daily_meta") if isinstance(st.session_state.get("sg_daily_meta"), dict) else {}
@@ -4855,13 +4868,31 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                 import datetime as _dt
                 import re as _re
 
-                # Só usa a base diária se ela bater com o mês/ano atual do app
-                # (evita "não se mexer" quando troca análise ativa/período).
                 cal_now = st.session_state.get("calendar_info") if isinstance(st.session_state.get("calendar_info"), dict) else {}
                 expected_yy = int(cal_now.get("ano") or _dt.date.today().year)
                 expected_mm = int(cal_now.get("mes") or _dt.date.today().month)
 
-                # tenta inferir ano/mês para calcular dia da semana
+                periodo_txt = ""
+                if isinstance(payload_base, dict):
+                    periodo_txt = str(payload_base.get("periodo") or "").strip()
+                if not periodo_txt and active_id is not None:
+                    try:
+                        ar0 = get_analysis(conn, int(active_id), owner_user_id=owner_id, include_all=is_admin)
+                        if ar0:
+                            periodo_txt = str(getattr(ar0, "periodo", "") or "").strip()
+                    except Exception:
+                        pass
+                iso_anal = _extract_ref_date_iso_from_periodo(periodo_txt)
+                anal_yy = int(iso_anal[:4]) if iso_anal else None
+                anal_mm = int(iso_anal[5:7]) if iso_anal else None
+
+                has_embedded_daily = bool(
+                    isinstance(payload_base, dict)
+                    and isinstance(payload_base.get("_sg_daily"), dict)
+                    and isinstance((payload_base.get("_sg_daily") or {}).get("rows"), list)
+                    and len((payload_base.get("_sg_daily") or {}).get("rows") or []) > 0
+                )
+
                 mes_ref = str(meta_d.get("mes_referencia") or "").strip().lower()
                 today = _dt.date.today()
                 yy, mm = today.year, today.month
@@ -4877,24 +4908,34 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                         yy = int(m2.group(1))
                         mm = int(m2.group(2))
 
-                # Se não bater com o mês selecionado/esperado, não sobrescreve os KPIs do consolidado
-                if int(yy) != int(expected_yy) or int(mm) != int(expected_mm):
+                month_matches_cal = int(yy) == int(expected_yy) and int(mm) == int(expected_mm)
+                month_matches_analysis = (
+                    anal_yy is not None
+                    and anal_mm is not None
+                    and int(yy) == int(anal_yy)
+                    and int(mm) == int(anal_mm)
+                )
+                try:
+                    scope_id = int(st.session_state.get("sg_daily_scope_id")) if st.session_state.get("sg_daily_scope_id") is not None else None
+                except Exception:
+                    scope_id = None
+                daily_scope_ok = scope_id is not None and active_id is not None and scope_id == int(active_id)
+                use_daily = month_matches_cal or month_matches_analysis or has_embedded_daily or daily_scope_ok
+
+                if not use_daily:
                     daily_roll = None
                     sat_note = None
                 else:
-
                     d0 = daily.copy().sort_values("dia").reset_index(drop=True)
                     d0["dia"] = pd.to_numeric(d0["dia"], errors="coerce")
                     d0 = d0[d0["dia"].notna()].copy()
                     d0["dia"] = d0["dia"].astype(int)
                     d0["_weekday"] = d0["dia"].apply(lambda dd: _dt.date(int(yy), int(mm), int(dd)).weekday())
 
-                    # acumulados do mês (inclui sábado)
                     acc_fat = float(pd.to_numeric(d0.get("faturamento"), errors="coerce").fillna(0.0).sum())
                     acc_nf = int(pd.to_numeric(d0.get("nfs_emitidas"), errors="coerce").fillna(0).sum())
                     acc_cli = int(pd.to_numeric(d0.get("clientes_atendidos"), errors="coerce").fillna(0).sum())
 
-                    # sábado com movimento (se existir)
                     sat = d0[d0["_weekday"] == 5].copy()
                     if not sat.empty:
                         sat_move = sat[
@@ -4911,42 +4952,37 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                                 "cli": int(pd.to_numeric(sat_last.get("clientes_atendidos"), errors="coerce") or 0),
                             }
 
-                    # último dia útil com movimento (referência para "dia anterior")
-                    bus = d0[d0["_weekday"] < 5].copy()
-                    if not bus.empty:
-                        bus_move = bus[
-                            (pd.to_numeric(bus.get("faturamento"), errors="coerce").fillna(0.0) > 0.0)
-                            | (pd.to_numeric(bus.get("nfs_emitidas"), errors="coerce").fillna(0) > 0)
-                            | (pd.to_numeric(bus.get("clientes_atendidos"), errors="coerce").fillna(0) > 0)
-                        ]
-                        if not bus_move.empty:
-                            bb = bus_move.sort_values("dia").iloc[-1]
-                            # dia útil anterior ao último (para delta)
-                            prevb = bus_move[bus_move["dia"] < int(bb.get("dia") or 0)].sort_values("dia")
-                            pb = prevb.iloc[-1] if not prevb.empty else None
-                            daily_roll = {
-                                "acc_fat": acc_fat,
-                                "acc_nf": acc_nf,
-                                "acc_cli": acc_cli,
-                                "last_bus": {
-                                    "dia": int(bb.get("dia") or 0),
-                                    "fat": float(pd.to_numeric(bb.get("faturamento"), errors="coerce") or 0.0),
-                                    "nf": int(pd.to_numeric(bb.get("nfs_emitidas"), errors="coerce") or 0),
-                                    "cli": int(pd.to_numeric(bb.get("clientes_atendidos"), errors="coerce") or 0),
-                                },
-                                "prev_bus": (
-                                    {
-                                        "dia": int(pb.get("dia") or 0),
-                                        "fat": float(pd.to_numeric(pb.get("faturamento"), errors="coerce") or 0.0),
-                                        "nf": int(pd.to_numeric(pb.get("nfs_emitidas"), errors="coerce") or 0),
-                                        "cli": int(pd.to_numeric(pb.get("clientes_atendidos"), errors="coerce") or 0),
-                                    }
-                                    if pb is not None
-                                    else None
-                                ),
+                    fat_s = pd.to_numeric(d0.get("faturamento"), errors="coerce").fillna(0.0)
+                    nf_s = pd.to_numeric(d0.get("nfs_emitidas"), errors="coerce").fillna(0)
+                    cli_s = pd.to_numeric(d0.get("clientes_atendidos"), errors="coerce").fillna(0)
+                    move = (fat_s > 0) | (nf_s > 0) | (cli_s > 0)
+                    d_mov = d0[move].copy() if bool(move.any()) else d0
+                    bb = d_mov.iloc[-1]
+                    pb = d_mov.iloc[-2] if len(d_mov) >= 2 else None
+                    daily_roll = {
+                        "acc_fat": acc_fat,
+                        "acc_nf": acc_nf,
+                        "acc_cli": acc_cli,
+                        "last_bus": {
+                            "dia": int(bb.get("dia") or 0),
+                            "fat": float(pd.to_numeric(bb.get("faturamento"), errors="coerce") or 0.0),
+                            "nf": int(pd.to_numeric(bb.get("nfs_emitidas"), errors="coerce") or 0),
+                            "cli": int(pd.to_numeric(bb.get("clientes_atendidos"), errors="coerce") or 0),
+                        },
+                        "prev_bus": (
+                            {
+                                "dia": int(pb.get("dia") or 0),
+                                "fat": float(pd.to_numeric(pb.get("faturamento"), errors="coerce") or 0.0),
+                                "nf": int(pd.to_numeric(pb.get("nfs_emitidas"), errors="coerce") or 0),
+                                "cli": int(pd.to_numeric(pb.get("clientes_atendidos"), errors="coerce") or 0),
                             }
-                            if sat_note:
-                                daily_roll["sat"] = dict(sat_note)
+                            if pb is not None
+                            else None
+                        ),
+                        "df": d0,
+                    }
+                    if sat_note:
+                        daily_roll["sat"] = dict(sat_note)
         except Exception:
             sat_note = sat_note
 
@@ -5155,7 +5191,7 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
             fat_dia_ant = float(last_bus.get("fat") or 0.0)
             nf_dia_ant = int(last_bus.get("nf") or 0)
             cli_dia_ant = int(last_bus.get("cli") or 0)
-            st.caption(f"Dia anterior (referência dia útil): **dia {int(last_bus.get('dia') or 0):02d}**.")
+            st.caption(f"Dia anterior (último dia com dados na base diária): **dia {int(last_bus.get('dia') or 0):02d}**.")
         marg_hoje_pct = prev0_k.get("margem_hoje_pct")
         marg_ontem_pct = prev0_k.get("margem_dia_anterior_pct")
 
