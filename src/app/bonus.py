@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from .domain import Seller
+
+# Meta oficial: prazo médio (dias) deve ser menor ou igual a este valor.
+META_PRAZO_MEDIO_DIAS: float = 43.0
 
 
 @dataclass(frozen=True)
@@ -45,10 +49,27 @@ def calc_conversao(s: Seller) -> float | None:
     return round((s.qtd_faturadas / interacoes) * 100, 2)
 
 
-def bate_meta(valor, meta: float, direcao: str) -> bool | None:
-    if valor is None:
+def _coerce_meta_compare_float(valor: object) -> float | None:
+    """Converte valor para float seguro para comparação com meta (rejeita bool, NaN, etc.)."""
+    if valor is None or isinstance(valor, bool):
         return None
-    return valor >= meta if direcao == ">=" else valor <= meta
+    try:
+        if isinstance(valor, str) and not str(valor).strip():
+            return None
+        x = float(valor)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(x) or math.isinf(x):
+        return None
+    return x
+
+
+def bate_meta(valor: object, meta: float, direcao: str) -> bool | None:
+    x = _coerce_meta_compare_float(valor)
+    if x is None:
+        return None
+    m = float(meta)
+    return x >= m if direcao == ">=" else x <= m
 
 
 def calcular_bonus(s: Seller) -> BonusResult:
@@ -62,17 +83,18 @@ def calcular_bonus(s: Seller) -> BonusResult:
         and s.margem_pct >= 26.0
     )
 
-    bateu_prazo = bate_meta(s.prazo_medio, 43, "<=")
+    bateu_prazo = bate_meta(s.prazo_medio, META_PRAZO_MEDIO_DIAS, "<=")
     bateu_conversao = bate_meta(conversao, 12.0, ">=")
     bateu_tme = bate_meta(s.tme_minutos, 5.0, "<=")
     bateu_interacao = bate_meta(interacoes, 200, ">=")
 
     # Regras oficiais do bônus (conforme você definiu)
     bonus_margem = 150.0 if elegivel_margem else 0.0
-    bonus_prazo = 100.0 if bateu_prazo else 0.0
-    bonus_conversao = 100.0 if bateu_conversao else 0.0
-    bonus_tme = 150.0 if bateu_tme else 0.0
-    bonus_interacao = 100.0 if bateu_interacao else 0.0
+    # Somente True conta (None = sem dado → não soma; evita ambiguidade com tipos numpy/pandas)
+    bonus_prazo = 100.0 if bateu_prazo is True else 0.0
+    bonus_conversao = 100.0 if bateu_conversao is True else 0.0
+    bonus_tme = 150.0 if bateu_tme is True else 0.0
+    bonus_interacao = 100.0 if bateu_interacao is True else 0.0
     bonus = bonus_margem + bonus_prazo + bonus_conversao + bonus_tme + bonus_interacao
 
     return BonusResult(

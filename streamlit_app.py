@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from src.app.bonus import calcular_time
+from src.app.bonus import META_PRAZO_MEDIO_DIAS, calcular_time
 from src.app.config import load_settings
 from src.app.domain import parse_sellers, refresh_payload_totais_from_vendedores
 from src.app.auth import hash_password, new_invite_code, verify_password
@@ -1237,7 +1237,7 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
     if has_day_in_periodo and active_id_for_acc is not None:
         st.checkbox(
             "Somar este período no acumulado da análise ativa ao salvar (delta do dia)",
-            value=True,
+            value=False,
             key="upload_do_accumulate_on_save",
             help="Marque quando você está importando apenas o resultado do dia (ex.: 27/04/2026) e quer somar no acumulado já existente no histórico.",
         )
@@ -1297,7 +1297,7 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                             # no acumulado já salvo. Deixa o usuário decidir (default: somar).
                             do_acc = st.checkbox(
                                 "Somar este upload no acumulado da análise ativa (delta do dia)",
-                                value=True,
+                                value=False,
                                 help="Use quando você está importando apenas o resultado de um dia (ex.: 27/04/2026) e quer somar no acumulado já existente.",
                                 key="upload_do_accumulate",
                             )
@@ -1743,9 +1743,8 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
             # Vincular bases auxiliares (Sala de Gestão) à análise salva:
             # evita ficar dependente do "cache da sessão" ao trocar a análise ativa.
             payload_to_save = dict(payload)
-            # Novo modelo robusto: quando o usuário informa data no período, isso vira a "chave do dia".
-            # O app salva um registro "delta do dia" e, em seguida, materializa o "acumulado até a data"
-            # somando todos os deltas (determinístico, sem heurística).
+            # Por padrão, cada análise salva é um "snapshot" do dia (não acumulado).
+            # O modo acumulativo (ledger/delta do dia) só roda se o usuário marcar explicitamente.
             ref_date = _extract_ref_date_iso_from_periodo(periodo_final)
             is_admin = str(user.get("role") or "").lower() == "admin"
 
@@ -1766,7 +1765,8 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                 )
                 st.stop()
 
-            if ref_date:
+            do_ledger_acc = bool(st.session_state.get("upload_do_accumulate_on_save"))
+            if ref_date and do_ledger_acc:
                 try:
                     # 1) Salvar/atualizar DELTA do dia (idempotente por data)
                     rows_scan = list_analyses(conn, limit=2000, owner_user_id=owner_id, include_all=is_admin)
@@ -2190,7 +2190,7 @@ def page_dashboard(settings, conn) -> None:
             icon="⏱",
             accent="#FBBF24",
             d_prev=(_delta_qty_and_pct(cur, ref, digits=0) if ref is not None else "—"),
-            d_ideal=_delta_vs_ideal(cur, 43.0, direction="<=", digits=0),
+            d_ideal=_delta_vs_ideal(cur, META_PRAZO_MEDIO_DIAS, direction="<=", digits=0),
         )
     with c3:
         cur = float(stats.get("media_conversao") or 0.0)
@@ -2677,7 +2677,7 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
                 return int(v) if v is not None else None
 
             # Limites (já usados na regra de bônus/ideal):
-            # Margem >= 26 | Conversão >= 12 | Prazo <= 43 | TME <= 5 | Interações >= 200
+            # Margem >= 26 | Conversão >= 12 | Prazo <= META_PRAZO_MEDIO_DIAS | TME <= 5 | Interações >= 200
             # Meta Faturamento entregue: (Faturamento / Meta) * 100 >= 100
             # Desconto: menor é melhor — usa referência dinâmica (média do time no período)
             disc_ref = None
@@ -2699,7 +2699,7 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
             dfx["entregue_meta_faturamento"] = (meta.notna()) & (meta > 0) & (fat.notna()) & (alcance_real >= 100.0)
             dfx["entregue_margem"] = pd.to_numeric(dfx["margem_pct"], errors="coerce") >= 26.0
             dfx["entregue_conversao"] = pd.to_numeric(dfx["conversao_pct"], errors="coerce") >= 12.0
-            dfx["entregue_prazo"] = pd.to_numeric(dfx["prazo_medio"], errors="coerce") <= 43.0
+            dfx["entregue_prazo"] = pd.to_numeric(dfx["prazo_medio"], errors="coerce") <= META_PRAZO_MEDIO_DIAS
             dfx["entregue_tme"] = pd.to_numeric(dfx["tme_minutos"], errors="coerce") <= 5.0
             dfx["entregue_interacoes"] = pd.to_numeric(dfx["interacoes"], errors="coerce") >= 200.0
             if disc_ref is not None:

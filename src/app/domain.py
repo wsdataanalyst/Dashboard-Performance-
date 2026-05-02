@@ -37,7 +37,7 @@ def _to_float(v: Any) -> float | None:
 
 
 def _to_int(v: Any) -> int | None:
-    if v is None:
+    if v is None or isinstance(v, bool):
         return None
     try:
         return int(float(v))

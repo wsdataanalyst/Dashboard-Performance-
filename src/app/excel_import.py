@@ -207,7 +207,7 @@ def _merge(base: dict[str, dict], updates: list[dict[str, Any]]) -> None:
 
 
 def _to_int(v: Any) -> int | None:
-    if v is None or (isinstance(v, float) and pd.isna(v)):
+    if v is None or isinstance(v, bool) or (isinstance(v, float) and pd.isna(v)):
         return None
     try:
         if isinstance(v, (int, float)):
