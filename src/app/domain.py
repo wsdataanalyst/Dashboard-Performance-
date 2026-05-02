@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import copy
+import re
+import unicodedata
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
@@ -53,6 +56,112 @@ def is_excluded_seller_name(nome: str) -> bool:
     """Vendedores cujo primeiro nome é Laila não entram em cálculos nem no armazenamento."""
     parts = (nome or "").strip().lower().split()
     return bool(parts and parts[0] == "laila")
+
+
+def _norm_vendedor_key(nome: str) -> str:
+    """Chave estável para detectar duplicatas do mesmo vendedor (alinhado ao acúmulo no Streamlit)."""
+    txt = str(nome or "").strip().lower()
+    txt = txt.replace("_", " ")
+    txt = re.sub(r"\(\s*\d+\s*\)", "", txt).strip()
+    txt = re.sub(r"r\$\s*[\d\.,]+", "", txt, flags=re.IGNORECASE).strip()
+    txt = unicodedata.normalize("NFKD", txt)
+    txt = "".join(ch for ch in txt if not unicodedata.combining(ch))
+    txt = re.sub(r"[^a-z0-9\s]+", " ", txt)
+    txt = re.sub(r"\s{2,}", " ", txt).strip()
+    return txt
+
+
+def _dedupe_vendedores_dicts(items: list[dict]) -> list[dict]:
+    """
+    Mescla linhas duplicadas do mesmo vendedor (mesmo _norm_vendedor_key).
+
+    Import/merge às vezes gera duas entradas com KPIs diferentes; para bônus usamos regra
+    conservadora: prazo médio = máximo (pior), TME = máximo, conversão/alcance/margem/interações = mínimo.
+    Demais campos numéricos: preenche faltantes a partir das outras linhas; volume = máximo.
+    """
+    groups: OrderedDict[str, list[dict]] = OrderedDict()
+    for item in items:
+        nome = str(item.get("nome") or "").strip()
+        if not nome:
+            continue
+        k = _norm_vendedor_key(nome)
+        if k not in groups:
+            groups[k] = []
+        groups[k].append(dict(item))
+
+    out: list[dict] = []
+    for bucket in groups.values():
+        if len(bucket) == 1:
+            out.append(bucket[0])
+            continue
+
+        canonical = max(bucket, key=lambda x: len(str(x.get("nome") or "").strip()))
+        merged: dict = dict(canonical)
+        merged["nome"] = str(canonical.get("nome") or "").strip()
+
+        for b in bucket:
+            if b is canonical:
+                continue
+            for key, v in b.items():
+                if key == "nome" or v is None:
+                    continue
+                if merged.get(key) is None:
+                    merged[key] = v
+
+        prazos = [_to_int(b.get("prazo_medio")) for b in bucket]
+        prazos = [p for p in prazos if p is not None]
+        if prazos:
+            merged["prazo_medio"] = max(prazos)
+
+        tmes = [_to_float(b.get("tme_minutos")) for b in bucket]
+        tmes = [t for t in tmes if t is not None]
+        if tmes:
+            merged["tme_minutos"] = max(tmes)
+
+        convs = [_to_float(b.get("conversao_pct")) for b in bucket]
+        convs = [c for c in convs if c is not None]
+        if convs:
+            merged["conversao_pct"] = min(convs)
+
+        inters = [_to_int(b.get("interacoes")) for b in bucket]
+        inters = [i for i in inters if i is not None]
+        if inters:
+            merged["interacoes"] = min(inters)
+
+        margs = [_to_float(b.get("margem_pct")) for b in bucket]
+        margs = [m for m in margs if m is not None]
+        if margs:
+            merged["margem_pct"] = min(margs)
+
+        alcs: list[float] = []
+        for b in bucket:
+            for key in ("alcance_projetado_pct", "alcance_pct"):
+                a = _to_float(b.get(key))
+                if a is not None:
+                    alcs.append(float(a))
+        if alcs:
+            amin = min(alcs)
+            merged["alcance_projetado_pct"] = amin
+            merged["alcance_pct"] = amin
+
+        fats = [_to_float(b.get("faturamento")) for b in bucket]
+        fats = [f for f in fats if f is not None]
+        if fats:
+            merged["faturamento"] = max(fats)
+
+        nfs = [_to_int(b.get("qtd_faturadas")) for b in bucket]
+        nfs = [n for n in nfs if n is not None]
+        if nfs:
+            merged["qtd_faturadas"] = max(nfs)
+
+        for fld in ("iniciados", "recebidos", "chamadas", "finalizados"):
+            vals = [_to_int(b.get(fld)) for b in bucket]
+            vals = [v for v in vals if v is not None]
+            if vals:
+                merged[fld] = max(vals)
+
+        out.append(merged)
+    return out
 
 
 def refresh_payload_totais_from_vendedores(payload: dict[str, Any]) -> None:
@@ -167,6 +276,7 @@ def parse_sellers(payload: dict[str, Any]) -> list[Seller]:
     if not isinstance(raw, list):
         return sellers
 
+    cleaned: list[dict] = []
     for item in raw:
         if not isinstance(item, dict):
             continue
@@ -175,6 +285,10 @@ def parse_sellers(payload: dict[str, Any]) -> list[Seller]:
             continue
         if is_excluded_seller_name(nome):
             continue
+        cleaned.append(dict(item))
+
+    for item in _dedupe_vendedores_dicts(cleaned):
+        nome = str(item.get("nome") or "").strip()
         sellers.append(
             Seller(
                 nome=nome,
