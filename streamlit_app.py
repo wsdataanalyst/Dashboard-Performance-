@@ -235,6 +235,7 @@ def _extract_ref_date_iso_from_periodo(txt: object) -> str | None:
     s = str(txt or "").strip()
     if not s:
         return None
+
     m_iso = re.search(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)", s)
     if m_iso:
         yy, mm, dd = int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3))
@@ -248,7 +249,7 @@ def _extract_ref_date_iso_from_periodo(txt: object) -> str | None:
     yy_raw = m_br.group(3)
     if yy_raw is None:
         try:
-            from datetime import timedelta, timezone, datetime
+            from datetime import datetime, timedelta, timezone
 
             tz = timezone(timedelta(hours=-3))
             yy = int(datetime.now(tz).year)
@@ -261,6 +262,74 @@ def _extract_ref_date_iso_from_periodo(txt: object) -> str | None:
     if not (1 <= mm <= 12 and 1 <= dd <= 31):
         return None
     return f"{yy:04d}-{mm:02d}-{dd:02d}"
+
+
+def _latest_saved_perf_date_key_iso(conn: object, *, owner_user_id: int | None, include_all: bool) -> str | None:
+    """
+    Retorna a maior data ISO (YYYY-MM-DD) entre análises de performance já salvas,
+    considerando a regra do app: apenas payloads sem `_kind` e com vendedores.
+    """
+    try:
+        rows = list_analyses(conn, limit=1200, owner_user_id=owner_user_id, include_all=include_all)
+    except Exception:
+        return None
+    best: str | None = None
+    for rr in rows:
+        try:
+            p = json.loads(getattr(rr, "payload_json", "") or "")
+        except Exception:
+            continue
+        if not isinstance(p, dict):
+            continue
+        if str(p.get("_kind") or ""):
+            continue
+        if not parse_sellers(p):
+            continue
+        try:
+            dk, _ = _extract_date_label_from_periodo(
+                str(getattr(rr, "periodo", "") or ""),
+                str(getattr(rr, "created_at", "") or ""),
+            )
+        except Exception:
+            dk = "0000-00-00"
+        if not dk or dk == "0000-00-00":
+            continue
+        if best is None or str(dk) > str(best):
+            best = str(dk)
+    return best
+
+
+def _perf_analysis_rows_chronological(conn: object, *, owner_user_id: int | None, include_all: bool, limit: int = 500) -> list[object]:
+    """
+    Retorna análises de performance (payload sem `_kind` e com vendedores) em ordem cronológica
+    pela data extraída do `periodo` (dd/mm/aaaa). Empata por id.
+    """
+    try:
+        rows = list_analyses(conn, limit=int(limit), owner_user_id=owner_user_id, include_all=include_all)
+    except Exception:
+        return []
+
+    tmp: list[tuple[str, int, object]] = []
+    for r in rows:
+        try:
+            p = json.loads(getattr(r, "payload_json", "") or "")
+        except Exception:
+            continue
+        if not isinstance(p, dict):
+            continue
+        if str(p.get("_kind") or ""):
+            continue
+        if not parse_sellers(p):
+            continue
+        try:
+            dk, _ = _extract_date_label_from_periodo(str(getattr(r, "periodo", "") or ""), str(getattr(r, "created_at", "") or ""))
+        except Exception:
+            dk = "0000-00-00"
+        if not dk or dk == "0000-00-00":
+            continue
+        tmp.append((str(dk), int(getattr(r, "id", 0) or 0), r))
+    tmp.sort(key=lambda x: (x[0], x[1]))
+    return [x[2] for x in tmp]
 
 
 def _iso_to_br(iso_yyyy_mm_dd: str) -> str:
@@ -1175,8 +1244,8 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
 
     st.markdown("### 📄 Importar Excel (mais confiável que OCR)")
     excel_files = st.file_uploader(
-        "Envie os **7 arquivos de performance** e, se quiser, **+2 de orçamentos** (pendentes e finalizados) **no mesmo lote** — até **9** arquivos. "
-        "Aceita .xlsx / .xls (incluindo export HTML). O app reconhece: Performance (prints 1–5), **Faturamento e Atendidos**, **Departamentos** e **Orçamentos** (por colunas ou por nomes com *pendente* / *finalizado*).",
+        "Envie os **6 arquivos de performance** e, se quiser, **+2 de orçamentos** (pendentes e finalizados) **no mesmo lote** — até **8** arquivos. "
+        "Aceita .xlsx / .xls (incluindo export HTML). O app reconhece: Performance (prints 1–5), **Departamentos** e **Orçamentos** (por colunas ou por nomes com *pendente* / *finalizado*).",
         type=["xlsx", "xls"],
         accept_multiple_files=True,
         key="excel_upload",
@@ -1191,33 +1260,7 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                     dept_files: list[tuple[str, bytes]] = []
                     orc_files: list[tuple[str, bytes]] = []
 
-                    # Cache: evolução diária (Faturamento e Atendidos)
-                    daily_ok = False
                     for fname, b in files_bytes:
-                        # tenta identificar "Faturamento e Atendidos"
-                        try:
-                            dres = import_faturamento_atendidos_daily_df(b)
-                            if isinstance(dres.df_daily, pd.DataFrame) and not dres.df_daily.empty:
-                                st.session_state["sg_daily_df"] = dres.df_daily
-                                st.session_state["sg_daily_meta"] = dres.meta
-                                st.session_state["sg_daily_source_name"] = fname
-                                # também preenche KPIs do dia anterior automaticamente
-                                try:
-                                    kres = import_faturamento_atendidos_xlsx(b)
-                                    if kres.kpis:
-                                        st.session_state["sg_nf_dia"] = int(kres.kpis.get("nf_dia_anterior") or 0)
-                                        st.session_state["sg_nf_acum"] = int(kres.kpis.get("nf_acumulado") or 0)
-                                        st.session_state["sg_cli_dia"] = int(kres.kpis.get("clientes_dia_anterior") or 0)
-                                        st.session_state["sg_cli_acum"] = int(kres.kpis.get("clientes_acumulado") or 0)
-                                        st.session_state["sg_fat_dia_anterior"] = float(kres.kpis.get("faturamento_dia_anterior") or 0.0)
-                                        st.session_state["sg_kpi_source_name"] = fname
-                                except Exception:
-                                    pass
-                                daily_ok = True
-                                continue  # não entra no import de performance
-                        except Exception:
-                            pass
-
                         # tenta identificar "Departamentos" (por conteúdo)
                         try:
                             dpt1 = import_departamentos([(fname, b)])
@@ -1320,10 +1363,6 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                     combined_warnings.extend(list(res.warnings or []))
                 except Exception:
                     pass
-                if not daily_ok:
-                    combined_warnings.append(
-                        "Não encontrei o arquivo 'Faturamento e Atendidos' neste lote (aba Evolução dia a dia ficará sem base até importar)."
-                    )
 
                 if len(orc_files) == 1:
                     combined_warnings.append(
@@ -1663,6 +1702,25 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                         f'<div class="dp-kpi-value" style="font-size:1.05rem">{meta.get("provider","—")} / {meta.get("model","—")}</div></div>',
                         unsafe_allow_html=True)
 
+        st.markdown("### Operacional (manual antes de salvar)")
+        st.caption(
+            "Preencha o **ACUMULADO do mês** até a data desta análise. "
+            "O app calcula os cards de **dia anterior** como a diferença entre a última análise salva e a anterior."
+        )
+        oc1, oc2 = st.columns(2)
+        ops_nf_acc = oc1.number_input(
+            "Notas emitidas (acumulado do mês)",
+            min_value=0,
+            value=int(st.session_state.get("ops_nf_acc") or 0),
+            key="ops_nf_acc",
+        )
+        ops_cli_acc = oc2.number_input(
+            "Clientes atendidos (acumulado do mês)",
+            min_value=0,
+            value=int(st.session_state.get("ops_cli_acc") or 0),
+            key="ops_cli_acc",
+        )
+
         st.markdown("### Salvar no histórico")
         if st.button("✅ Salvar análise", use_container_width=True):
             meta = st.session_state.get("extraction_meta") or {"provider": "manual", "model": "manual"}
@@ -1672,11 +1730,33 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
             # Vincular bases auxiliares (Sala de Gestão) à análise salva:
             # evita ficar dependente do "cache da sessão" ao trocar a análise ativa.
             payload_to_save = dict(payload)
+            payload_to_save["_ops"] = {
+                "nf_acumulado": int(ops_nf_acc),
+                "clientes_acumulado": int(ops_cli_acc),
+            }
             # Novo modelo robusto: quando o usuário informa data no período, isso vira a "chave do dia".
             # O app salva um registro "delta do dia" e, em seguida, materializa o "acumulado até a data"
             # somando todos os deltas (determinístico, sem heurística).
             ref_date = _extract_ref_date_iso_from_periodo(periodo_final)
             is_admin = str(user.get("role") or "").lower() == "admin"
+
+            # Regra obrigatória: análises históricas só funcionam com data correta no Período.
+            if not ref_date:
+                st.error("Para salvar a análise no histórico, o campo **Período** deve conter uma data no formato **dd/mm/aaaa** (ex.: 02/05/2026).")
+                st.stop()
+
+            # Regra obrigatória: sequência crescente (dia atual deve ser maior que o último salvo).
+            try:
+                last_saved = _latest_saved_perf_date_key_iso(conn, owner_user_id=owner_id, include_all=is_admin)
+            except Exception:
+                last_saved = None
+            if last_saved and str(ref_date) <= str(last_saved):
+                st.error(
+                    f"Data fora de sequência. Última análise de performance salva está em **{_iso_to_br(str(last_saved))}**. "
+                    f"Você tentou salvar **{_iso_to_br(str(ref_date))}**. Ajuste o **Período** para o próximo dia correto."
+                )
+                st.stop()
+
             if ref_date:
                 try:
                     # 1) Salvar/atualizar DELTA do dia (idempotente por data)
@@ -2175,24 +2255,19 @@ def page_evolution(settings, conn) -> None:
     user = st.session_state.get("user") or {}
     owner_id = int(user.get("id") or 0) or None
     is_admin = str(user.get("role") or "").lower() == "admin"
-    rows = list_analyses(conn, limit=200, owner_user_id=owner_id, include_all=is_admin)
+    rows = _perf_analysis_rows_chronological(conn, owner_user_id=owner_id, include_all=is_admin, limit=600)
     if len(rows) < 2:
         st.info("Você precisa de pelo menos 2 análises salvas para ver a evolução.")
         return
 
     # Filtra somente análises de performance/bônus (evita misturar Sala de Gestão e registros sem vendedores).
     hist: list[dict] = []
-    for r in reversed(rows):  # cronológico (antigo -> novo)
+    for r in rows:  # cronológico (antigo -> novo) por data do período
         try:
             p = json.loads(getattr(r, "payload_json", "") or "")
         except Exception:
             continue
         if not isinstance(p, dict):
-            continue
-        kind = str(p.get("_kind") or "")
-        if kind.startswith("sala_gestao_"):
-            continue
-        if not parse_sellers(p):
             continue
         hist.append(
             {
@@ -2209,7 +2284,8 @@ def page_evolution(settings, conn) -> None:
         return
 
     # Eixo X contínuo (evita “buracos” quando há períodos apagados/ignorados).
-    df = df.sort_values("id", ascending=True).reset_index(drop=True)
+    # Já está em ordem cronológica; apenas garante ordem estável por id.
+    df = df.sort_values(["id"], ascending=True).reset_index(drop=True)
     df["seq"] = list(range(1, len(df) + 1))
 
     c1, c2 = st.columns(2)
@@ -2421,23 +2497,16 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
         pct_txt = f"{float(d_pct):.2f}%" if d_pct is not None and not pd.isna(d_pct) else "—"
         _kpi_card("Desconto", pct_txt, icon="🏷", accent="#93c5fd")
 
-    # Evolução de conversão por período (últimas análises salvas)
+    # Evolução de conversão por período (últimas análises salvas) — ordem cronológica por data no Período
     st.markdown("### Conversão x Interações (comparativo por análise salva)")
-    rows = list_analyses(conn, limit=12, owner_user_id=owner_id, include_all=is_admin)
+    rows = _perf_analysis_rows_chronological(conn, owner_user_id=owner_id, include_all=is_admin, limit=60)
     if len(rows) >= 2:
         hist: list[dict] = []
-        for r in reversed(rows):  # cronológico (antigo -> novo)
+        for r in rows[-12:]:  # mantém apenas as últimas N análises, mas sempre cronológico
             try:
                 payload_r = json.loads(r.payload_json)
             except Exception:
                 continue
-            # Evita misturar "Sala de Gestão" (e outras análises não-performance) neste gráfico.
-            if isinstance(payload_r, dict):
-                kind = str(payload_r.get("_kind") or "")
-                if kind.startswith("sala_gestao_"):
-                    continue
-                if not parse_sellers(payload_r):
-                    continue
             base = _extract_perf_summary_from_payload(r.periodo, payload_r)
             inter = float(base.get("tot_interacoes") or 0)
             nfs = float(base.get("tot_nfs") or 0)
