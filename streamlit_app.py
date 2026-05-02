@@ -1567,6 +1567,17 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
             df_prev["chamadas"] = df_prev["nome"].apply(lambda n: raw_map.get(n).chamadas if raw_map.get(n) else None)
             df_prev["faturamento"] = df_prev["nome"].apply(lambda n: raw_map.get(n).faturamento if raw_map.get(n) else None)
             df_prev["meta_faturamento"] = df_prev["nome"].apply(lambda n: raw_map.get(n).meta_faturamento if raw_map.get(n) else None)
+            # Campo manual (não vem do cálculo de bônus): permite preencher por consultor e consolidar no total
+            df_prev["clientes_atendidos"] = df_prev["nome"].apply(
+                lambda n: (payload.get("vendedores") or [])
+            )
+            try:
+                # busca do payload original por vendedor
+                raw_v0 = payload.get("vendedores") if isinstance(payload.get("vendedores"), list) else []
+                vmap0 = {str(v.get("nome") or "").strip(): v for v in raw_v0 if isinstance(v, dict) and v.get("nome")}
+                df_prev["clientes_atendidos"] = df_prev["nome"].apply(lambda n: vmap0.get(str(n).strip(), {}).get("clientes_atendidos"))
+            except Exception:
+                pass
             df_prev["ticket_medio"] = df_prev.apply(
                 lambda r: (float(r["faturamento"]) / float(r["qtd_faturadas"])) if (pd.notna(r.get("faturamento")) and (r.get("qtd_faturadas") or 0) > 0) else None,
                 axis=1,
@@ -1576,6 +1587,7 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
 
             cols_edit = [
                 "nome",
+                "clientes_atendidos",
                 "alcance_pct",
                 "margem_pct",
                 "prazo_medio",
@@ -1636,6 +1648,7 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
 
                         # campos numéricos (mantém None quando vazio)
                         for k in [
+                            "clientes_atendidos",
                             "alcance_pct",
                             "margem_pct",
                             "prazo_medio",
@@ -1657,12 +1670,31 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                                     tgt[k] = None
                                 continue
                             # ints para campos naturalmente inteiros
-                            if k in {"prazo_medio", "interacoes", "chamadas", "qtd_faturadas"}:
+                            if k in {"prazo_medio", "interacoes", "chamadas", "qtd_faturadas", "clientes_atendidos"}:
                                 tgt[k] = int(round(float(nv)))
                             else:
                                 tgt[k] = float(nv)
 
                     payload["vendedores"] = raw_v
+                    # Consolidação do total (time)
+                    try:
+                        tot = payload.get("totais") if isinstance(payload.get("totais"), dict) else {}
+                        tot = dict(tot) if isinstance(tot, dict) else {}
+                        cli_sum = 0
+                        for it in raw_v:
+                            if not isinstance(it, dict):
+                                continue
+                            v = it.get("clientes_atendidos")
+                            if v is None:
+                                continue
+                            try:
+                                cli_sum += int(float(v))
+                            except Exception:
+                                continue
+                        tot["clientes_atendidos_total"] = int(cli_sum)
+                        payload["totais"] = tot
+                    except Exception:
+                        pass
                     st.session_state["payload"] = payload
                     st.success("Ajustes aplicados na prévia. Os cálculos e o bônus serão recalculados automaticamente.")
                     st.rerun()
@@ -1702,25 +1734,6 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
                         f'<div class="dp-kpi-value" style="font-size:1.05rem">{meta.get("provider","—")} / {meta.get("model","—")}</div></div>',
                         unsafe_allow_html=True)
 
-        st.markdown("### Operacional (manual antes de salvar)")
-        st.caption(
-            "Preencha o **ACUMULADO do mês** até a data desta análise. "
-            "O app calcula os cards de **dia anterior** como a diferença entre a última análise salva e a anterior."
-        )
-        oc1, oc2 = st.columns(2)
-        ops_nf_acc = oc1.number_input(
-            "Notas emitidas (acumulado do mês)",
-            min_value=0,
-            value=int(st.session_state.get("ops_nf_acc") or 0),
-            key="ops_nf_acc",
-        )
-        ops_cli_acc = oc2.number_input(
-            "Clientes atendidos (acumulado do mês)",
-            min_value=0,
-            value=int(st.session_state.get("ops_cli_acc") or 0),
-            key="ops_cli_acc",
-        )
-
         st.markdown("### Salvar no histórico")
         if st.button("✅ Salvar análise", use_container_width=True):
             meta = st.session_state.get("extraction_meta") or {"provider": "manual", "model": "manual"}
@@ -1730,10 +1743,6 @@ def page_upload(settings, conn, *, embedded: bool = False) -> None:
             # Vincular bases auxiliares (Sala de Gestão) à análise salva:
             # evita ficar dependente do "cache da sessão" ao trocar a análise ativa.
             payload_to_save = dict(payload)
-            payload_to_save["_ops"] = {
-                "nf_acumulado": int(ops_nf_acc),
-                "clientes_acumulado": int(ops_cli_acc),
-            }
             # Novo modelo robusto: quando o usuário informa data no período, isso vira a "chave do dia".
             # O app salva um registro "delta do dia" e, em seguida, materializa o "acumulado até a data"
             # somando todos os deltas (determinístico, sem heurística).
