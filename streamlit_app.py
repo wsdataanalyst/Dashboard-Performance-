@@ -4110,7 +4110,7 @@ def page_insights(settings, conn) -> None:
             {
                 "periodo": row.periodo,
                 "total_bonus": total,
-                # Importante: `totais.meta_total` pode incluir meta de vendedores excluídos (ex.: Laila),
+                # Importante: `totais.meta_total` pode refletir a linha TOTAL do print (time completo).
                 # sem que eles apareçam em vendedores/dashboards.
                 "totais": totais,
                 "vendedores": df.to_dict(orient="records") if not df.empty else [],
@@ -4786,7 +4786,7 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
         cal = st.session_state.get("calendar_info") or {}
         dias_restantes = int(cal.get("dias_uteis_restantes") or 0)
 
-        # Meta geral do time deve vir do payload/totais (inclui meta da Laila sem exibir ela).
+        # Meta geral do time deve vir do payload/totais (linha TOTAL / consolidado).
         # O Excel "Faturamento e Atendidos" serve para KPIs diários (dia anterior), não para meta geral.
         fat_atual = float(totais.get("faturamento_total") or 0.0)
         meta_total = float(totais.get("meta_total") or 0.0)

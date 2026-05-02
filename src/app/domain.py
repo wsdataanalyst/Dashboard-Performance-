@@ -53,9 +53,8 @@ def _to_int(v: Any) -> int | None:
 
 
 def is_excluded_seller_name(nome: str) -> bool:
-    """Vendedores cujo primeiro nome é Laila não entram em cálculos nem no armazenamento."""
-    parts = (nome or "").strip().lower().split()
-    return bool(parts and parts[0] == "laila")
+    """Reservado para futuras regras de exclusão. Nenhum vendedor é excluído (Laila Rodrigues participa das análises)."""
+    return False
 
 
 def _norm_vendedor_key(nome: str) -> str:
@@ -214,37 +213,18 @@ def _sum_meta_total_from_raw_vendors(vendors: list[Any]) -> float | None:
 
 def filter_excluded_sellers_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """
-    Remove vendedores excluídos (ex.: Laila) do payload.
-
-    Regra de negócio: o(a) vendedor(a) excluído(a) não aparece em detalhes/dashboards,
-    mas a META do time pode permanecer a mesma. Por isso, preservamos `totais.meta_total`
-    considerando também os vendedores excluídos quando houver meta por vendedor.
+    Normaliza o payload: mantém todos os vendedores, recalcula totais a partir da lista
+    e preserva `totais.meta_total` quando já vier do print (linha TOTAL).
     """
     out = copy.deepcopy(payload)
     raw = out.get("vendedores")
     if not isinstance(raw, list):
         return out
-    # Se o payload já vier com totais (linha TOTAL do print), preserve-os como fonte oficial.
     existing_totais = out.get("totais") if isinstance(out.get("totais"), dict) else {}
     existing_meta_total = _to_float(existing_totais.get("meta_total")) if isinstance(existing_totais, dict) else None
-    # Fallback: somar apenas a meta do vendedor excluído (Laila) sem trazer ela para detalhes
-    laila_meta = 0.0
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        nome = str(item.get("nome") or "")
-        if is_excluded_seller_name(nome):
-            m = _to_float(item.get("meta_faturamento") or item.get("meta_total"))
-            if m is not None:
-                laila_meta += float(m)
     meta_total_incl_excl = _sum_meta_total_from_raw_vendors(raw)
-    out["vendedores"] = [
-        x
-        for x in raw
-        if isinstance(x, dict) and not is_excluded_seller_name(str(x.get("nome") or ""))
-    ]
+    out["vendedores"] = [x for x in raw if isinstance(x, dict)]
     refresh_payload_totais_from_vendedores(out)
-    # Preferir meta_total já fornecida pelos prints; senão, usar soma incluindo excluídos.
     if existing_meta_total is not None and existing_meta_total > 0:
         tot = out.get("totais")
         if isinstance(tot, dict):
@@ -261,12 +241,6 @@ def filter_excluded_sellers_from_payload(payload: dict[str, Any]) -> dict[str, A
             out["totais"] = tot
         else:
             out["totais"] = {"meta_total": meta_total_incl_excl}
-    elif laila_meta > 0:
-        tot = out.get("totais") if isinstance(out.get("totais"), dict) else {}
-        cur = _to_float(tot.get("meta_total")) or 0.0
-        tot2 = dict(tot) if isinstance(tot, dict) else {}
-        tot2["meta_total"] = float(cur) + float(laila_meta)
-        out["totais"] = tot2
     return out
 
 
@@ -282,8 +256,6 @@ def parse_sellers(payload: dict[str, Any]) -> list[Seller]:
             continue
         nome = str(item.get("nome") or "").strip()
         if not nome:
-            continue
-        if is_excluded_seller_name(nome):
             continue
         cleaned.append(dict(item))
 

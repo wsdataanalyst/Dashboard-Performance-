@@ -721,52 +721,17 @@ def list_invites(conn: Any, limit: int = 50) -> list[dict[str, Any]]:
 
 
 def delete_feedbacks_excluded_sellers(conn: sqlite3.Connection) -> int:
-    """Remove registros de feedback cujo colaborador é nome excluído (ex.: Laila)."""
-    cur = conn.execute(
-        """
-DELETE FROM feedbacks
-WHERE lower(trim(seller_name)) = 'laila'
-   OR lower(trim(seller_name)) LIKE 'laila %'
-"""
-    )
-    conn.commit()
-    return int(cur.rowcount if cur.rowcount is not None else 0)
+    """Compatibilidade: não remove mais feedbacks por nome (nenhum vendedor excluído)."""
+    return 0
 
 
 def purge_excluded_sellers_from_all_analyses(conn: sqlite3.Connection) -> tuple[int, int, int]:
     """
-    Atualiza todas as linhas de `analyses`: remove vendedores excluídos do JSON,
-    recalcula total_bonus e apaga feedbacks ligados a nomes excluídos.
-    Retorna (analyses_alteradas, vendedores_removidos_estimado, feedbacks_apagados).
+    Compatibilidade: não há mais vendedores excluídos por nome.
+    Retorna (0, 0, 0). Análises antigas sem Laila no JSON só recuperam o registro reimportando os prints.
     """
-    from .bonus import calcular_time
-    from .domain import filter_excluded_sellers_from_payload, is_excluded_seller_name, parse_sellers
-
-    fb_deleted = delete_feedbacks_excluded_sellers(conn)
-
-    rows = conn.execute("SELECT id, payload_json FROM analyses").fetchall()
-    analyses_changed = 0
-    sellers_removed = 0
-    for r in rows:
-        aid = int(r["id"])
-        payload = json.loads(r["payload_json"])
-        raw = payload.get("vendedores") or []
-        if not isinstance(raw, list):
-            continue
-        before_ex = sum(1 for x in raw if isinstance(x, dict) and is_excluded_seller_name(str(x.get("nome") or "")))
-        if before_ex == 0:
-            continue
-        sellers_removed += before_ex
-        new_payload = filter_excluded_sellers_from_payload(payload)
-        sellers = parse_sellers(new_payload)
-        _, total = calcular_time(sellers) if sellers else ([], 0.0)
-        conn.execute(
-            "UPDATE analyses SET payload_json = ?, total_bonus = ? WHERE id = ?",
-            (json.dumps(new_payload, ensure_ascii=False), float(total), aid),
-        )
-        analyses_changed += 1
-    conn.commit()
-    return analyses_changed, sellers_removed, fb_deleted
+    _ = delete_feedbacks_excluded_sellers(conn)
+    return (0, 0, 0)
 
 
 def save_upload_file(

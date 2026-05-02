@@ -181,12 +181,8 @@ def _norm_name_match(s: str) -> str:
 
 
 def _is_excluded_nome(nome: str) -> bool:
-    # remove qualquer lixo antes do primeiro token (|, etc)
-    s = _norm_name_match(nome)
-    if not s:
-        return False
-    first = s.split()[0]
-    return first == "laila"
+    """Nenhum nome é excluído por padrão (Laila Rodrigues entra no OCR)."""
+    return False
 
 
 def _merge_records(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
