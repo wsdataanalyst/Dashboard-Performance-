@@ -132,16 +132,15 @@ def _dedupe_vendedores_dicts(items: list[dict]) -> list[dict]:
         if margs:
             merged["margem_pct"] = min(margs)
 
-        alcs: list[float] = []
-        for b in bucket:
-            for key in ("alcance_projetado_pct", "alcance_pct"):
-                a = _to_float(b.get(key))
-                if a is not None:
-                    alcs.append(float(a))
-        if alcs:
-            amin = min(alcs)
-            merged["alcance_projetado_pct"] = amin
-            merged["alcance_pct"] = amin
+        alc_proj = [_to_float(b.get("alcance_projetado_pct")) for b in bucket]
+        alc_proj = [a for a in alc_proj if a is not None]
+        if alc_proj:
+            merged["alcance_projetado_pct"] = min(alc_proj)
+
+        alc_real = [_to_float(b.get("alcance_pct")) for b in bucket]
+        alc_real = [a for a in alc_real if a is not None]
+        if alc_real:
+            merged["alcance_pct"] = min(alc_real)
 
         fats = [_to_float(b.get("faturamento")) for b in bucket]
         fats = [f for f in fats if f is not None]
