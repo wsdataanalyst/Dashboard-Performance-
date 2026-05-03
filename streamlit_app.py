@@ -2368,107 +2368,104 @@ def page_dashboard(settings, conn) -> None:
             d_ideal=_delta_vs_ideal(cur, 200.0, direction=">=", digits=0),
         )
 
-    st.info(
-        "**Bônus SDR (Mayara Barros)** fica **logo abaixo** desta mensagem (antes das abas Resumo/Central). "
-        "É o bloco escuro estilo “Central de Vendas”. Preencha **% Participação em vendas** no campo numérico.",
-        icon="👤",
-    )
+    def _render_sdr_mayara_section() -> None:
+        """Bônus SDR na mesma aba da Central, abaixo da tabela."""
+        st.divider()
+        st.markdown("### Bônus SDR — Mayara Barros · Assistente Comercial")
+        st.caption(
+            "Conversão / TME / Margem = média do **time** desta análise. **Participação em vendas** é manual."
+        )
 
-    st.markdown("### Bônus SDR — Mayara Barros · Assistente Comercial")
-    st.caption(
-        "Mesmos critérios combinados: conversão/TME/margem = média do **time** desta análise; participação = **manual**."
-    )
+        def _mean_col_team(dfx: pd.DataFrame, col: str) -> float | None:
+            if col not in dfx.columns:
+                return None
+            s = pd.to_numeric(dfx[col], errors="coerce").dropna()
+            if s.empty:
+                return None
+            return float(s.mean())
 
-    def _mean_col_team(dfx: pd.DataFrame, col: str) -> float | None:
-        if col not in dfx.columns:
-            return None
-        s = pd.to_numeric(dfx[col], errors="coerce").dropna()
-        if s.empty:
-            return None
-        return float(s.mean())
+        sdr_name = "Mayara Barros"
+        sdr_role = "Assistente Comercial SDR — responde por no momento"
+        tc = _mean_col_team(df, "conversao_pct")
+        tt = _mean_col_team(df, "tme_minutos")
+        tm = _mean_col_team(df, "margem_pct")
+        part_key = "bonus_sdr_participacao_pct"
+        part_default = float(st.session_state.get(part_key, 0.0) or 0.0)
+        part_pct = st.number_input(
+            "% Participação em vendas (Mayara — preenchimento manual)",
+            min_value=0.0,
+            max_value=100.0,
+            step=0.1,
+            format="%.1f",
+            value=part_default,
+            key=part_key,
+            help="Indicador não calculado pela ferramenta; informe o percentual para a meta de 20% (R$ 100).",
+        )
 
-    sdr_name = "Mayara Barros"
-    sdr_role = "Assistente Comercial SDR — responde por no momento"
-    tc = _mean_col_team(df, "conversao_pct")
-    tt = _mean_col_team(df, "tme_minutos")
-    tm = _mean_col_team(df, "margem_pct")
-    part_key = "bonus_sdr_participacao_pct"
-    part_default = float(st.session_state.get(part_key, 0.0) or 0.0)
-    part_pct = st.number_input(
-        "% Participação em vendas (Mayara — preenchimento manual)",
-        min_value=0.0,
-        max_value=100.0,
-        step=0.1,
-        format="%.1f",
-        value=part_default,
-        key=part_key,
-        help="Indicador não calculado pela ferramenta; informe o percentual de participação para avaliar a meta de 20% (R$ 100).",
-    )
+        b_conv: bool | None = None if tc is None else bool(tc >= 17.0)
+        b_tme: bool | None = None if tt is None else bool(tt <= 5.0)
+        b_marg: bool | None = None if tm is None else bool(tm >= 26.0)
+        b_part: bool | None = bool(part_pct >= 20.0)
 
-    b_conv: bool | None = None if tc is None else bool(tc >= 17.0)
-    b_tme: bool | None = None if tt is None else bool(tt <= 5.0)
-    b_marg: bool | None = None if tm is None else bool(tm >= 26.0)
-    b_part: bool | None = bool(part_pct >= 20.0)
+        v_conv = 150.0 if b_conv is True else 0.0
+        v_tme = 150.0 if b_tme is True else 0.0
+        v_marg = 150.0 if b_marg is True else 0.0
+        v_part = 100.0 if b_part else 0.0
 
-    v_conv = 150.0 if b_conv is True else 0.0
-    v_tme = 150.0 if b_tme is True else 0.0
-    v_marg = 150.0 if b_marg is True else 0.0
-    v_part = 100.0 if b_part else 0.0
+        sdr_indicadores: list[dict[str, object]] = [
+            {
+                "indicador": "Conversão geral (time)",
+                "origem": "Média do time (ferramenta)",
+                "entrega": f"{tc:.1f}%" if tc is not None else "—",
+                "meta": "≥ 17%",
+                "ok": b_conv,
+                "bonus": v_conv,
+            },
+            {
+                "indicador": "TME (time)",
+                "origem": "Média do time (ferramenta)",
+                "entrega": f"{tt:.1f} min" if tt is not None else "—",
+                "meta": "≤ 5 min",
+                "ok": b_tme,
+                "bonus": v_tme,
+            },
+            {
+                "indicador": "Participação em vendas",
+                "origem": "Manual",
+                "entrega": f"{part_pct:.1f}%",
+                "meta": "≥ 20%",
+                "ok": b_part,
+                "bonus": v_part,
+            },
+            {
+                "indicador": "Margem (time)",
+                "origem": "Média do time (ferramenta)",
+                "entrega": f"{tm:.1f}%" if tm is not None else "—",
+                "meta": "≥ 26%",
+                "ok": b_marg,
+                "bonus": v_marg,
+            },
+        ]
+        sdr_total = float(v_conv + v_tme + v_part + v_marg)
+        st.markdown(
+            render_bonus_sdr_panel_html(
+                periodo=row.periodo,
+                nome=sdr_name,
+                cargo=sdr_role,
+                indicadores=sdr_indicadores,
+                total_sdr=sdr_total,
+            ),
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            render_bonus_consolidated_footer_html(total_vendedores=float(total), total_sdr=sdr_total),
+            unsafe_allow_html=True,
+        )
 
-    sdr_indicadores: list[dict[str, object]] = [
-        {
-            "indicador": "Conversão geral (time)",
-            "origem": "Média do time (ferramenta)",
-            "entrega": f"{tc:.1f}%" if tc is not None else "—",
-            "meta": "≥ 17%",
-            "ok": b_conv,
-            "bonus": v_conv,
-        },
-        {
-            "indicador": "TME (time)",
-            "origem": "Média do time (ferramenta)",
-            "entrega": f"{tt:.1f} min" if tt is not None else "—",
-            "meta": "≤ 5 min",
-            "ok": b_tme,
-            "bonus": v_tme,
-        },
-        {
-            "indicador": "Participação em vendas",
-            "origem": "Manual",
-            "entrega": f"{part_pct:.1f}%",
-            "meta": "≥ 20%",
-            "ok": b_part,
-            "bonus": v_part,
-        },
-        {
-            "indicador": "Margem (time)",
-            "origem": "Média do time (ferramenta)",
-            "entrega": f"{tm:.1f}%" if tm is not None else "—",
-            "meta": "≥ 26%",
-            "ok": b_marg,
-            "bonus": v_marg,
-        },
-    ]
-    sdr_total = float(v_conv + v_tme + v_part + v_marg)
-    st.markdown(
-        render_bonus_sdr_panel_html(
-            periodo=row.periodo,
-            nome=sdr_name,
-            cargo=sdr_role,
-            indicadores=sdr_indicadores,
-            total_sdr=sdr_total,
-        ),
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        render_bonus_consolidated_footer_html(total_vendedores=float(total), total_sdr=sdr_total),
-        unsafe_allow_html=True,
-    )
-
-    st.divider()
     tab_resumo, tab_bonus = st.tabs(["Resumo completo", "Central de Vendas | Bônus"])
 
     with tab_resumo:
+        st.caption("Bônus SDR (Mayara) e total consolidado: aba **Central de Vendas | Bônus** — role até o fim da página.")
         st.markdown("### Resultado por vendedor")
         st.dataframe(df, use_container_width=True, hide_index=True)
 
@@ -2490,6 +2487,9 @@ def page_dashboard(settings, conn) -> None:
             st.dataframe(pd.DataFrame(ups), use_container_width=True, hide_index=True)
 
     with tab_bonus:
+        st.caption(
+            "**Mayara (SDR):** role a página **para baixo** depois da tabela da Central — o painel escuro e o total consolidado ficam logo abaixo."
+        )
         st.markdown(
             render_bonus_central_panel_html(df, periodo=row.periodo, total=float(total)),
             unsafe_allow_html=True,
@@ -2497,6 +2497,7 @@ def page_dashboard(settings, conn) -> None:
         st.caption(
             "Detalhamento por coluna de R$ (margem, prazo, etc.) permanece na aba **Resumo completo**."
         )
+        _render_sdr_mayara_section()
 
 
 def page_evolution(settings, conn) -> None:
