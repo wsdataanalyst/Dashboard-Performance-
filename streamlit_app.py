@@ -782,6 +782,7 @@ def render_bonus_sdr_panel_html(
     cargo: str,
     indicadores: list[dict[str, object]],
     total_sdr: float,
+    margin_top_px: int = 18,
 ) -> str:
     """
     Painel no mesmo estilo da Central de Bônus, para critérios SDR (metas do time + campo manual).
@@ -809,8 +810,9 @@ def render_bonus_sdr_panel_html(
             "</tr>"
         )
     rows_joined = "\n".join(rows_html)
+    mt = max(0, int(margin_top_px))
     return f"""
-<div class="bonus-panel-wrap" style="margin-top: 18px;">
+<div class="bonus-panel-wrap" style="margin-top: {mt}px;">
   <h2 class="bonus-panel-title" style="margin:0 0 6px 0;">Bônus SDR — {nome_esc}</h2>
   <p class="bonus-panel-note" style="margin-top:0;">{cargo_esc} · Período: {periodo_esc}</p>
   <p class="bonus-panel-note">
@@ -2368,12 +2370,10 @@ def page_dashboard(settings, conn) -> None:
             d_ideal=_delta_vs_ideal(cur, 200.0, direction=">=", digits=0),
         )
 
-    def _render_sdr_mayara_section() -> None:
-        """Bônus SDR na mesma aba da Central, abaixo da tabela."""
-        st.divider()
-        st.markdown("### Bônus SDR — Mayara Barros · Assistente Comercial")
+    def _render_sdr_mayara_section(*, margin_top_panel: int = 0) -> float:
+        """Retorna o total SDR (R$). Painel escuro com mesmo CSS da Central."""
         st.caption(
-            "Conversão / TME / Margem = média do **time** desta análise. **Participação em vendas** é manual."
+            "Conversão / TME / Margem = média do **time**. **Participação em vendas** = manual (campo abaixo)."
         )
 
         def _mean_col_team(dfx: pd.DataFrame, col: str) -> float | None:
@@ -2454,18 +2454,18 @@ def page_dashboard(settings, conn) -> None:
                 cargo=sdr_role,
                 indicadores=sdr_indicadores,
                 total_sdr=sdr_total,
+                margin_top_px=margin_top_panel,
             ),
             unsafe_allow_html=True,
         )
-        st.markdown(
-            render_bonus_consolidated_footer_html(total_vendedores=float(total), total_sdr=sdr_total),
-            unsafe_allow_html=True,
-        )
+        return sdr_total
 
     tab_resumo, tab_bonus = st.tabs(["Resumo completo", "Central de Vendas | Bônus"])
 
     with tab_resumo:
-        st.caption("Bônus SDR (Mayara) e total consolidado: aba **Central de Vendas | Bônus** — role até o fim da página.")
+        st.caption(
+            "Bônus SDR (Mayara) e consolidado: na aba **Central de Vendas | Bônus**, **acima** da tabela do time."
+        )
         st.markdown("### Resultado por vendedor")
         st.dataframe(df, use_container_width=True, hide_index=True)
 
@@ -2487,9 +2487,33 @@ def page_dashboard(settings, conn) -> None:
             st.dataframe(pd.DataFrame(ups), use_container_width=True, hide_index=True)
 
     with tab_bonus:
-        st.caption(
-            "**Mayara (SDR):** role a página **para baixo** depois da tabela da Central — o painel escuro e o total consolidado ficam logo abaixo."
+        st.markdown(
+            """
+<div style="
+  padding:14px 16px;
+  margin:0 0 14px 0;
+  border-radius:16px;
+  border:2px solid rgba(110,231,183,.55);
+  background:linear-gradient(135deg, rgba(110,231,183,.14), rgba(59,130,246,.08));
+  box-shadow:0 0 0 1px rgba(255,255,255,.06) inset;
+">
+  <div style="font-weight:900;font-size:1.08rem;color:#E5E7EB;letter-spacing:.2px;">
+    1º — Bônus SDR · Mayara Barros
+  </div>
+  <div style="margin-top:6px;color:#CBD5E1;font-size:0.92rem;line-height:1.45;">
+    Critérios da assistente comercial <strong>antes</strong> do resultado do time.
+    Mesmo visual escuro da Central (cards + tabela). Preencha <strong>% Participação</strong> no campo abaixo.
+  </div>
+</div>
+""",
+            unsafe_allow_html=True,
         )
+        sdr_total_tab = _render_sdr_mayara_section(margin_top_panel=0)
+        st.markdown(
+            '<p style="margin:18px 0 10px 0;font-weight:900;font-size:1.12rem;color:#E5E7EB;">2º — Resultado do time · Central de Vendas</p>',
+            unsafe_allow_html=True,
+        )
+        st.caption("Vendedores — mesma Central de sempre (abaixo do bloco SDR).")
         st.markdown(
             render_bonus_central_panel_html(df, periodo=row.periodo, total=float(total)),
             unsafe_allow_html=True,
@@ -2497,7 +2521,10 @@ def page_dashboard(settings, conn) -> None:
         st.caption(
             "Detalhamento por coluna de R$ (margem, prazo, etc.) permanece na aba **Resumo completo**."
         )
-        _render_sdr_mayara_section()
+        st.markdown(
+            render_bonus_consolidated_footer_html(total_vendedores=float(total), total_sdr=float(sdr_total_tab)),
+            unsafe_allow_html=True,
+        )
 
 
 def page_evolution(settings, conn) -> None:
