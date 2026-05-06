@@ -2965,8 +2965,51 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
     st.markdown("### Conversão x Interações (comparativo por análise salva)")
     rows = _perf_analysis_rows_chronological(conn, owner_user_id=owner_id, include_all=is_admin, limit=60)
     if len(rows) >= 2:
+        # Filtro por mês/ano para não misturar meses no mesmo gráfico (ex.: abr + mai).
+        def _month_key_from_periodo(periodo: str, created_at: str | None) -> str | None:
+            try:
+                dk, _ = _extract_date_label_from_periodo(str(periodo or ""), str(created_at or ""))
+            except Exception:
+                dk = "0000-00-00"
+            if not dk or dk == "0000-00-00" or len(dk) < 7:
+                return None
+            return str(dk)[:7]  # YYYY-MM
+
+        def _month_label(yyyy_mm: str) -> str:
+            try:
+                yy, mm = yyyy_mm.split("-")
+                names = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+                mi = int(mm)
+                return f"{names[mi-1]}/{yy}"
+            except Exception:
+                return str(yyyy_mm)
+
+        months: list[str] = []
+        for rr in rows:
+            mk = _month_key_from_periodo(str(getattr(rr, "periodo", "") or ""), str(getattr(rr, "created_at", "") or ""))
+            if mk and mk not in months:
+                months.append(mk)
+        months = sorted(months)
+
+        cur_mk = _month_key_from_periodo(str(getattr(row, "periodo", "") or ""), str(getattr(row, "created_at", "") or ""))
+        default_idx = (months.index(cur_mk) if cur_mk in months else (len(months) - 1 if months else 0))
+        selected_mk = st.selectbox(
+            "Mês do histórico (gráfico)",
+            options=months,
+            index=max(0, int(default_idx)),
+            format_func=_month_label,
+            key=f"{key_prefix}_hist_month_pick",
+        )
+
+        rows_month = [
+            rr
+            for rr in rows
+            if _month_key_from_periodo(str(getattr(rr, "periodo", "") or ""), str(getattr(rr, "created_at", "") or "")) == selected_mk
+        ]
+        rows_month = rows_month[-12:]  # limite visual
+
         hist: list[dict] = []
-        for r in rows[-12:]:  # mantém apenas as últimas N análises, mas sempre cronológico
+        for r in rows_month:  # mantém apenas as últimas N análises (do mês selecionado), mas sempre cronológico
             try:
                 payload_r = json.loads(r.payload_json)
             except Exception:
@@ -4680,12 +4723,21 @@ def page_insights(settings, conn) -> None:
                         st.plotly_chart(fig, use_container_width=True, key="ins_perf_ticket_bar")
                 with c4:
                     if "conversao_pct" in df.columns and "interacoes" in df.columns:
+                        # px.scatter(size=...) exige numérico >= 0; garantir conversão antes do plot.
+                        df_plot = df.copy()
+                        if "qtd_faturadas" in df_plot.columns:
+                            df_plot["qtd_faturadas"] = (
+                                pd.to_numeric(df_plot["qtd_faturadas"], errors="coerce")
+                                .fillna(0)
+                                .clip(lower=0)
+                                .astype(float)
+                            )
                         fig = px.scatter(
-                            df,
+                            df_plot,
                             x="interacoes",
                             y="conversao_pct",
-                            size="qtd_faturadas" if "qtd_faturadas" in df.columns else None,
-                            color="elegivel_margem" if "elegivel_margem" in df.columns else None,
+                            size="qtd_faturadas" if "qtd_faturadas" in df_plot.columns else None,
+                            color="elegivel_margem" if "elegivel_margem" in df_plot.columns else None,
                             hover_name="nome",
                             title="Interações x Conversão (bolha = NFs)",
                         )
