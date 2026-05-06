@@ -2222,6 +2222,7 @@ def page_dashboard(settings, conn) -> None:
         return best
 
     prev_stats = None
+    prev_payload = None
     try:
         prev_payload = _get_prev_perf_payload()
         if isinstance(prev_payload, dict):
@@ -2234,6 +2235,74 @@ def page_dashboard(settings, conn) -> None:
                 prev_stats["total_interacoes"] = float(prev_tot_inter)
     except Exception:
         prev_stats = None
+        prev_payload = None
+
+    # "Dia anterior" (delta) = diferença entre a análise ativa e a análise anterior salva.
+    # Aqui segue o conceito de snapshot acumulado do mês (05/05 - 04/05).
+    def _clients_total_from_payload(p: dict) -> int | None:
+        try:
+            t = p.get("totais") if isinstance(p, dict) else None
+            if isinstance(t, dict) and t.get("clientes_atendidos_total") is not None:
+                return int(float(t.get("clientes_atendidos_total") or 0))
+        except Exception:
+            pass
+        try:
+            vs = p.get("vendedores") if isinstance(p, dict) else None
+            if not isinstance(vs, list):
+                return None
+            s = 0
+            any_v = False
+            for it in vs:
+                if not isinstance(it, dict):
+                    continue
+                v = it.get("clientes_atendidos")
+                if v is None:
+                    continue
+                try:
+                    s += int(float(v))
+                    any_v = True
+                except Exception:
+                    continue
+            return int(s) if any_v else None
+        except Exception:
+            return None
+
+    cur_nf_total = int(pd.to_numeric(df.get("qtd_faturadas"), errors="coerce").fillna(0).sum()) if "qtd_faturadas" in df.columns else 0
+    prev_nf_total = None
+    if isinstance(prev_payload, dict):
+        try:
+            ps = parse_sellers(prev_payload)
+            pr, _ = calcular_time(ps) if ps else ([], 0.0)
+            if pr:
+                p_df = pd.DataFrame([r.__dict__ for r in pr])
+                prev_nf_total = int(pd.to_numeric(p_df.get("qtd_faturadas"), errors="coerce").fillna(0).sum()) if "qtd_faturadas" in p_df.columns else 0
+        except Exception:
+            prev_nf_total = None
+
+    cur_cli_total = _clients_total_from_payload(payload)
+    prev_cli_total = _clients_total_from_payload(prev_payload) if isinstance(prev_payload, dict) else None
+
+    d_fat_total = None
+    d_nf_total = None
+    d_cli_total = None
+    try:
+        if isinstance(fat_total, (int, float)) and isinstance(prev_payload, dict):
+            pt = prev_payload.get("totais") if isinstance(prev_payload.get("totais"), dict) else {}
+            prev_fat_total = float(pt.get("faturamento_total") or 0.0) if pt.get("faturamento_total") is not None else None
+            if prev_fat_total is not None:
+                d_fat_total = float(fat_total) - float(prev_fat_total)
+    except Exception:
+        d_fat_total = None
+    if prev_nf_total is not None:
+        d_nf_total = int(cur_nf_total) - int(prev_nf_total)
+    if cur_cli_total is not None and prev_cli_total is not None:
+        d_cli_total = int(cur_cli_total) - int(prev_cli_total)
+
+    def _fmt_delta_int(v: int | None) -> str:
+        return "—" if v is None else f"{int(v):+d}"
+
+    def _fmt_delta_money(v: float | None) -> str:
+        return "—" if v is None else f"R$ {float(v):+,.2f}"
 
     def _delta_qty_and_pct(cur: object, ref: object, *, digits: int = 1) -> str:
         try:
@@ -2369,6 +2438,15 @@ def page_dashboard(settings, conn) -> None:
             d_prev=(_delta_qty_and_pct(cur, ref, digits=0) if ref is not None else "—"),
             d_ideal=_delta_vs_ideal(cur, 200.0, direction=">=", digits=0),
         )
+
+    # Delta do acumulado vs análise anterior (conceito de "dia anterior" do seu processo).
+    d1, d2, d3 = st.columns(3)
+    with d1:
+        _kpi_card("Faturamento (dia anterior Δ)", _fmt_delta_money(d_fat_total), icon="💸", accent="#6EE7B7", d_prev=None, d_ideal=None)
+    with d2:
+        _kpi_card("NFs (dia anterior Δ)", _fmt_delta_int(d_nf_total), icon="📦", accent="#93c5fd", d_prev=None, d_ideal=None)
+    with d3:
+        _kpi_card("Clientes (dia anterior Δ)", _fmt_delta_int(d_cli_total), icon="👥", accent="#C4B5FD", d_prev=None, d_ideal=None)
 
     def _render_sdr_mayara_section(*, margin_top_panel: int = 0) -> float:
         """Retorna o total SDR (R$). Painel escuro com mesmo CSS da Central."""
@@ -2773,6 +2851,115 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
         d_pct = disc.get("desconto_pct")
         pct_txt = f"{float(d_pct):.2f}%" if d_pct is not None and not pd.isna(d_pct) else "—"
         _kpi_card("Desconto", pct_txt, icon="🏷", accent="#93c5fd")
+
+    # "Dia anterior" (delta) = diferença entre a análise ativa e a análise anterior do mês.
+    # Importante: aqui "dia anterior" segue o seu conceito de ACUMULADO+DELTA (snapshot do mês).
+    def _clients_total_from_payload(p: dict) -> int | None:
+        try:
+            t = p.get("totais") if isinstance(p, dict) else None
+            if isinstance(t, dict) and t.get("clientes_atendidos_total") is not None:
+                return int(float(t.get("clientes_atendidos_total") or 0))
+        except Exception:
+            pass
+        try:
+            vs = p.get("vendedores") if isinstance(p, dict) else None
+            if not isinstance(vs, list):
+                return None
+            s = 0
+            any_v = False
+            for it in vs:
+                if not isinstance(it, dict):
+                    continue
+                v = it.get("clientes_atendidos")
+                if v is None:
+                    continue
+                try:
+                    s += int(float(v))
+                    any_v = True
+                except Exception:
+                    continue
+            return int(s) if any_v else None
+        except Exception:
+            return None
+
+    def _pick_prev_perf_payload_for_row(current_row) -> dict | None:
+        try:
+            cur_key, _ = _extract_date_label_from_periodo(str(getattr(current_row, "periodo", "") or ""), str(getattr(current_row, "created_at", "") or ""))
+        except Exception:
+            cur_key = "0000-00-00"
+        if not cur_key or cur_key == "0000-00-00":
+            return None
+
+        rows_all = _perf_analysis_rows_chronological(conn, owner_user_id=owner_id, include_all=is_admin, limit=800)
+        # encontra a posição do current_row por id; se falhar, usa date_key
+        cur_id = int(getattr(current_row, "id", 0) or 0)
+        prev_row = None
+        prev_key = None
+        for rr in rows_all:
+            rid = int(getattr(rr, "id", 0) or 0)
+            if rid == cur_id:
+                break
+            try:
+                rk, _ = _extract_date_label_from_periodo(str(getattr(rr, "periodo", "") or ""), str(getattr(rr, "created_at", "") or ""))
+            except Exception:
+                rk = "0000-00-00"
+            if not rk or rk == "0000-00-00" or rk >= cur_key:
+                continue
+            if prev_key is None or str(rk) > str(prev_key):
+                prev_row, prev_key = rr, rk
+
+        if prev_row is None:
+            return None
+        try:
+            p = json.loads(getattr(prev_row, "payload_json", "") or "")
+        except Exception:
+            return None
+        return p if isinstance(p, dict) else None
+
+    prev_payload_for_delta = _pick_prev_perf_payload_for_row(row)
+    try:
+        cur_sum = _extract_perf_summary_from_payload(str(row.periodo), payload)
+        prev_sum = _extract_perf_summary_from_payload(str(getattr(row, "periodo", "") or ""), prev_payload_for_delta) if isinstance(prev_payload_for_delta, dict) else None
+    except Exception:
+        cur_sum, prev_sum = None, None
+
+    d_fat = None
+    d_nf = None
+    d_cli = None
+    if isinstance(cur_sum, dict) and isinstance(prev_sum, dict):
+        try:
+            d_fat = float(cur_sum.get("tot_faturamento") or 0.0) - float(prev_sum.get("tot_faturamento") or 0.0)
+        except Exception:
+            d_fat = None
+        try:
+            d_nf = int(float(cur_sum.get("tot_nfs") or 0.0) - float(prev_sum.get("tot_nfs") or 0.0))
+        except Exception:
+            d_nf = None
+        try:
+            cur_cli = _clients_total_from_payload(payload)
+            prev_cli = _clients_total_from_payload(prev_payload_for_delta) if isinstance(prev_payload_for_delta, dict) else None
+            if cur_cli is not None and prev_cli is not None:
+                d_cli = int(cur_cli) - int(prev_cli)
+        except Exception:
+            d_cli = None
+
+    def _fmt_delta_int(v: int | None) -> str:
+        if v is None:
+            return "—"
+        return f"{v:+d}"
+
+    def _fmt_delta_money(v: float | None) -> str:
+        if v is None:
+            return "—"
+        return f"R$ {v:+,.2f}"
+
+    d3c1, d3c2, d3c3 = st.columns(3)
+    with d3c1:
+        _kpi_card("Faturamento (dia anterior Δ)", _fmt_delta_money(d_fat), icon="💸", accent="#6EE7B7")
+    with d3c2:
+        _kpi_card("NFs (dia anterior Δ)", _fmt_delta_int(d_nf), icon="📦", accent="#93c5fd")
+    with d3c3:
+        _kpi_card("Clientes (dia anterior Δ)", _fmt_delta_int(d_cli), icon="👥", accent="#C4B5FD")
 
     # Evolução de conversão por período (últimas análises salvas) — ordem cronológica por data no Período
     st.markdown("### Conversão x Interações (comparativo por análise salva)")
@@ -5021,7 +5208,84 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                     payload_base = None
 
         # Se a análise ativa tiver base diária salva, usa ela (evita "travamento" ao trocar análise).
-        # Sem `_sg_daily` no payload da análise ativa, não reaproveita série de outro histórico na sessão.
+        # Se não tiver, tenta herdar automaticamente da análise anterior (quando existir), para
+        # manter "dia anterior" e séries diárias funcionando ao alternar o histórico.
+        def _try_load_prev_sg_daily_into_session(current_row) -> None:
+            try:
+                cur_key, cur_label = _extract_date_label_from_periodo(
+                    str(getattr(current_row, "periodo", "") or ""),
+                    str(getattr(current_row, "created_at", "") or ""),
+                )
+            except Exception:
+                cur_key, cur_label = "0000-00-00", "—"
+
+            if not cur_key or cur_key == "0000-00-00":
+                return
+
+            try:
+                rows = list_analyses(conn, limit=500, owner_user_id=owner_id, include_all=is_admin)
+            except Exception:
+                return
+
+            best_payload = None
+            best_row = None
+            best_key = None
+
+            cur_id = int(getattr(current_row, "id", 0) or 0)
+            for rr in rows:
+                rid = int(getattr(rr, "id", 0) or 0)
+                if rid == cur_id:
+                    continue
+                try:
+                    p = json.loads(getattr(rr, "payload_json", "") or "")
+                except Exception:
+                    continue
+                if not isinstance(p, dict):
+                    continue
+                if str(p.get("_kind") or ""):
+                    continue
+                # Só herdar de análises "base" com vendedores.
+                if not parse_sellers(p):
+                    continue
+                sd = p.get("_sg_daily")
+                if not (isinstance(sd, dict) and isinstance(sd.get("rows"), list) and len(sd.get("rows") or []) > 0):
+                    continue
+                try:
+                    rk, rlabel = _extract_date_label_from_periodo(
+                        str(getattr(rr, "periodo", "") or ""),
+                        str(getattr(rr, "created_at", "") or ""),
+                    )
+                except Exception:
+                    rk, rlabel = "0000-00-00", "—"
+                if not rk or rk == "0000-00-00" or rk >= cur_key:
+                    continue
+
+                if best_key is None or str(rk) > str(best_key):
+                    best_payload, best_row, best_key = p, rr, rk
+
+            if not (isinstance(best_payload, dict) and isinstance(best_payload.get("_sg_daily"), dict)):
+                return
+
+            sd = best_payload.get("_sg_daily") or {}
+            rows_daily = sd.get("rows")
+            if not (isinstance(rows_daily, list) and rows_daily):
+                return
+
+            st.session_state["sg_daily_df"] = pd.DataFrame(rows_daily)
+            st.session_state["sg_daily_meta"] = sd.get("meta") if isinstance(sd.get("meta"), dict) else {}
+            src = sd.get("source")
+            src_txt = str(src) if src else "Base diária (histórico)"
+            try:
+                _, best_label = _extract_date_label_from_periodo(
+                    str(getattr(best_row, "periodo", "") or ""),
+                    str(getattr(best_row, "created_at", "") or ""),
+                )
+            except Exception:
+                best_label = "—"
+            st.session_state["sg_daily_source_name"] = f"{src_txt} (herdado de {best_label})"
+            st.session_state["sg_daily_scope_id"] = int(getattr(best_row, "id", 0) or 0)
+            st.session_state["sg_daily_inherited_from"] = {"date_key": str(best_key), "date_label": str(best_label), "from_id": int(getattr(best_row, "id", 0) or 0), "to": str(cur_label)}
+
         try:
             if isinstance(payload_base, dict) and isinstance(payload_base.get("_sg_daily"), dict):
                 sd = payload_base.get("_sg_daily") or {}
@@ -5036,11 +5300,14 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                             st.session_state["sg_daily_scope_id"] = int(active_id)
                         except Exception:
                             pass
-            elif isinstance(payload_base, dict) and active_id is not None:
+            elif active_id is not None:
                 st.session_state.pop("sg_daily_df", None)
                 st.session_state.pop("sg_daily_meta", None)
                 st.session_state.pop("sg_daily_source_name", None)
                 st.session_state.pop("sg_daily_scope_id", None)
+                st.session_state.pop("sg_daily_inherited_from", None)
+                if r0 is not None:
+                    _try_load_prev_sg_daily_into_session(r0)
         except Exception:
             pass
 
@@ -5415,27 +5682,108 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                 ),
                 inverse=True,
             )
-        fat_dia_ant = prev0_k.get("faturamento_dia_anterior")
-        nf_dia_ant = prev0_k.get("nf_dia_anterior")
-        cli_dia_ant = prev0_k.get("clientes_dia_anterior")
-        if isinstance(daily_roll, dict) and isinstance(daily_roll.get("last_bus"), dict):
-            last_bus = daily_roll["last_bus"]
-            fat_dia_ant = float(last_bus.get("fat") or 0.0)
-            nf_dia_ant = int(last_bus.get("nf") or 0)
-            cli_dia_ant = int(last_bus.get("cli") or 0)
-            st.caption(f"Dia anterior (último dia com dados na base diária): **dia {int(last_bus.get('dia') or 0):02d}**.")
+        # "Dia anterior" (delta) no seu processo = diferença do acumulado do mês entre
+        # a análise ativa e a análise anterior salva (snapshot acumulado).
+        def _clients_total_from_payload(p: dict) -> int | None:
+            try:
+                t = p.get("totais") if isinstance(p, dict) else None
+                if isinstance(t, dict) and t.get("clientes_atendidos_total") is not None:
+                    return int(float(t.get("clientes_atendidos_total") or 0))
+            except Exception:
+                pass
+            try:
+                vs = p.get("vendedores") if isinstance(p, dict) else None
+                if not isinstance(vs, list):
+                    return None
+                s = 0
+                any_v = False
+                for it in vs:
+                    if not isinstance(it, dict):
+                        continue
+                    v = it.get("clientes_atendidos")
+                    if v is None:
+                        continue
+                    try:
+                        s += int(float(v))
+                        any_v = True
+                    except Exception:
+                        continue
+                return int(s) if any_v else None
+            except Exception:
+                return None
+
+        def _pick_prev_perf_payload_for_row(current_row) -> dict | None:
+            try:
+                cur_key, _ = _extract_date_label_from_periodo(
+                    str(getattr(current_row, "periodo", "") or ""),
+                    str(getattr(current_row, "created_at", "") or ""),
+                )
+            except Exception:
+                cur_key = "0000-00-00"
+            if not cur_key or cur_key == "0000-00-00":
+                return None
+            rows_all = _perf_analysis_rows_chronological(conn, owner_user_id=owner_id, include_all=is_admin, limit=800)
+            cur_id = int(getattr(current_row, "id", 0) or 0)
+            prev_row = None
+            prev_key = None
+            for rr in rows_all:
+                rid = int(getattr(rr, "id", 0) or 0)
+                if rid == cur_id:
+                    break
+                try:
+                    rk, _ = _extract_date_label_from_periodo(
+                        str(getattr(rr, "periodo", "") or ""),
+                        str(getattr(rr, "created_at", "") or ""),
+                    )
+                except Exception:
+                    rk = "0000-00-00"
+                if not rk or rk == "0000-00-00" or rk >= cur_key:
+                    continue
+                if prev_key is None or str(rk) > str(prev_key):
+                    prev_row, prev_key = rr, rk
+            if prev_row is None:
+                return None
+            try:
+                p = json.loads(getattr(prev_row, "payload_json", "") or "")
+            except Exception:
+                return None
+            return p if isinstance(p, dict) else None
+
+        prev_perf_payload = _pick_prev_perf_payload_for_row(r0) if r0 is not None else None
+        cur_sum = None
+        prev_sum = None
+        try:
+            if isinstance(payload_base, dict):
+                cur_sum = _extract_perf_summary_from_payload(str((payload_base or {}).get("periodo") or ""), payload_base)
+            if isinstance(prev_perf_payload, dict):
+                prev_sum = _extract_perf_summary_from_payload(str(prev_perf_payload.get("periodo") or ""), prev_perf_payload)
+        except Exception:
+            cur_sum, prev_sum = None, None
+
+        fat_dia_ant = None
+        nf_dia_ant = None
+        cli_dia_ant = None
+        if isinstance(cur_sum, dict) and isinstance(prev_sum, dict):
+            try:
+                fat_dia_ant = float(cur_sum.get("tot_faturamento") or 0.0) - float(prev_sum.get("tot_faturamento") or 0.0)
+            except Exception:
+                fat_dia_ant = None
+            try:
+                nf_dia_ant = int(float(cur_sum.get("tot_nfs") or 0.0) - float(prev_sum.get("tot_nfs") or 0.0))
+            except Exception:
+                nf_dia_ant = None
+            try:
+                cur_cli = _clients_total_from_payload(payload_base) if isinstance(payload_base, dict) else None
+                prev_cli = _clients_total_from_payload(prev_perf_payload) if isinstance(prev_perf_payload, dict) else None
+                if cur_cli is not None and prev_cli is not None:
+                    cli_dia_ant = int(cur_cli) - int(prev_cli)
+            except Exception:
+                cli_dia_ant = None
+
+        # Mantemos as variáveis de margem/inputs manuais para o bloco de KPIs (se usados),
+        # mas o "dia anterior" agora é delta vs análise anterior.
         marg_hoje_pct = prev0_k.get("margem_hoje_pct")
         marg_ontem_pct = prev0_k.get("margem_dia_anterior_pct")
-
-        # Comparação do "dia anterior" com o "dia anterior do dia anterior" (penúltimo registro)
-        prev_fat_dia_ant = prev1_k.get("faturamento_dia_anterior")
-        prev_nf_dia_ant = prev1_k.get("nf_dia_anterior")
-        prev_cli_dia_ant = prev1_k.get("clientes_dia_anterior")
-        if isinstance(daily_roll, dict) and isinstance(daily_roll.get("prev_bus"), dict):
-            pb = daily_roll["prev_bus"]
-            prev_fat_dia_ant = float(pb.get("fat") or 0.0)
-            prev_nf_dia_ant = int(pb.get("nf") or 0)
-            prev_cli_dia_ant = int(pb.get("cli") or 0)
         prev_marg_hoje_pct = prev1_k.get("margem_hoje_pct")
 
         # Melhor dia do mês (pela base diária "Faturamento e Atendidos")
@@ -5443,6 +5791,9 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
         best_nf_val: int | None = None
         best_cli_day: int | None = None
         best_cli_val: int | None = None
+        last_bus = None
+        if isinstance(daily_roll, dict) and isinstance(daily_roll.get("last_bus"), dict):
+            last_bus = daily_roll.get("last_bus")
         try:
             if isinstance(daily_roll, dict) and isinstance(daily_roll.get("df"), pd.DataFrame):
                 d0 = daily_roll["df"]
@@ -5472,15 +5823,11 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
 
         with k1:
             _sg_kpi_card(
-                "Faturamento (dia anterior)",
-                (f"R$ {float(fat_dia_ant or 0.0):,.2f}" if fat_dia_ant is not None else "—"),
+                "Faturamento (dia anterior Δ)",
+                (f"R$ {float(fat_dia_ant or 0.0):+,.2f}" if fat_dia_ant is not None else "—"),
                 icon="🧾",
                 accent="#6EE7B7",
-                delta=_fmt_delta_with_pct(
-                    (float(fat_dia_ant) - float(prev_fat_dia_ant)) if (fat_dia_ant is not None and prev_fat_dia_ant is not None) else None,
-                    float(prev_fat_dia_ant) if prev_fat_dia_ant is not None else None,
-                    is_money=True,
-                ),
+                delta=None,
             )
         with k2:
             best_nf_txt = None
@@ -5494,15 +5841,11 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                 else:
                     best_nf_txt = f"Melhor dia do mês: **dia {int(best_nf_day):02d}** • **{int(best_nf_val)}** NFs"
             _sg_kpi_card(
-                "NFs (dia anterior)",
-                str(int(nf_dia_ant or 0)),
+                "NFs (dia anterior Δ)",
+                (f"{int(nf_dia_ant):+d}" if nf_dia_ant is not None else "—"),
                 icon="🧾",
                 accent="#93c5fd",
-                delta=_fmt_delta_with_pct(
-                    (float(int(nf_dia_ant) - int(prev_nf_dia_ant))) if (nf_dia_ant is not None and prev_nf_dia_ant is not None) else None,
-                    float(int(prev_nf_dia_ant)) if prev_nf_dia_ant is not None else None,
-                    is_money=False,
-                ),
+                delta=None,
             )
             if best_nf_txt:
                 st.caption(best_nf_txt)
@@ -5518,15 +5861,11 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                 else:
                     best_cli_txt = f"Melhor dia do mês: **dia {int(best_cli_day):02d}** • **{int(best_cli_val)}** atendidos"
             _sg_kpi_card(
-                "Clientes (dia anterior)",
-                str(int(cli_dia_ant or 0)),
+                "Clientes (dia anterior Δ)",
+                (f"{int(cli_dia_ant):+d}" if cli_dia_ant is not None else "—"),
                 icon="👥",
                 accent="#C4B5FD",
-                delta=_fmt_delta_with_pct(
-                    (float(int(cli_dia_ant) - int(prev_cli_dia_ant))) if (cli_dia_ant is not None and prev_cli_dia_ant is not None) else None,
-                    float(int(prev_cli_dia_ant)) if prev_cli_dia_ant is not None else None,
-                    is_money=False,
-                ),
+                delta=None,
             )
             if best_cli_txt:
                 st.caption(best_cli_txt)
@@ -5590,15 +5929,16 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
 
         k4, k5, k6, k7 = st.columns(4)
         with k4:
-            nf_acc = int(prev0_k.get("nf_acumulado") or 0)
-            if isinstance(daily_roll, dict) and daily_roll.get("acc_nf") is not None:
-                nf_acc = int(daily_roll.get("acc_nf") or 0)
-            _sg_kpi_card("Acumulado NFs", str(int(nf_acc)), icon="📦", accent="#93c5fd", delta=None)
+            nf_acc = None
+            try:
+                if isinstance(cur_sum, dict):
+                    nf_acc = int(float(cur_sum.get("tot_nfs") or 0.0))
+            except Exception:
+                nf_acc = None
+            _sg_kpi_card("Acumulado NFs", (str(int(nf_acc)) if nf_acc is not None else "—"), icon="📦", accent="#93c5fd", delta=None)
         with k5:
-            cli_acc = int(prev0_k.get("clientes_acumulado") or 0)
-            if isinstance(daily_roll, dict) and daily_roll.get("acc_cli") is not None:
-                cli_acc = int(daily_roll.get("acc_cli") or 0)
-            _sg_kpi_card("Acumulado Clientes", str(int(cli_acc)), icon="👥", accent="#C4B5FD", delta=None)
+            cli_acc = _clients_total_from_payload(payload_base) if isinstance(payload_base, dict) else None
+            _sg_kpi_card("Acumulado Clientes", (str(int(cli_acc)) if cli_acc is not None else "—"), icon="👥", accent="#C4B5FD", delta=None)
         with k6:
             _sg_kpi_card(
                 "Margem média (time)",
