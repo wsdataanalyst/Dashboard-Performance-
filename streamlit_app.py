@@ -6809,24 +6809,88 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                     pass
 
             try:
-                import plotly.express as px
+                import plotly.graph_objects as go
 
-                st.markdown("#### Evolução no mês (Δ vs análise anterior)")
+                st.markdown("#### Evolução no mês (totais) + variação vs análise anterior (Δ)")
+                st.caption("A linha mostra o total do dia/análise; o marcador indica crescimento/queda vs análise anterior.")
+
+                def _delta_text(v: object, *, kind: str) -> str:
+                    try:
+                        x = float(v)
+                    except Exception:
+                        return "Δ —"
+                    if abs(x) < 1e-9:
+                        return "Δ 0"
+                    if kind == "money":
+                        return f"Δ R$ {x:+,.2f}"
+                    return f"Δ {x:+.0f}"
+
+                def _delta_color(v: object) -> str:
+                    try:
+                        x = float(v)
+                    except Exception:
+                        return "rgba(148,163,184,0.95)"
+                    if abs(x) < 1e-9:
+                        return "rgba(148,163,184,0.95)"
+                    return ("rgba(34,197,94,0.95)" if x > 0 else "rgba(251,113,133,0.95)")
+
+                def _line_total_with_delta(*, y_total_col: str, y_delta_col: str, title: str, kind: str) -> "go.Figure":
+                    x = hdf["date_label"].astype(str).tolist()
+                    y = pd.to_numeric(hdf.get(y_total_col), errors="coerce").fillna(0.0).astype(float).tolist()
+                    d = pd.to_numeric(hdf.get(y_delta_col), errors="coerce").fillna(0.0).astype(float).tolist()
+                    colors = [_delta_color(v) for v in d]
+                    texts = [_delta_text(v, kind=kind) for v in d]
+                    # Hover: total + delta
+                    hover = [f"<b>{x[i]}</b><br>Total: {y[i]:,.2f}{('' if kind=='money' else '')}<br>{texts[i]}" for i in range(len(x))]
+                    fig = go.Figure()
+                    fig.add_trace(
+                        go.Scatter(
+                            x=x,
+                            y=y,
+                            mode="lines+markers+text",
+                            text=texts,
+                            textposition="top center",
+                            textfont=dict(color="#E5E7EB", size=11),
+                            marker=dict(size=10, color=colors, line=dict(width=1, color="rgba(255,255,255,0.18)")),
+                            line=dict(color="rgba(59,130,246,0.55)", width=3),
+                            hovertext=hover,
+                            hoverinfo="text",
+                            name="Total",
+                        )
+                    )
+                    fig.update_layout(
+                        title=title,
+                        height=300,
+                        template="plotly_dark",
+                        margin=dict(l=10, r=10, t=60, b=10),
+                    )
+                    fig.update_xaxes(title=None)
+                    return fig
+
                 c1, c2, c3 = st.columns(3)
                 with c1:
-                    fig = px.bar(hdf, x="date_label", y="faturamento_delta", title="Faturamento (Δ R$ vs dia anterior)")
-                    fig.update_layout(height=280, template="plotly_dark", margin=dict(l=10, r=10, t=55, b=10))
-                    fig.update_xaxes(title=None)
+                    fig = _line_total_with_delta(
+                        y_total_col="faturamento_total",
+                        y_delta_col="faturamento_delta",
+                        title="Faturamento (total) — Δ vs anterior",
+                        kind="money",
+                    )
                     st.plotly_chart(fig, use_container_width=True, key="sg_snap_evol_fat")
                 with c2:
-                    fig = px.bar(hdf, x="date_label", y="nfs_delta", title="NFs (Δ vs dia anterior)")
-                    fig.update_layout(height=280, template="plotly_dark", margin=dict(l=10, r=10, t=55, b=10))
-                    fig.update_xaxes(title=None)
+                    fig = _line_total_with_delta(
+                        y_total_col="nfs_total",
+                        y_delta_col="nfs_delta",
+                        title="NFs (total) — Δ vs anterior",
+                        kind="int",
+                    )
                     st.plotly_chart(fig, use_container_width=True, key="sg_snap_evol_nf")
                 with c3:
-                    fig = px.bar(hdf, x="date_label", y="clientes_delta", title="Clientes (Δ vs dia anterior)")
-                    fig.update_layout(height=280, template="plotly_dark", margin=dict(l=10, r=10, t=55, b=10))
-                    fig.update_xaxes(title=None)
+                    fig = _line_total_with_delta(
+                        y_total_col="clientes_total",
+                        y_delta_col="clientes_delta",
+                        title="Clientes (total) — Δ vs anterior",
+                        kind="int",
+                    )
                     st.plotly_chart(fig, use_container_width=True, key="sg_snap_evol_cli")
             except Exception as e:
                 st.caption(f"Gráficos indisponíveis: {e}")
