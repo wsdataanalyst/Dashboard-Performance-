@@ -8246,8 +8246,15 @@ def page_orcamentos(settings, conn) -> None:
         pct_q_scope: float,
         pct_v_scope: float,
         by_tipo: dict[str, tuple[int, float, float, float]],
+        conv_overall: tuple[float, int, float, int] | None = None,
+        conv_by_tipo: dict[str, tuple[float, int, float, int]] | None = None,
     ) -> None:
-        """by_tipo: tipo -> (qtd, valor, %q global, %v global)."""
+        """
+        by_tipo: tipo -> (qtd, valor, %q global, %v global).
+
+        conv_overall: (taxa_pct, conv_q, conv_val, base_q) para a faixa (base=pendentes análise anterior).
+        conv_by_tipo: tipo -> (taxa_pct, conv_q, conv_val, base_q) idem, detalhado PF/PJ.
+        """
         pills = []
         for tk in ("F", "J", ""):
             if tk not in by_tipo:
@@ -8260,6 +8267,40 @@ def page_orcamentos(settings, conn) -> None:
                 f"<b>R$ {vv:,.2f}</b> ({pv:.1f}% valor)</span>"
             )
         pills_html = " ".join(pills) if pills else '<span style="color:#64748b;font-size:0.82rem;">Sem tipo</span>'
+
+        conv_block = ""
+        if conv_overall is not None:
+            try:
+                taxa, cq, cv, bq = conv_overall
+                conv_block = (
+                    f'<div style="margin-top:10px;color:#E5E7EB;font-weight:800;font-size:0.88rem;">'
+                    f'Conversão: <span style="color:#FBBF24">{taxa:.1f}%</span> '
+                    f'<span style="color:#94a3b8;font-weight:700">({int(cq)}/{int(bq)} orç.)</span> '
+                    f'· <span style="color:#93c5fd;font-weight:850">R$ {float(cv):,.2f}</span>'
+                    f"</div>"
+                )
+            except Exception:
+                conv_block = ""
+        conv_pills = ""
+        if isinstance(conv_by_tipo, dict) and conv_by_tipo:
+            try:
+                cp: list[str] = []
+                for tk in ("F", "J"):
+                    if tk not in conv_by_tipo:
+                        continue
+                    taxa, cq, cv, bq = conv_by_tipo[tk]
+                    lab = "PF" if tk == "F" else "PJ"
+                    cp.append(
+                        f'<span class="dp-pill" style="background:rgba(255,255,255,.02);border-color:rgba(255,255,255,.10);color:#E5E7EB;">'
+                        f'{lab}: <b>{float(taxa):.1f}%</b> '
+                        f'<span style="color:#94a3b8;font-weight:700">({int(cq)}/{int(bq)})</span> · '
+                        f'<b>R$ {float(cv):,.2f}</b></span>'
+                    )
+                conv_pills = " ".join(cp)
+                if conv_pills:
+                    conv_pills = f'<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">{conv_pills}</div>'
+            except Exception:
+                conv_pills = ""
         st.markdown(
             f"""
 <div class="dp-card" style="padding:14px 14px;min-height:188px;display:flex;flex-direction:column;justify-content:space-between;">
@@ -8272,6 +8313,8 @@ def page_orcamentos(settings, conn) -> None:
   </div>
   <div class="dp-kpi-value" style="font-size:1.25rem;color:#93c5fd;">R$ {tot_v:,.2f} <span style="font-size:0.82rem;color:#94a3b8;font-weight:700;">({pct_v_scope:.1f}% do valor total)</span></div>
   <div style="margin-top:6px;color:#94a3b8;font-size:0.84rem;font-weight:650;">{tot_q} orç. · <b>{pct_q_scope:.1f}%</b> das quantidades no escopo</div>
+  {conv_block}
+  {conv_pills}
   <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">{pills_html}</div>
 </div>
 """,
@@ -8711,6 +8754,58 @@ def page_orcamentos(settings, conn) -> None:
     )
     bf, br, bc, bd, wf, wr, wc, wd = _best_worst_conv(conv_rates_list)
 
+    # Conversão detalhada por faixa e tipo (PF/PJ) — base: pendentes da análise anterior (escopo).
+    conv_fx_overall: dict[str, tuple[float, int, float, int]] = {}
+    conv_fx_by_tipo: dict[str, dict[str, tuple[float, int, float, int]]] = {}
+    conv_fx_rank: list[tuple[str, float, int, float, int]] = []
+    try:
+        if len(prev_p_scoped) and "_orcamento" in prev_p_scoped.columns:
+            pn = _norm_orc_df(prev_p_scoped)
+            if len(pn):
+                ids_col = pn["_orcamento"].astype(str).str.strip()
+                pn["_conv"] = ids_col.isin(set(conv_ids or set()))
+
+                g_all = pn.groupby("faixa", as_index=False).agg(
+                    base_q=("_orcamento", "count"),
+                    conv_q=("_conv", "sum"),
+                    conv_val=("_valor_num", lambda s: float(s[pn.loc[s.index, "_conv"]].sum()) if len(s) else 0.0),
+                )
+                for _, rr in g_all.iterrows():
+                    fx = str(rr.get("faixa") or "").strip()
+                    bq = int(rr.get("base_q") or 0)
+                    cq = int(rr.get("conv_q") or 0)
+                    cv = float(rr.get("conv_val") or 0.0)
+                    taxa = (100.0 * float(cq) / float(bq)) if bq > 0 else 0.0
+                    if fx:
+                        conv_fx_overall[fx] = (float(taxa), int(cq), float(cv), int(bq))
+                        conv_fx_rank.append((fx, float(taxa), int(cq), float(cv), int(bq)))
+
+                g_tipo = pn.groupby(["faixa", "tipo"], as_index=False).agg(
+                    base_q=("_orcamento", "count"),
+                    conv_q=("_conv", "sum"),
+                    conv_val=("_valor_num", lambda s: float(s[pn.loc[s.index, "_conv"]].sum()) if len(s) else 0.0),
+                )
+                for _, rr in g_tipo.iterrows():
+                    fx = str(rr.get("faixa") or "").strip()
+                    tk = str(rr.get("tipo") or "").strip().upper()
+                    if tk not in {"F", "J"}:
+                        continue
+                    bq = int(rr.get("base_q") or 0)
+                    cq = int(rr.get("conv_q") or 0)
+                    cv = float(rr.get("conv_val") or 0.0)
+                    taxa = (100.0 * float(cq) / float(bq)) if bq > 0 else 0.0
+                    if fx:
+                        if fx not in conv_fx_by_tipo:
+                            conv_fx_by_tipo[fx] = {}
+                        conv_fx_by_tipo[fx][tk] = (float(taxa), int(cq), float(cv), int(bq))
+
+                # ranking: maior taxa, depois mais convertidos, depois maior valor
+                conv_fx_rank.sort(key=lambda x: (x[1], x[2], x[3]), reverse=True)
+    except Exception:
+        conv_fx_overall = {}
+        conv_fx_by_tipo = {}
+        conv_fx_rank = []
+
     if len(fx_sum):
         iq = int(fx_sum["qtd"].idxmax())
         iv = int(fx_sum["valor"].idxmax())
@@ -8760,6 +8855,33 @@ def page_orcamentos(settings, conn) -> None:
                 )
         st.caption(conv_faixa_note)
 
+        # Destaque: ranking de conversão por faixa (top -> bottom)
+        if conv_fx_rank:
+            try:
+                top = conv_fx_rank[0]
+                bot = conv_fx_rank[-1]
+                t_fx, t_tx, t_cq, t_cv, t_bq = top
+                b_fx, b_tx, b_cq, b_cv, b_bq = bot
+                d1, d2 = st.columns(2)
+                with d1:
+                    _orc_modern_kpi(
+                        "Destaque (maior conversão)",
+                        f"{t_fx} · {t_tx:.1f}%",
+                        icon="🏆",
+                        accent="#6EE7B7",
+                        subtitle=f"{t_cq}/{t_bq} convertidos · R$ {t_cv:,.2f}",
+                    )
+                with d2:
+                    _orc_modern_kpi(
+                        "Destaque (menor conversão)",
+                        f"{b_fx} · {b_tx:.1f}%",
+                        icon="🧊",
+                        accent="#fb7185",
+                        subtitle=f"{b_cq}/{b_bq} convertidos · R$ {b_cv:,.2f}",
+                    )
+            except Exception:
+                pass
+
     if not faixas_sorted:
         st.info("Sem dados para montar faixas neste escopo — ajuste filtros ou troque a base acima (pendentes/finalizados).")
     else:
@@ -8791,6 +8913,8 @@ def page_orcamentos(settings, conn) -> None:
                         pct_q_scope=pq_scope,
                         pct_v_scope=pv_scope,
                         by_tipo=by_tipo,
+                        conv_overall=conv_fx_overall.get(str(fx)),
+                        conv_by_tipo=conv_fx_by_tipo.get(str(fx)),
                     )
 
     with st.expander("Tabelas detalhadas (setor / consultor / busca)", expanded=False):
