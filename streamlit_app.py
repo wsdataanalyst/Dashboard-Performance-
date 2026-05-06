@@ -6671,7 +6671,143 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
         daily = st.session_state.get("sg_daily_df")
         daily_meta = st.session_state.get("sg_daily_meta")
         if not isinstance(daily, pd.DataFrame) or daily.empty:
-            st.info("Envie o arquivo **Faturamento e Atendidos.xlsx** em **Nova análise** para habilitar esta aba.")
+            # Fallback: montar a evolução usando as análises de performance já salvas (snapshots),
+            # sem depender do Excel diário.
+            st.caption("Base diária não encontrada nesta análise. Mostrando evolução por **análises salvas** (snapshots).")
+
+            def _month_key_from_row(rr) -> str | None:
+                try:
+                    dk, _ = _extract_date_label_from_periodo(
+                        str(getattr(rr, "periodo", "") or ""),
+                        str(getattr(rr, "created_at", "") or ""),
+                    )
+                except Exception:
+                    dk = "0000-00-00"
+                if not dk or dk == "0000-00-00" or len(dk) < 7:
+                    return None
+                return str(dk)[:7]  # YYYY-MM
+
+            def _month_label(yyyy_mm: str) -> str:
+                try:
+                    yy, mm = yyyy_mm.split("-")
+                    names = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+                    mi = int(mm)
+                    return f"{names[mi-1]}/{yy}"
+                except Exception:
+                    return str(yyyy_mm)
+
+            rows_perf = _perf_analysis_rows_chronological(conn, owner_user_id=owner_id, include_all=is_admin, limit=800)
+            if not rows_perf:
+                st.info("Nenhuma análise de performance salva para montar a evolução.")
+                return
+
+            months: list[str] = []
+            for rr in rows_perf:
+                mk = _month_key_from_row(rr)
+                if mk and mk not in months:
+                    months.append(mk)
+            months = sorted(months)
+
+            try:
+                cur_mk = _month_key_from_row(r0) if r0 is not None else None
+            except Exception:
+                cur_mk = None
+            default_idx = (months.index(cur_mk) if cur_mk in months else (len(months) - 1 if months else 0))
+            selected_mk = st.selectbox(
+                "Mês (evolução por análises salvas)",
+                options=months,
+                index=max(0, int(default_idx)),
+                format_func=_month_label,
+                key="sg_snapshots_month_pick",
+            )
+
+            rows_month = [rr for rr in rows_perf if _month_key_from_row(rr) == selected_mk]
+            if len(rows_month) < 2:
+                st.info("Salve pelo menos 2 análises neste mês para ver a evolução.")
+                return
+
+            def _clients_total_from_payload(p: dict) -> int | None:
+                try:
+                    t = p.get("totais") if isinstance(p, dict) else None
+                    if isinstance(t, dict) and t.get("clientes_atendidos_total") is not None:
+                        return int(float(t.get("clientes_atendidos_total") or 0))
+                except Exception:
+                    pass
+                try:
+                    vs = p.get("vendedores") if isinstance(p, dict) else None
+                    if not isinstance(vs, list):
+                        return None
+                    s = 0
+                    any_v = False
+                    for it in vs:
+                        if not isinstance(it, dict):
+                            continue
+                        v = it.get("clientes_atendidos")
+                        if v is None:
+                            continue
+                        try:
+                            s += int(float(v))
+                            any_v = True
+                        except Exception:
+                            continue
+                    return int(s) if any_v else None
+                except Exception:
+                    return None
+
+            hist: list[dict] = []
+            for rr in rows_month[-31:]:  # limite de pontos no gráfico
+                try:
+                    p = json.loads(getattr(rr, "payload_json", "") or "")
+                except Exception:
+                    continue
+                if not isinstance(p, dict):
+                    continue
+                if str(p.get("_kind") or ""):
+                    continue
+                if not parse_sellers(p):
+                    continue
+                dk, dl = _extract_date_label_from_periodo(str(getattr(rr, "periodo", "") or ""), str(getattr(rr, "created_at", "") or ""))
+                base = _extract_perf_summary_from_payload(str(getattr(rr, "periodo", "") or ""), p)
+                cli_total = _clients_total_from_payload(p)
+                hist.append(
+                    {
+                        "date_key": dk,
+                        "date_label": dl,
+                        "periodo": str(getattr(rr, "periodo", "") or ""),
+                        "faturamento_total": float(base.get("tot_faturamento") or 0.0),
+                        "nfs_total": float(base.get("tot_nfs") or 0.0),
+                        "clientes_total": float(cli_total) if cli_total is not None else None,
+                    }
+                )
+
+            hdf = pd.DataFrame(hist)
+            if hdf.empty:
+                st.info("Não consegui montar a evolução a partir do histórico salvo.")
+                return
+            hdf = hdf.sort_values(["date_key"]).reset_index(drop=True)
+
+            try:
+                import plotly.express as px
+
+                st.markdown("#### Evolução no mês (por análise salva)")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    fig = px.line(hdf, x="date_label", y="faturamento_total", markers=True, title="Faturamento (R$)")
+                    fig.update_layout(height=280, template="plotly_dark", margin=dict(l=10, r=10, t=55, b=10))
+                    fig.update_xaxes(title=None)
+                    st.plotly_chart(fig, use_container_width=True, key="sg_snap_evol_fat")
+                with c2:
+                    fig = px.line(hdf, x="date_label", y="nfs_total", markers=True, title="NFs (total acumulado)")
+                    fig.update_layout(height=280, template="plotly_dark", margin=dict(l=10, r=10, t=55, b=10))
+                    fig.update_xaxes(title=None)
+                    st.plotly_chart(fig, use_container_width=True, key="sg_snap_evol_nf")
+                with c3:
+                    fig = px.line(hdf, x="date_label", y="clientes_total", markers=True, title="Clientes atendidos (acumulado)")
+                    fig.update_layout(height=280, template="plotly_dark", margin=dict(l=10, r=10, t=55, b=10))
+                    fig.update_xaxes(title=None)
+                    st.plotly_chart(fig, use_container_width=True, key="sg_snap_evol_cli")
+            except Exception as e:
+                st.caption(f"Gráficos indisponíveis: {e}")
         else:
             try:
                 df = daily
