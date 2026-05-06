@@ -8794,16 +8794,37 @@ def page_orcamentos(settings, conn) -> None:
     )
     bf, br, bc, bd, wf, wr, wc, wd = _best_worst_conv(conv_rates_list)
 
-    # Conversão detalhada por faixa e tipo (PF/PJ) — base: pendentes da análise anterior (escopo).
+    # Conversão detalhada por faixa e tipo (PF/PJ).
+    # Base preferida: pendentes da análise anterior (escopo), cruzando com finalizados atuais.
+    # Fallback (quando não há análise anterior): pendentes atuais cruzados com finalizados atuais.
     conv_fx_overall: dict[str, tuple[float, int, float, int]] = {}
     conv_fx_by_tipo: dict[str, dict[str, tuple[float, int, float, int]]] = {}
     conv_fx_rank: list[tuple[str, float, int, float, int]] = []
     try:
-        if len(prev_p_scoped) and "_orcamento" in prev_p_scoped.columns:
-            pn = _norm_orc_df(prev_p_scoped)
+        base_df = None
+        conv_set: set[str] = set()
+
+        # 1) Preferência: pendentes da análise anterior + conv_ids já calculado (prev_pending ∩ now_final)
+        if len(prev_p_scoped) and "_orcamento" in prev_p_scoped.columns and len(conv_ids):
+            base_df = prev_p_scoped
+            conv_set = set(conv_ids)
+        else:
+            # 2) Fallback: cruzamento no import atual (pendentes atuais ∩ finalizados atuais)
+            try:
+                if len(dfp) and len(dff) and "_orcamento" in dfp.columns and "_orcamento" in dff.columns:
+                    base_df = dfp
+                    pend_ids_now = set(dfp["_orcamento"].astype(str).str.strip().tolist())
+                    fin_ids_now = set(dff["_orcamento"].astype(str).str.strip().tolist())
+                    conv_set = {x for x in pend_ids_now.intersection(fin_ids_now) if x and x.lower() != "nan"}
+            except Exception:
+                base_df = None
+                conv_set = set()
+
+        if isinstance(base_df, pd.DataFrame) and len(base_df) and "_orcamento" in base_df.columns:
+            pn = _norm_orc_df(base_df)
             if len(pn):
                 ids_col = pn["_orcamento"].astype(str).str.strip()
-                pn["_conv"] = ids_col.isin(set(conv_ids or set()))
+                pn["_conv"] = ids_col.isin(set(conv_set or set()))
 
                 g_all = pn.groupby("faixa", as_index=False).agg(
                     base_q=("_orcamento", "count"),
