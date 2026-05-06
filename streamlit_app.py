@@ -6786,23 +6786,45 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                 return
             hdf = hdf.sort_values(["date_key"]).reset_index(drop=True)
 
+            # Converter acumulados -> deltas vs análise anterior (crescimento do dia).
+            # Ex.: NFs_delta(05/05) = NFs_total(05/05) - NFs_total(04/05)
+            try:
+                hdf["faturamento_delta"] = pd.to_numeric(hdf.get("faturamento_total"), errors="coerce").diff()
+            except Exception:
+                hdf["faturamento_delta"] = None
+            try:
+                hdf["nfs_delta"] = pd.to_numeric(hdf.get("nfs_total"), errors="coerce").diff()
+            except Exception:
+                hdf["nfs_delta"] = None
+            try:
+                hdf["clientes_delta"] = pd.to_numeric(hdf.get("clientes_total"), errors="coerce").diff()
+            except Exception:
+                hdf["clientes_delta"] = None
+
+            # Primeira linha não tem anterior para comparar -> 0 (evita NaN no gráfico).
+            for c in ("faturamento_delta", "nfs_delta", "clientes_delta"):
+                try:
+                    hdf[c] = pd.to_numeric(hdf[c], errors="coerce").fillna(0.0)
+                except Exception:
+                    pass
+
             try:
                 import plotly.express as px
 
-                st.markdown("#### Evolução no mês (por análise salva)")
+                st.markdown("#### Evolução no mês (Δ vs análise anterior)")
                 c1, c2, c3 = st.columns(3)
                 with c1:
-                    fig = px.line(hdf, x="date_label", y="faturamento_total", markers=True, title="Faturamento (R$)")
+                    fig = px.bar(hdf, x="date_label", y="faturamento_delta", title="Faturamento (Δ R$ vs dia anterior)")
                     fig.update_layout(height=280, template="plotly_dark", margin=dict(l=10, r=10, t=55, b=10))
                     fig.update_xaxes(title=None)
                     st.plotly_chart(fig, use_container_width=True, key="sg_snap_evol_fat")
                 with c2:
-                    fig = px.line(hdf, x="date_label", y="nfs_total", markers=True, title="NFs (total acumulado)")
+                    fig = px.bar(hdf, x="date_label", y="nfs_delta", title="NFs (Δ vs dia anterior)")
                     fig.update_layout(height=280, template="plotly_dark", margin=dict(l=10, r=10, t=55, b=10))
                     fig.update_xaxes(title=None)
                     st.plotly_chart(fig, use_container_width=True, key="sg_snap_evol_nf")
                 with c3:
-                    fig = px.line(hdf, x="date_label", y="clientes_total", markers=True, title="Clientes atendidos (acumulado)")
+                    fig = px.bar(hdf, x="date_label", y="clientes_delta", title="Clientes (Δ vs dia anterior)")
                     fig.update_layout(height=280, template="plotly_dark", margin=dict(l=10, r=10, t=55, b=10))
                     fig.update_xaxes(title=None)
                     st.plotly_chart(fig, use_container_width=True, key="sg_snap_evol_cli")
