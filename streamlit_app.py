@@ -2339,12 +2339,15 @@ def page_dashboard(settings, conn) -> None:
         pct = (diff_pos / abs(ideal)) * 100.0
         return f"{arrow} {diff_pos:+.{digits}f} ({pct:+.1f}%)"
 
-    def _delta_color(val: str) -> str:
-        if val.startswith("▲"):
+    def _delta_color(val: object) -> str:
+        s = str(val or "").strip()
+        if not s or s in {"—", "-"}:
+            return "color:#94a3b8;font-weight:650;"
+        if s.startswith("▲"):
             return "color:#22c55e;font-weight:800;"
-        if val.startswith("▼"):
+        if s.startswith("▼"):
             return "color:#fb7185;font-weight:800;"
-        if val.startswith("→"):
+        if s.startswith("→"):
             return "color:#94a3b8;font-weight:650;"
         return "color:#94a3b8;"
 
