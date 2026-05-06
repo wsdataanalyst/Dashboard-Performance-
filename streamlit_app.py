@@ -5950,7 +5950,7 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
         k7.empty()
 
         # Vendedores (alcance)
-        st.markdown("### Vendedores — faixas de % Alcance")
+        st.markdown("### Vendedores — faixas de % Alcance projetado")
         vend_df = pd.DataFrame()
         if isinstance(payload_base, dict):
             sellers = parse_sellers(payload_base)
@@ -5962,7 +5962,7 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
             meta_batida = acima_80 = abaixo_80 = 0
         else:
             def _bucket(v):
-                # Regra da sala: meta batida vem de % Alcance (REAL) >= 100
+                # Regra da sala (dashboards acima): usar % Alcance PROJETADO para as faixas
                 if v is None or (isinstance(v, float) and pd.isna(v)):
                     return "Sem dado"
                 x = float(v)
@@ -5972,7 +5972,7 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                     return "Alcance >= 80%"
                 return "Alcance < 80%"
 
-            vend_df["faixa_alcance"] = vend_df["alcance_real_pct"].apply(_bucket)
+            vend_df["faixa_alcance"] = vend_df["alcance_pct"].apply(_bucket)
             meta_batida = int((vend_df["faixa_alcance"] == "Meta batida (>=100%)").sum())
             acima_80 = int((vend_df["faixa_alcance"] == "Alcance >= 80%").sum())
             abaixo_80 = int((vend_df["faixa_alcance"] == "Alcance < 80%").sum())
@@ -7250,7 +7250,7 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                     st.caption("Sem vendedores.")
                 else:
                     def _bucket(v):
-                        # Regra da sala: meta batida vem de % Alcance (REAL) >= 100
+                        # Regra da sala: faixas por % Alcance PROJETADO (para ficar alinhado ao consolidado)
                         if v is None or (isinstance(v, float) and pd.isna(v)):
                             return "Sem dado"
                         x = float(v)
@@ -7260,7 +7260,7 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                             return "Alcance >= 80%"
                         return "Alcance < 80%"
 
-                    df["faixa_alcance"] = df["alcance_real_pct"].apply(_bucket)
+                    df["faixa_alcance"] = df["alcance_pct"].apply(_bucket)
                     st.dataframe(
                         df[["nome", "alcance_real_pct", "alcance_pct", "margem_pct", "conversao_pct", "interacoes", "faixa_alcance"]]
                         .rename(columns={"alcance_real_pct": "% Alcance", "alcance_pct": "% Alcance Projetado"}),
