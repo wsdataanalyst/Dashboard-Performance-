@@ -2788,15 +2788,49 @@ def page_performance(settings, conn, *, key_prefix: str = "perf") -> None:
         try:
             from src.app.domain import Seller as SellerDC
             from src.app.projection import projetar_resultados
+            from src.app.calendar_utils import compute_calendar_info
+
+            # Projeção deve usar o calendário do mês da análise (e a "data de referência" do período),
+            # não o mês/dia de hoje do servidor.
+            ref_iso = _extract_ref_date_iso_from_periodo(str(getattr(row, "periodo", "") or ""))
+            ref_yy = None
+            ref_mm = None
+            ref_dd = None
+            try:
+                if ref_iso:
+                    ref_yy, ref_mm, ref_dd = int(ref_iso[:4]), int(ref_iso[5:7]), int(ref_iso[8:10])
+            except Exception:
+                ref_yy, ref_mm, ref_dd = None, None, None
 
             cal2 = st.session_state.get("calendar_info")
-            dt_total = int(st.session_state.get("proj_dias_uteis_total") or (cal2.get("dias_uteis_total") if isinstance(cal2, dict) else 22))
-            dt_rest = int(
-                st.session_state.get("proj_dias_uteis_restantes")
-                if st.session_state.get("proj_dias_uteis_restantes") is not None
-                else max(0, int(dt_total) - int(cal2.get("dias_uteis_trabalhados") or 0))
-            )
-            dt_trab = max(1, int(dt_total) - int(dt_rest))
+            if isinstance(cal2, dict) and cal2.get("ano") and cal2.get("mes"):
+                yy0 = int(ref_yy or cal2.get("ano"))
+                mm0 = int(ref_mm or cal2.get("mes"))
+            else:
+                import datetime as _dt
+
+                today0 = _dt.date.today()
+                yy0 = int(ref_yy or today0.year)
+                mm0 = int(ref_mm or today0.month)
+
+            ref_date_obj = None
+            try:
+                if ref_yy and ref_mm and ref_dd:
+                    import datetime as _dt
+
+                    ref_date_obj = _dt.date(int(ref_yy), int(ref_mm), int(ref_dd))
+            except Exception:
+                ref_date_obj = None
+
+            info2 = compute_calendar_info(ano=int(yy0), mes=int(mm0), subdiv=None, hoje=ref_date_obj)
+            dt_total = int(st.session_state.get("proj_dias_uteis_total") or int(info2.dias_uteis_total))
+            # Se usuário setou restantes manualmente, respeita; senão usa o calendário do mês na data da análise.
+            if st.session_state.get("proj_dias_uteis_restantes") is not None:
+                dt_rest = int(st.session_state.get("proj_dias_uteis_restantes") or 0)
+            else:
+                # `dias_uteis_restantes` inclui o "hoje" quando for útil; para projeção usamos restantes após os trabalhados.
+                dt_rest = max(0, int(dt_total) - int(info2.dias_uteis_trabalhados))
+            dt_trab = max(1, min(int(dt_total), int(dt_total) - int(dt_rest)))
 
             qtd_sum = int(sum(int(x.qtd_faturadas or 0) for x in sellers))
             ini_sum = int(sum(int(x.iniciados or 0) for x in sellers))
