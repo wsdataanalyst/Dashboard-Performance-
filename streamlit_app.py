@@ -8168,6 +8168,139 @@ def page_orcamentos(settings, conn) -> None:
     df_p = pd.DataFrame(pend_rows)
     df_f = pd.DataFrame(fin_rows)
 
+    # Acúmulo mensal (orçamentos): por padrão, a tela trabalha no modo "mês até a análise ativa",
+    # somando todas as análises de orçamentos do mesmo mês (deduplicando por nº do orçamento).
+    # Isso evita "perder" base ao longo do mês quando cada dia vem como um snapshot parcial.
+    def _orc_date_key(rr) -> str | None:
+        try:
+            dk, _ = _extract_date_label_from_periodo(str(getattr(rr, "periodo", "") or ""), str(getattr(rr, "created_at", "") or ""))
+        except Exception:
+            dk = "0000-00-00"
+        if not dk or dk == "0000-00-00":
+            return None
+        return str(dk)
+
+    def _orc_month_key_from_row(rr) -> str | None:
+        dk = _orc_date_key(rr)
+        if not dk or len(dk) < 7:
+            return None
+        return dk[:7]  # YYYY-MM
+
+    def _is_orc_payload(p: object) -> bool:
+        return isinstance(p, dict) and str(p.get("_kind") or "") == "orcamentos"
+
+    def _payload_rows_or_empty(p: dict, key: str) -> list[dict]:
+        try:
+            rows0 = ((p.get(key) or {}).get("rows"))
+            if isinstance(rows0, list):
+                return [x for x in rows0 if isinstance(x, dict)]
+        except Exception:
+            pass
+        return []
+
+    def _dedupe_rows_by_orc(rows_in: list[dict]) -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        for r in rows_in:
+            oid = str(r.get("_orcamento") or "").strip()
+            if not oid or oid.lower() in {"nan", "none"}:
+                continue
+            # Se duplicar, fica com o de maior valor (melhor proxy para "mais completo").
+            try:
+                v_new = float(pd.to_numeric(r.get("_valor"), errors="coerce") or 0.0)
+            except Exception:
+                v_new = 0.0
+            if oid in out:
+                try:
+                    v_old = float(pd.to_numeric(out[oid].get("_valor"), errors="coerce") or 0.0)
+                except Exception:
+                    v_old = 0.0
+                if v_new >= v_old:
+                    out[oid] = dict(r)
+            else:
+                out[oid] = dict(r)
+        return out
+
+    def _accumulate_orc_rows(rows_orc: list[object]) -> tuple[pd.DataFrame, pd.DataFrame]:
+        # fin_map domina pend_map (se finalizou, some dos pendentes acumulados)
+        fin_map: dict[str, dict] = {}
+        pend_map: dict[str, dict] = {}
+        for rr in rows_orc:
+            try:
+                p = json.loads(getattr(rr, "payload_json", "") or "")
+            except Exception:
+                continue
+            if not _is_orc_payload(p):
+                continue
+            p_rows = _payload_rows_or_empty(p, "pendentes")
+            f_rows = _payload_rows_or_empty(p, "finalizados")
+            # Atualiza fin primeiro
+            fin_map.update(_dedupe_rows_by_orc(f_rows))
+            # Pendentes: só guarda se ainda não finalizou em nenhum momento do acumulado
+            for oid, rowd in _dedupe_rows_by_orc(p_rows).items():
+                if oid in fin_map:
+                    continue
+                pend_map[oid] = rowd
+            # Garantia: remove pendentes que foram finalizados em snapshots anteriores
+            for oid in list(pend_map.keys()):
+                if oid in fin_map:
+                    pend_map.pop(oid, None)
+        return (pd.DataFrame(list(pend_map.values())), pd.DataFrame(list(fin_map.values())))
+
+    acc_mode = st.checkbox("Acumular mês (até esta análise)", value=True, key="orc_accumulate_month")
+    payload_prev_acc: dict | None = None
+    payload_current_acc: dict | None = None
+    if acc_mode:
+        try:
+            cur_dk = _orc_date_key(row) or ""
+            cur_mk = _orc_month_key_from_row(row) or ""
+            rows_scan = list_analyses(conn, limit=900, owner_user_id=owner_id, include_all=is_admin)
+            orc_rows = []
+            for rr in rows_scan:
+                try:
+                    p0 = json.loads(getattr(rr, "payload_json", "") or "")
+                except Exception:
+                    continue
+                if not _is_orc_payload(p0):
+                    continue
+                mk = _orc_month_key_from_row(rr) or ""
+                dk = _orc_date_key(rr) or ""
+                if mk and cur_mk and mk != cur_mk:
+                    continue
+                if dk and cur_dk and dk > cur_dk:
+                    continue
+                orc_rows.append(rr)
+            # Ordena cronológico
+            orc_rows.sort(key=lambda rr: (str(_orc_date_key(rr) or "0000-00-00"), int(getattr(rr, "id", 0) or 0)))
+
+            # Acumulado atual
+            df_p_acc, df_f_acc = _accumulate_orc_rows(orc_rows)
+            df_p = df_p_acc
+            df_f = df_f_acc
+            payload_current_acc = {
+                "_kind": "orcamentos",
+                "periodo": str(getattr(row, "periodo", "") or "Orçamentos (acumulado)"),
+                "pendentes": {"rows": df_p.fillna("").to_dict(orient="records")},
+                "finalizados": {"rows": df_f.fillna("").to_dict(orient="records")},
+            }
+            # Mantém `payload` alinhado ao dataset exibido (evita usar snapshot parcial em outras seções).
+            payload = dict(payload_current_acc)
+
+            # Acumulado anterior (para métricas de conversão/delta)
+            prev_rows = [rr for rr in orc_rows if int(getattr(rr, "id", 0) or 0) < int(active_id)]
+            if prev_rows:
+                df_p_prev, df_f_prev = _accumulate_orc_rows(prev_rows)
+                payload_prev_acc = {
+                    "_kind": "orcamentos",
+                    "periodo": str(getattr(prev_rows[-1], "periodo", "") or "Orçamentos (acumulado anterior)"),
+                    "pendentes": {"rows": df_p_prev.fillna("").to_dict(orient="records")},
+                    "finalizados": {"rows": df_f_prev.fillna("").to_dict(orient="records")},
+                }
+
+            st.caption("Modo: **Acumulado do mês** (dedupe por nº do orçamento).")
+        except Exception:
+            payload_prev_acc = None
+            st.caption("Modo: acumulado indisponível (fallback para snapshot desta análise).")
+
     _FAIXA_ORDER = [
         "0,00–500",
         "500,01–1000",
@@ -8654,25 +8787,26 @@ def page_orcamentos(settings, conn) -> None:
         "No modo **consultor**, o cruzamento usa apenas linhas desse consultor nas duas bases."
     )
 
-    prev_payload = None
-    try:
-        rows_prev = list_analyses(conn, limit=300, owner_user_id=owner_id, include_all=is_admin)
-        seen_current = False
-        for r in rows_prev:
-            if int(r.id) == int(active_id):
-                seen_current = True
-                continue
-            if not seen_current:
-                continue
-            try:
-                p2 = json.loads(r.payload_json)
-            except Exception:
-                continue
-            if isinstance(p2, dict) and p2.get("_kind") == "orcamentos":
-                prev_payload = p2
-                break
-    except Exception:
-        prev_payload = None
+    prev_payload = payload_prev_acc
+    if prev_payload is None:
+        try:
+            rows_prev = list_analyses(conn, limit=300, owner_user_id=owner_id, include_all=is_admin)
+            seen_current = False
+            for r in rows_prev:
+                if int(r.id) == int(active_id):
+                    seen_current = True
+                    continue
+                if not seen_current:
+                    continue
+                try:
+                    p2 = json.loads(r.payload_json)
+                except Exception:
+                    continue
+                if isinstance(p2, dict) and p2.get("_kind") == "orcamentos":
+                    prev_payload = p2
+                    break
+        except Exception:
+            prev_payload = None
 
     conv_ids: set[str] = set()
     conv_val = 0.0
