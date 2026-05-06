@@ -6811,8 +6811,8 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
             try:
                 import plotly.graph_objects as go
 
-                st.markdown("#### Evolução no mês (totais) + variação vs análise anterior (Δ)")
-                st.caption("A linha mostra o total do dia/análise; o marcador indica crescimento/queda vs análise anterior.")
+                st.markdown("#### Evolução no mês (Δ vs análise anterior)")
+                st.caption("A linha mostra a diferença vs a análise anterior (pode ser positiva ou negativa). No hover, você vê o total do dia para contexto.")
 
                 def _delta_text(v: object, *, kind: str) -> str:
                     try:
@@ -6834,19 +6834,27 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                         return "rgba(148,163,184,0.95)"
                     return ("rgba(34,197,94,0.95)" if x > 0 else "rgba(251,113,133,0.95)")
 
-                def _line_total_with_delta(*, y_total_col: str, y_delta_col: str, title: str, kind: str) -> "go.Figure":
+                def _line_delta_with_total_hover(*, y_total_col: str, y_delta_col: str, title: str, kind: str) -> "go.Figure":
                     x = hdf["date_label"].astype(str).tolist()
                     y = pd.to_numeric(hdf.get(y_total_col), errors="coerce").fillna(0.0).astype(float).tolist()
                     d = pd.to_numeric(hdf.get(y_delta_col), errors="coerce").fillna(0.0).astype(float).tolist()
                     colors = [_delta_color(v) for v in d]
                     texts = [_delta_text(v, kind=kind) for v in d]
                     # Hover: total + delta
-                    hover = [f"<b>{x[i]}</b><br>Total: {y[i]:,.2f}{('' if kind=='money' else '')}<br>{texts[i]}" for i in range(len(x))]
+                    hover: list[str] = []
+                    for i in range(len(x)):
+                        if i == 0:
+                            hover.append(f"<b>{x[i]}</b><br>Total: {y[i]:,.2f}<br>Δ — (primeiro ponto do mês)")
+                        else:
+                            if kind == "money":
+                                hover.append(f"<b>{x[i]}</b><br>Total: R$ {y[i]:,.2f}<br>{texts[i]}")
+                            else:
+                                hover.append(f"<b>{x[i]}</b><br>Total: {y[i]:,.0f}<br>{texts[i]}")
                     fig = go.Figure()
                     fig.add_trace(
                         go.Scatter(
                             x=x,
-                            y=y,
+                            y=d,
                             mode="lines+markers+text",
                             text=texts,
                             textposition="top center",
@@ -6855,7 +6863,7 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                             line=dict(color="rgba(59,130,246,0.55)", width=3),
                             hovertext=hover,
                             hoverinfo="text",
-                            name="Total",
+                            name="Δ",
                         )
                     )
                     fig.update_layout(
@@ -6865,30 +6873,34 @@ def page_sala_gestao(settings, conn, *, show_header: bool = True) -> None:
                         margin=dict(l=10, r=10, t=60, b=10),
                     )
                     fig.update_xaxes(title=None)
+                    if kind == "money":
+                        fig.update_yaxes(title_text="Δ (R$)")
+                    else:
+                        fig.update_yaxes(title_text="Δ")
                     return fig
 
                 c1, c2, c3 = st.columns(3)
                 with c1:
-                    fig = _line_total_with_delta(
+                    fig = _line_delta_with_total_hover(
                         y_total_col="faturamento_total",
                         y_delta_col="faturamento_delta",
-                        title="Faturamento (total) — Δ vs anterior",
+                        title="Faturamento — Δ vs anterior",
                         kind="money",
                     )
                     st.plotly_chart(fig, use_container_width=True, key="sg_snap_evol_fat")
                 with c2:
-                    fig = _line_total_with_delta(
+                    fig = _line_delta_with_total_hover(
                         y_total_col="nfs_total",
                         y_delta_col="nfs_delta",
-                        title="NFs (total) — Δ vs anterior",
+                        title="NFs — Δ vs anterior",
                         kind="int",
                     )
                     st.plotly_chart(fig, use_container_width=True, key="sg_snap_evol_nf")
                 with c3:
-                    fig = _line_total_with_delta(
+                    fig = _line_delta_with_total_hover(
                         y_total_col="clientes_total",
                         y_delta_col="clientes_delta",
-                        title="Clientes (total) — Δ vs anterior",
+                        title="Clientes — Δ vs anterior",
                         kind="int",
                     )
                     st.plotly_chart(fig, use_container_width=True, key="sg_snap_evol_cli")
